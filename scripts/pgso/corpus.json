@@ -147,6 +147,7 @@
     {"name": "verify-lifecycle-hooks", "argv": ["bun", "test", "--max-concurrency", "1", "./lifecycle-hooks.test.ts"], "test_file": "lifecycle-hooks.test.ts", "requires_tmux": false},
     {"name": "verify-approval-panel", "argv": ["bun", "test", "--max-concurrency", "1", "./approval-panel.test.ts"], "test_file": "approval-panel.test.ts"},
     {"name": "verify-goal-start-prompt", "argv": ["bun", "test", "--max-concurrency", "1", "./goal-start-prompt.test.ts"], "test_file": "goal-start-prompt.test.ts"},
+    {"name": "verify-goal-print", "argv": ["bun", "test", "--max-concurrency", "1", "./goal-print.test.ts"], "test_file": "goal-print.test.ts", "requires_tmux": false},
     {"name": "verify-permission-picker", "argv": ["bun", "test", "--max-concurrency", "1", "./permission-picker.test.ts"], "test_file": "permission-picker.test.ts"},
     {"name": "verify-plan-approval-notice", "argv": ["bun", "test", "--max-concurrency", "1", "./plan-approval-notice.test.ts"], "test_file": "plan-approval-notice.test.ts"},
     {"name": "verify-plan-command", "argv": ["bun", "test", "--max-concurrency", "1", "./plan-command.test.ts"], "test_file": "plan-command.test.ts"},

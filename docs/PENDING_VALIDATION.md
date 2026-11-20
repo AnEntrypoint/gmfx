@@ -5014,3 +5014,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_build_step -v` on this Linux x86_64 host, RC 0.
 - Red check (Phase B): change host_target's argument back to the literal `"-Dtarget=aarch64-macos"` in the test. The test must fail with the CoreFoundation error and RC 1.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: goal-print e2e test is classified as a verify scenario (2026-11-20, Phase A)
+
+- Cause: tests/e2e/goal-print.test.ts is neither a corpus scenario nor in intentional_exclusions. test_corpus fails with `unclassified E2E test file: goal-print.test.ts` (reproduced locally). It uses the fake gateway, not tmux, and needs no real credential, as goal-start-prompt.test.ts does.
+- Change: scripts/pgso/corpus.json adds verify-goal-print after verify-goal-start-prompt, with requires_tmux false.
+- Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0. This does not run the bun e2e test itself; that remains unverified here.
+- Red check (Phase B): delete the verify-goal-print line from a copy of corpus.json. The test must fail with `unclassified E2E test file: goal-print.test.ts`.
+- Status: written, NOT run in Phase B yet.
