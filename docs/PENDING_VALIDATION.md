@@ -5022,3 +5022,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0. This does not run the bun e2e test itself; that remains unverified here.
 - Red check (Phase B): delete the verify-goal-print line from a copy of corpus.json. The test must fail with `unclassified E2E test file: goal-print.test.ts`.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: profile-use IR fixtures are valid (2026-11-20, Phase A)
+
+- Cause: the fixtures in scripts/pgso/tests/test_profile_supplement.py have `define` lines with no `#N {` attribute reference and bare `attributes` lines with no group. profile_supplement._ir_function_attributes raises `could not parse function definition in profile-use IR` (reproduced locally: 2 failures, 3 errors across three tests; CI on Linux x86_64, Linux arm64 and macOS arm64).
+- Change: the three fixtures use define lines with `#N {` and `attributes #N = { ... }` groups: hot noinline, cold minsize, mem.helper noinline. The parser itself is unchanged.
+- Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_profile_supplement -v`, RC 0.
+- Red check (Phase B): in scripts/pgso/profile_supplement.py change `elif "minsize" in attributes.split():` to `elif False:` in verify_supplement_functions. test_rejects_a_supplement_function_left_size_shaped must fail, RC 1. Restore from HEAD and cmp.
+- Status: written, NOT run in Phase B yet.

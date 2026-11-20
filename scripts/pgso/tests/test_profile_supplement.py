@@ -67,17 +67,18 @@ class ProfileSupplementTests(unittest.TestCase):
 
     def test_reads_speed_shaped_functions_from_profile_use_ir(self) -> None:
         ir = """
-define internal void @core.output.diff.hot()
+define internal void @core.output.diff.hot() #0 {
   ret void
 }
-define internal void @core.output.diff.cold()
+define internal void @core.output.diff.cold() #1 {
   ret void
 }
-define internal void @mem.helper()
+define internal void @mem.helper() #2 {
   ret void
 }
-attributes
-attributes
+attributes #0 = { noinline }
+attributes #1 = { minsize }
+attributes #2 = { noinline }
 """
 
         self.assertEqual(
@@ -87,10 +88,10 @@ attributes
 
     def test_verifies_production_functions_are_speed_shaped_or_optimized_away(self) -> None:
         ir = """
-define internal void @core.output.diff.hot()
+define internal void @core.output.diff.hot() #0 {
   ret void
 }
-attributes
+attributes #0 = { noinline }
 """
 
         self.assertEqual(
@@ -110,10 +111,10 @@ attributes
 
     def test_rejects_a_supplement_function_left_size_shaped(self) -> None:
         ir = """
-define internal void @core.output.diff.cold()
+define internal void @core.output.diff.cold() #0 {
   ret void
 }
-attributes
+attributes #0 = { minsize }
 """
 
         with self.assertRaisesRegex(PgsoError, "remained size-shaped"):
