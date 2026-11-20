@@ -648,7 +648,7 @@ exit:
   ret i16 0
 }
 declare fastcc i16 @append(ptr, i64)
-attributes
+attributes #0 = { nounwind }
 """
 
 

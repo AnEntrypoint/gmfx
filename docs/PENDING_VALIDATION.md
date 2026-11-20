@@ -5030,3 +5030,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_profile_supplement -v`, RC 0.
 - Red check (Phase B): in scripts/pgso/profile_supplement.py change `elif "minsize" in attributes.split():` to `elif False:` in verify_supplement_functions. test_rejects_a_supplement_function_left_size_shaped must fail, RC 1. Restore from HEAD and cmp.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: IR size outlining fixture ends with a valid attribute group (2026-11-20, Phase A)
+
+- Cause: the DROPPED_OUTPUT fixture in scripts/pgso/tests/test_ir_size.py ends with a bare `attributes` line, and llvm-as fails: `dropped.ll:42:1: error: expected attribute group id`. CI shows it in test_check_rejects_output_stores_that_nothing_reaches, test_dropped_outputs_names_the_outlined_function_and_its_callers and test_production... on the Linux and macOS PGSO jobs. The LLVM tests are skipped locally because LLVM is not installed.
+- Change: the line becomes `attributes #0 = { nounwind }`, the group the declare on line 1 already references.
+- Witness (Phase B): run llvm-as from the pinned LLVM 22.1.8 on the fixture text (TARGET + DROPPED_OUTPUT, extracted with ast from the test file). It must exit 0. If the pinned tool cannot be streamed from the release tarball on this host, this witness is not run and the entry stays open.
+- Red check (Phase B): the same extraction from HEAD. llvm-as must exit 1 with `expected attribute group id` at line 42.
+- Status: written, NOT run in Phase B yet.
