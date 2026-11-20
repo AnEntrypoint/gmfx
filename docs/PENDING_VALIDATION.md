@@ -5006,3 +5006,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): `python3 -c "import yaml,sys; s=yaml.safe_load(open('.github/workflows/release.yml'))['jobs']['build-macos-x86_64']['steps']; n=[x.get('name') for x in s]; assert n.index('Vendor txiki sources') < n.index('Build'); print('ORDER_OK')"`, and the clean-archive cmake witness from the entry above, must both pass.
 - Red check (Phase B): remove the Vendor step from the job in a scratch copy. The order assertion must fail with ValueError, and the cmake configure from the clean archive must fail with the add_subdirectory error.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: PGSO IR test targets the host, not aarch64-macos (2026-11-20, Phase A)
+
+- Cause: scripts/pgso/tests/test_build_step.py hardcodes `-Dtarget=aarch64-macos`. Linux PGSO jobs build the macOS target, and the Linux host fails: `error: unable to find system framework "CoreFoundation"` (reproduced locally on x86_64 Linux: 0 != 1 in test_fx_ir_step_emits_release_safe_bitcode).
+- Change: test_build_step.py adds host_target(), which returns aarch64-macos on Darwin arm64, x86_64-macos on Darwin x86_64, and <arch>-linux elsewhere, and uses it for the -Dtarget argument.
+- Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_build_step -v` on this Linux x86_64 host, RC 0.
+- Red check (Phase B): change host_target's argument back to the literal `"-Dtarget=aarch64-macos"` in the test. The test must fail with the CoreFoundation error and RC 1.
+- Status: written, NOT run in Phase B yet.
