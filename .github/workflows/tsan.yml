@@ -1,0 +1,94 @@
+name: Thread Sanitizer
+
+
+
+
+
+
+on:
+  schedule:
+    - cron: "47 7 * * *"
+  pull_request:
+    paths:
+      - .github/workflows/tsan.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tsan-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tsan:
+    name: Unit tests with ThreadSanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+
+
+
+
+
+
+      TSAN_OPTIONS: halt_on_error=0:abort_on_error=0:exitcode=0:atexit_sleep_ms=0
+    steps:
+      - uses: actions/checkout@v4
+
+
+
+      - name: Setup Zig
+        uses: ./.github/actions/setup-zig
+        with:
+          version: "0.17.0"
+          cache-key: ci-unit-ReleaseSafe
+
+
+
+      - name: Run the session manager tests
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          zig build test-session-manager -Doptimize=ReleaseSafe -Dsanitize-thread=true --summary all 2>&1 | tee -a tsan.log
+        continue-on-error: true
+
+
+
+      - name: Run the fx unit tests
+        timeout-minutes: 80
+        run: |
+          set -o pipefail
+          zig build test -Doptimize=ReleaseSafe -Dsanitize-thread=true --summary all 2>&1 | tee -a tsan.log
+        continue-on-error: true
+
+      - name: Summarize races
+        if: always()
+        run: |
+          {
+            echo "## ThreadSanitizer"
+            echo
+            count=$(grep -c 'WARNING: ThreadSanitizer' tsan.log || true)
+            echo "Reports: ${count:-0}"
+            echo
+            if [ "${count:-0}" -gt 0 ]; then
+              echo "| Reports | Race |"
+              echo "|---|---|"
+              grep 'SUMMARY: ThreadSanitizer' tsan.log \
+                | sed -E 's/^.*SUMMARY: ThreadSanitizer: //; s/ \([^)]*\)//' \
+                | sort | uniq -c | sort -rn \
+                | awk '{ n = $1; $1 = ""; sub(/^ /, ""); printf "| %s | `%s` |\n", n, $0 }'
+            fi
+            echo
+            echo '```'
+            grep -E '^Build Summary' tsan.log || echo "no build summary"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsan-log
+          path: tsan.log
+          if-no-files-found: ignore

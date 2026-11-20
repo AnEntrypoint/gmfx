@@ -1,0 +1,50 @@
+.{
+
+
+
+
+
+
+
+    .name = .fx,
+
+
+    .version = "0.0.0",
+
+
+
+
+
+
+
+
+
+
+
+
+    .fingerprint = 0x2ca027d00bcd652c,
+
+
+    .minimum_zig_version = "0.17.0",
+
+
+
+
+
+    .dependencies = .{},
+
+
+
+
+
+
+
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+        "src",
+        "THIRD_PARTY_NOTICES.md",
+    },
+}

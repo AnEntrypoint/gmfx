@@ -1,0 +1,56 @@
+const std = @import("std");
+const types = @import("../shared/types.zig");
+const managed_execution = @import("../execution/managed_execution.zig");
+const change_tracker = @import("../workspace/change_tracker.zig");
+const context_contract = @import("../workspace/context_contract.zig");
+const diff = @import("../output/diff.zig");
+const approval_prompt = @import("../permissions/approval_prompt.zig");
+const question_prompt = @import("../agent/question_prompt.zig");
+const submission_state = @import("../app/submission_state.zig");
+const session_runtime = @import("../session/session.zig");
+const session_persistence = @import("../app/session_persistence.zig");
+const worker_runtime = @import("../agent/worker_runtime.zig");
+const child_run_mod = @import("child_run.zig");
+const profiles = @import("../profiles/profiles.zig");
+const tool_set = @import("../tooling/tool_set.zig");
+const open_work = @import("../todo/open_work.zig");
+
+pub const max_history_turns: usize = 8;
+
+pub const Role = enum { instance, subagent };
+
+pub const Agent = struct {
+    app: ?*anyopaque = null,
+    project_root: []const u8 = "",
+    session: session_runtime.SessionRuntime = session_runtime.SessionRuntime.init(max_history_turns),
+    session_persistence: session_persistence.Persistence = .{},
+    worker_thread: ?std.Thread = null,
+    worker: worker_runtime.WorkerRuntime = .{},
+    stream: types.StreamState = .{},
+    approval_prompt: approval_prompt.ApprovalPrompt = .{},
+    question_prompt: question_prompt.QuestionPrompt = .{},
+    prompt_work_id: ?[]const u8 = null,
+    permission_mode: ?types.PermissionMode = null,
+    session_grants: std.ArrayList(types.PermissionGrant) = .empty,
+    submission: submission_state.State = .{},
+    pending_images: std.ArrayList(types.ImageAttachment) = .empty,
+    next_image_id: usize = 1,
+    managed_executions: managed_execution.Runtime = managed_execution.Runtime.init(std.heap.c_allocator),
+    change_tracker: change_tracker.ChangeTracker = .{},
+    context_snapshot: context_contract.GatheredContextSnapshot = .{},
+    effort: types.ReasoningEffort = .auto,
+    diff_entries: std.ArrayList(diff.DiffEntry) = .empty,
+    next_diff_id: u32 = 1,
+    session_title: std.ArrayList(u8) = .empty,
+    total_input_tokens: u64 = 0,
+    total_output_tokens: u64 = 0,
+    total_web_search_requests: u64 = 0,
+    role: Role = .instance,
+    open_work_reminder: open_work.Reminder = .{},
+    was_working: bool = false,
+    finished_unseen: bool = false,
+    root_instance: ?*Agent = null,
+    child_run: ?child_run_mod.ChildRun = null,
+    profile: profiles.Held = .{},
+    profile_tools: ?tool_set.ToolSet = null,
+};

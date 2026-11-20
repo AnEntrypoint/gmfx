@@ -1,0 +1,53 @@
+name: Nightly full unit suite
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-full-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-unit-suite:
+    name: Full unit suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        id: zig
+        uses: ./.github/actions/setup-zig
+        with:
+          version: "0.17.0"
+          cache-key: nightly-full-unit
+
+      - name: Install zsh
+        run: |
+          command -v zsh >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq zsh; }
+          echo 'skip_global_compinit=1' | sudo tee -a /etc/zsh/zshenv >/dev/null
+
+      - name: Build the binary
+        run: zig build
+
+      - name: Build the full unit test binary
+        run: zig build install-test
+
+      - name: Run the full unit suite
+        env:
+          FX_TEST_SHELL_PARITY_ALL_SHELLS: "1"
+        run: |
+          started_at=$SECONDS
+          trap 'printf "Unit tests elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
+          timeout 3300 ./zig-out/bin/fx-test
+
+      - name: Save Zig cache
+        uses: ./.github/actions/save-zig-cache
+        with:
+          cache-key: ${{ steps.zig.outputs.cache-key }}
+          cache-hit: ${{ steps.zig.outputs.cache-hit }}

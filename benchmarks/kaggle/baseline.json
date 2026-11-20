@@ -1,0 +1,752 @@
+{
+  "build_size.approval-review-bench": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 7022136.0,
+    "run_medians": [
+      7022136.0,
+      7022136.0,
+      7022136.0,
+      7022136.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "build_size.file-index-bench": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 4328064.0,
+    "run_medians": [
+      4328064.0,
+      4328064.0,
+      4328064.0,
+      4328064.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "build_size.fx-release": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 15389256.0,
+    "run_medians": [
+      15389256.0,
+      15389256.0,
+      15389256.0,
+      15389256.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "build_size.fx-term.wasm": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 4942378.0,
+    "run_medians": [
+      4942378.0,
+      4942378.0,
+      4942378.0,
+      4942378.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "build_size.ui-activity-progress-bench": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 6986856.0,
+    "run_medians": [
+      6986856.0,
+      6986856.0,
+      6986856.0,
+      6986856.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "first_frame.cpu_ms": {
+    "between_runs": 14.739,
+    "direction": "lower_is_better",
+    "median": 40.398,
+    "run_medians": [
+      42.481,
+      38.316,
+      29.772,
+      44.511
+    ],
+    "runs": 4,
+    "spread": 14.739,
+    "unit": "ms",
+    "within_run": 10.076
+  },
+  "first_frame.p50": {
+    "between_runs": 2.242,
+    "direction": "lower_is_better",
+    "median": 13.055,
+    "run_medians": [
+      13.088,
+      13.195,
+      10.953,
+      13.023
+    ],
+    "runs": 4,
+    "spread": 2.242,
+    "unit": "ms",
+    "within_run": 1.85
+  },
+  "first_frame.p95": {
+    "between_runs": 5.658,
+    "direction": "lower_is_better",
+    "median": 14.129,
+    "run_medians": [
+      13.742,
+      17.533,
+      11.875,
+      14.515
+    ],
+    "runs": 4,
+    "spread": 5.658,
+    "unit": "ms",
+    "within_run": 1.85
+  },
+  "first_frame.rss_mib": {
+    "between_runs": 0.434,
+    "direction": "lower_is_better",
+    "median": 21.641,
+    "run_medians": [
+      21.312,
+      21.746,
+      21.617,
+      21.664
+    ],
+    "runs": 4,
+    "spread": 0.434,
+    "unit": "mib",
+    "within_run": 0.0
+  },
+  "long_turn.peak_rss_mib": {
+    "between_runs": 1.356,
+    "direction": "lower_is_better",
+    "median": 30.062,
+    "run_medians": [
+      30.07,
+      30.262,
+      30.055,
+      28.906
+    ],
+    "runs": 4,
+    "spread": 1.356,
+    "unit": "mib",
+    "within_run": 0.476
+  },
+  "shell_command.per_call_ms": {
+    "between_runs": 7.948,
+    "direction": "lower_is_better",
+    "median": 39.022,
+    "run_medians": [
+      43.675,
+      37.964,
+      35.727,
+      40.08
+    ],
+    "runs": 4,
+    "spread": 7.948,
+    "unit": "ms",
+    "within_run": 1.136
+  },
+  "startup.bare_fx_bench": {
+    "between_runs": 0.368,
+    "direction": "lower_is_better",
+    "median": 1.119,
+    "run_medians": [
+      1.356,
+      1.042,
+      0.988,
+      1.196
+    ],
+    "runs": 4,
+    "spread": 0.368,
+    "unit": "ms",
+    "within_run": 0.144
+  },
+  "startup.bare_fx_bench.over_true_baseline": {
+    "between_runs": 0.137,
+    "direction": "lower_is_better",
+    "median": 1.336,
+    "run_medians": [
+      1.345,
+      1.327,
+      1.35,
+      1.213
+    ],
+    "runs": 4,
+    "spread": 0.146,
+    "unit": "ratio",
+    "within_run": 0.146
+  },
+  "startup.doctor_json": {
+    "between_runs": 0.983,
+    "direction": "lower_is_better",
+    "median": 2.505,
+    "run_medians": [
+      3.018,
+      2.411,
+      2.035,
+      2.599
+    ],
+    "runs": 4,
+    "spread": 0.983,
+    "unit": "ms",
+    "within_run": 0.152
+  },
+  "startup.doctor_json.over_true_baseline": {
+    "between_runs": 0.435,
+    "direction": "lower_is_better",
+    "median": 2.887,
+    "run_medians": [
+      2.994,
+      3.071,
+      2.78,
+      2.636
+    ],
+    "runs": 4,
+    "spread": 0.435,
+    "unit": "ratio",
+    "within_run": 0.194
+  },
+  "startup.help": {
+    "between_runs": 0.365,
+    "direction": "lower_is_better",
+    "median": 1.309,
+    "run_medians": [
+      1.494,
+      1.231,
+      1.129,
+      1.387
+    ],
+    "runs": 4,
+    "spread": 0.365,
+    "unit": "ms",
+    "within_run": 0.223
+  },
+  "startup.help.over_true_baseline": {
+    "between_runs": 0.161,
+    "direction": "lower_is_better",
+    "median": 1.512,
+    "run_medians": [
+      1.482,
+      1.568,
+      1.542,
+      1.407
+    ],
+    "runs": 4,
+    "spread": 0.227,
+    "unit": "ratio",
+    "within_run": 0.227
+  },
+  "startup.help_command": {
+    "between_runs": 0.455,
+    "direction": "lower_is_better",
+    "median": 1.329,
+    "run_medians": [
+      1.594,
+      1.247,
+      1.139,
+      1.41
+    ],
+    "runs": 4,
+    "spread": 0.455,
+    "unit": "ms",
+    "within_run": 0.252
+  },
+  "startup.help_command.over_true_baseline": {
+    "between_runs": 0.159,
+    "direction": "lower_is_better",
+    "median": 1.569,
+    "run_medians": [
+      1.581,
+      1.589,
+      1.556,
+      1.43
+    ],
+    "runs": 4,
+    "spread": 0.25,
+    "unit": "ratio",
+    "within_run": 0.25
+  },
+  "startup.sessions_json": {
+    "between_runs": 0.975,
+    "direction": "lower_is_better",
+    "median": 3.547,
+    "run_medians": [
+      3.941,
+      3.46,
+      2.966,
+      3.635
+    ],
+    "runs": 4,
+    "spread": 0.975,
+    "unit": "ms",
+    "within_run": 0.206
+  },
+  "startup.sessions_json.over_true_baseline": {
+    "between_runs": 0.721,
+    "direction": "lower_is_better",
+    "median": 3.981,
+    "run_medians": [
+      3.91,
+      4.408,
+      4.052,
+      3.687
+    ],
+    "runs": 4,
+    "spread": 0.721,
+    "unit": "ratio",
+    "within_run": 0.205
+  },
+  "startup.status_json": {
+    "between_runs": 0.835,
+    "direction": "lower_is_better",
+    "median": 2.192,
+    "run_medians": [
+      2.675,
+      2.027,
+      1.84,
+      2.358
+    ],
+    "runs": 4,
+    "spread": 0.835,
+    "unit": "ms",
+    "within_run": 0.18
+  },
+  "startup.status_json.over_true_baseline": {
+    "between_runs": 0.263,
+    "direction": "lower_is_better",
+    "median": 2.548,
+    "run_medians": [
+      2.654,
+      2.582,
+      2.514,
+      2.391
+    ],
+    "runs": 4,
+    "spread": 0.263,
+    "unit": "ratio",
+    "within_run": 0.183
+  },
+  "startup.true_baseline": {
+    "between_runs": 0.276,
+    "direction": "lower_is_better",
+    "median": 0.885,
+    "run_medians": [
+      1.008,
+      0.785,
+      0.732,
+      0.986
+    ],
+    "runs": 4,
+    "spread": 0.276,
+    "unit": "ms",
+    "within_run": 0.193
+  },
+  "startup.version": {
+    "between_runs": 0.352,
+    "direction": "lower_is_better",
+    "median": 1.208,
+    "run_medians": [
+      1.421,
+      1.155,
+      1.069,
+      1.26
+    ],
+    "runs": 4,
+    "spread": 0.352,
+    "unit": "ms",
+    "within_run": 0.191
+  },
+  "startup.version.over_true_baseline": {
+    "between_runs": 0.193,
+    "direction": "lower_is_better",
+    "median": 1.435,
+    "run_medians": [
+      1.41,
+      1.471,
+      1.46,
+      1.278
+    ],
+    "runs": 4,
+    "spread": 0.194,
+    "unit": "ratio",
+    "within_run": 0.194
+  },
+  "tui_bench.approval_review.combined.paint_ms": {
+    "between_runs": 125.108,
+    "direction": "lower_is_better",
+    "median": 1072.495,
+    "run_medians": [
+      969.316,
+      1076.717,
+      1068.272,
+      1094.424
+    ],
+    "runs": 4,
+    "spread": 125.108,
+    "unit": "ms",
+    "within_run": 21.171
+  },
+  "tui_bench.approval_review.combined.terminal_bytes": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 26827.0,
+    "run_medians": [
+      26827.0,
+      26827.0,
+      26827.0,
+      26827.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "tui_bench.approval_review.diff.paint_ms": {
+    "between_runs": 54.389,
+    "direction": "lower_is_better",
+    "median": 556.575,
+    "run_medians": [
+      507.152,
+      559.649,
+      553.502,
+      561.541
+    ],
+    "runs": 4,
+    "spread": 54.389,
+    "unit": "ms",
+    "within_run": 5.87
+  },
+  "tui_bench.approval_review.diff.terminal_bytes": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 27210.0,
+    "run_medians": [
+      27210.0,
+      27210.0,
+      27210.0,
+      27210.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "tui_bench.approval_review.edge.paint_ms": {
+    "between_runs": 0.091,
+    "direction": "lower_is_better",
+    "median": 0.783,
+    "run_medians": [
+      0.758,
+      0.784,
+      0.782,
+      0.849
+    ],
+    "runs": 4,
+    "spread": 0.099,
+    "unit": "ms",
+    "within_run": 0.099
+  },
+  "tui_bench.approval_review.edge.terminal_bytes": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 21514.0,
+    "run_medians": [
+      21514.0,
+      21514.0,
+      21514.0,
+      21514.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "tui_bench.approval_review.payload.paint_ms": {
+    "between_runs": 2.292,
+    "direction": "lower_is_better",
+    "median": 46.77,
+    "run_medians": [
+      45.962,
+      46.837,
+      46.702,
+      48.254
+    ],
+    "runs": 4,
+    "spread": 2.292,
+    "unit": "ms",
+    "within_run": 1.566
+  },
+  "tui_bench.approval_review.payload.terminal_bytes": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 28504.0,
+    "run_medians": [
+      28504.0,
+      28504.0,
+      28504.0,
+      28504.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "tui_bench.approval_review.transcript.paint_ms": {
+    "between_runs": 72.448,
+    "direction": "lower_is_better",
+    "median": 1085.608,
+    "run_medians": [
+      1031.64,
+      1094.027,
+      1077.189,
+      1104.088
+    ],
+    "runs": 4,
+    "spread": 72.448,
+    "unit": "ms",
+    "within_run": 31.598
+  },
+  "tui_bench.approval_review.transcript.terminal_bytes": {
+    "between_runs": 0.0,
+    "direction": "lower_is_better",
+    "median": 27779.0,
+    "run_medians": [
+      27779.0,
+      27779.0,
+      27779.0,
+      27779.0
+    ],
+    "runs": 4,
+    "spread": 0.0,
+    "unit": "bytes",
+    "within_run": 0.0
+  },
+  "tui_bench.file_index": {
+    "between_runs": 1307.472,
+    "direction": "lower_is_better",
+    "median": 14285.53,
+    "run_medians": [
+      15099.497,
+      14034.049,
+      13792.025,
+      14537.01
+    ],
+    "runs": 4,
+    "spread": 1307.472,
+    "unit": "ms",
+    "within_run": 368.657
+  },
+  "tui_bench.file_index.index_build_ms": {
+    "between_runs": 32.17,
+    "direction": "lower_is_better",
+    "median": 187.875,
+    "run_medians": [
+      171.42,
+      189.66,
+      186.09,
+      203.59
+    ],
+    "runs": 4,
+    "spread": 32.17,
+    "unit": "ms",
+    "within_run": 29.58
+  },
+  "tui_bench.file_index.search_p50_ms": {
+    "between_runs": 0.14,
+    "direction": "lower_is_better",
+    "median": 2.11,
+    "run_medians": [
+      2.2,
+      2.06,
+      2.06,
+      2.16
+    ],
+    "runs": 4,
+    "spread": 0.41,
+    "unit": "ms",
+    "within_run": 0.41
+  },
+  "tui_bench.file_index.search_p95_ms": {
+    "between_runs": 1.44,
+    "direction": "lower_is_better",
+    "median": 13.93,
+    "run_medians": [
+      15.11,
+      13.83,
+      13.67,
+      14.03
+    ],
+    "runs": 4,
+    "spread": 1.44,
+    "unit": "ms",
+    "within_run": 0.24
+  },
+  "tui_bench.ui_activity": {
+    "between_runs": 4.283,
+    "direction": "lower_is_better",
+    "median": 79.299,
+    "run_medians": [
+      82.724,
+      79.075,
+      78.441,
+      79.523
+    ],
+    "runs": 4,
+    "spread": 4.283,
+    "unit": "ms",
+    "within_run": 3.658
+  },
+  "tui_bench.ui_activity.comparison_ratio": {
+    "between_runs": 0.006,
+    "direction": "lower_is_better",
+    "median": 0.419,
+    "run_medians": [
+      0.421,
+      0.422,
+      0.417,
+      0.416
+    ],
+    "runs": 4,
+    "spread": 0.009,
+    "unit": "ratio",
+    "within_run": 0.009
+  },
+  "tui_bench.ui_activity.growth_ratio": {
+    "between_runs": 0.004,
+    "direction": "lower_is_better",
+    "median": 0.997,
+    "run_medians": [
+      0.994,
+      0.997,
+      0.998,
+      0.997
+    ],
+    "runs": 4,
+    "spread": 0.011,
+    "unit": "ratio",
+    "within_run": 0.011
+  },
+  "turn_loop.step_ms": {
+    "between_runs": 0.725,
+    "direction": "lower_is_better",
+    "median": 14.508,
+    "run_medians": [
+      14.871,
+      14.411,
+      14.146,
+      14.606
+    ],
+    "runs": 4,
+    "spread": 0.725,
+    "unit": "ms",
+    "within_run": 0.103
+  },
+  "wait_cpu.foreground_bash": {
+    "between_runs": 0.9,
+    "direction": "lower_is_better",
+    "median": 2.55,
+    "run_medians": [
+      2.6,
+      2.6,
+      1.7,
+      2.5
+    ],
+    "runs": 4,
+    "spread": 0.9,
+    "unit": "percent_of_core",
+    "within_run": 0.5
+  },
+  "wait_cpu.idle_after_printed_output": {
+    "between_runs": 0.2,
+    "direction": "lower_is_better",
+    "median": 0.25,
+    "run_medians": [
+      0.3,
+      0.1,
+      0.2,
+      0.3
+    ],
+    "runs": 4,
+    "spread": 0.2,
+    "unit": "percent_of_core",
+    "within_run": 0.1
+  },
+  "wait_cpu.idle_after_turn": {
+    "between_runs": 0.2,
+    "direction": "lower_is_better",
+    "median": 0.25,
+    "run_medians": [
+      0.3,
+      0.3,
+      0.1,
+      0.2
+    ],
+    "runs": 4,
+    "spread": 0.2,
+    "unit": "percent_of_core",
+    "within_run": 0.2
+  },
+  "wait_cpu.idle_fresh_prompt": {
+    "between_runs": 0.1,
+    "direction": "lower_is_better",
+    "median": 0.3,
+    "run_medians": [
+      0.3,
+      0.3,
+      0.2,
+      0.3
+    ],
+    "runs": 4,
+    "spread": 0.1,
+    "unit": "percent_of_core",
+    "within_run": 0.1
+  },
+  "wait_cpu.model_reply_held": {
+    "between_runs": 1.1,
+    "direction": "lower_is_better",
+    "median": 2.65,
+    "run_medians": [
+      2.7,
+      2.6,
+      1.6,
+      2.7
+    ],
+    "runs": 4,
+    "spread": 1.1,
+    "unit": "percent_of_core",
+    "within_run": 0.1
+  },
+  "wait_cpu.waitfor_background_task": {
+    "between_runs": 0.9,
+    "direction": "lower_is_better",
+    "median": 2.25,
+    "run_medians": [
+      2.4,
+      2.2,
+      1.5,
+      2.3
+    ],
+    "runs": 4,
+    "spread": 0.9,
+    "unit": "percent_of_core",
+    "within_run": 0.4
+  }
+}

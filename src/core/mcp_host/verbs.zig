@@ -1,0 +1,1607 @@
+const std = @import("std");
+const io_mod = @import("../shared/io.zig");
+const debug_trace = @import("../shared/debug_trace.zig");
+const text_utils = @import("../shared/text_utils.zig");
+const profile_paths = @import("../shared/profile_paths.zig");
+const config_runtime = @import("../config/config_runtime.zig");
+const project_config = @import("../mcp/project_config.zig");
+const config_file = @import("config_file.zig");
+const credentials = @import("credentials.zig");
+const secret = @import("../auth/secret.zig");
+const slack = @import("slack.zig");
+const runtime_mod = @import("runtime.zig");
+const mcp_call_client = @import("mcp_call_client.zig");
+const Host = @import("host.zig").Host;
+
+const Allocator = std.mem.Allocator;
+const Writer = std.Io.Writer;
+const cli_flags = @import("../cli/cli_flags.zig");
+const command_specs = @import("../slash_commands/command_specs.zig");
+const builtin_commands = @import("../../builtins/commands.zig");
+const settings_messages = @import("../cli/settings_messages.zig");
+const OptionDoc = command_specs.OptionDoc;
+const Status = runtime_mod.Status;
+pub const Notify = runtime_mod.Notify;
+
+pub const Surface = enum {
+    cli,
+    shell,
+
+    fn prog(s: Surface) []const u8 {
+        return switch (s) {
+            .cli => "fx mcp",
+            .shell => "/mcp",
+        };
+    }
+
+    fn progWithArticle(s: Surface) []const u8 {
+        return switch (s) {
+            .cli => "an fx mcp",
+            .shell => "a /mcp",
+        };
+    }
+};
+
+pub const Verb = enum { list, show, add, remove, login, logout, approve, reject, call };
+const show_alias = "get";
+const one_scope_words = "--scope local can't be joined with --global, --project or another --scope.";
+const TransportChoice = enum { http, sse, stdio };
+const verb_names = names: {
+    var names: [@typeInfo(Verb).@"enum".field_names.len][]const u8 = undefined;
+    for (@typeInfo(Verb).@"enum".field_names, &names) |name, *slot| slot.* = name;
+    const final = names;
+    break :names final;
+};
+
+pub const Command = union(enum) {
+    help: ?Verb,
+    list: struct { json: bool = false },
+    show: struct { name: []const u8, json: bool = false },
+    add: struct { name: []const u8, file: config_file.File, entry: config_file.Entry, login: bool = true, old_profile: bool = false, local: bool = false },
+    remove: struct { name: []const u8, file: ?config_file.File, old_profile: bool = false, local: bool = false },
+    login: struct { name: []const u8, browser: bool },
+    logout: []const u8,
+    approve: ?[]const u8,
+    reject: []const u8,
+    call: mcp_call_client.Command,
+};
+
+pub const Parsed = union(enum) {
+    command: Command,
+    usage: struct { verb: ?Verb, message: []const u8 },
+    moved: []const u8,
+};
+
+pub fn parse(arena: Allocator, surface: Surface, args: []const []const u8) Allocator.Error!Parsed {
+    const p = surface.prog();
+    if (args.len == 0 or isHelp(args[0]) or std.mem.eql(u8, args[0], "help")) return .{ .command = .{ .help = null } };
+    const verb = std.meta.stringToEnum(Verb, if (std.mem.eql(u8, args[0], show_alias)) "show" else args[0]) orelse {
+        const old = args[0];
+        if (std.mem.eql(u8, old, "auth")) return moved(arena, "{s} auth is now {s} login NAME.", .{ p, p });
+        if (std.mem.eql(u8, old, "trust")) return moved(arena, "{s} trust is now {s} approve NAME and {s} reject NAME.", .{ p, p, p });
+        if (std.mem.eql(u8, old, "path")) return moved(arena, "{s} path is gone: {s} list shows each server's file.", .{ p, p });
+        if (std.mem.eql(u8, old, "reload")) return moved(arena, "{s} reload is gone: fx loads MCP config changes at your next prompt or /mcp command.", .{p});
+        if (std.mem.eql(u8, old, "prompt"))
+            return moved(arena, "{s} prompt is gone: fx doesn't support MCP prompts yet.", .{p});
+        const command = surface.progWithArticle();
+        if (settings_messages.closest(old, &verb_names)) |near|
+            return usage(arena, null, "'{f}' isn't {s} command; did you mean {s}?", .{ text_utils.terminalSafe(old), command, near });
+        return usage(arena, null, "'{f}' isn't {s} command.", .{ text_utils.terminalSafe(old), command });
+    };
+
+    const rest = args[1..];
+    const dash = for (rest, 0..) |a, k| {
+        if (std.mem.eql(u8, a, "--")) break k;
+    } else rest.len;
+    for (rest[0..dash]) |a| if (isHelp(a)) return .{ .command = .{ .help = verb } };
+
+    const words = try arena.alloc([:0]const u8, dash);
+    for (rest[0..dash], words) |a, *word| word.* = try arena.dupeSentinel(u8, a, 0);
+    const flags = verbFlags(verb, surface);
+    var parser: cli_flags.Parser = .init(flags.docs, words);
+    var names: std.ArrayList([]const u8) = .empty;
+    var pairs: std.ArrayList(config_file.Pair) = .empty;
+    var pair_flag: ?Flag = null;
+    var json = false;
+    var project = false;
+    var profile = false;
+    var old_profile = false;
+    var all = false;
+    var no_browser = false;
+    var no_login = false;
+    var transport: ?TransportChoice = null;
+    var local = false;
+    while (true) {
+        const item = parser.next() catch {
+            var text: Writer.Allocating = .init(arena);
+            parser.failure.?.write(&text.writer) catch return error.OutOfMemory;
+            return usage(arena, verb, "{s} {s}: {s}", .{ p, @tagName(verb), text.written() });
+        } orelse break;
+        const match = switch (item) {
+            .positional => |word| {
+                try names.append(arena, word);
+                continue;
+            },
+            .option => |match| match,
+        };
+        switch (flags.ids[match.index]) {
+            .connect => return moved(arena, "{s} list --connect is now {s} show NAME.", .{ p, p }),
+            .json => json = true,
+            .project => project = true,
+            .global => profile = true,
+            .profile => {
+                profile = true;
+                old_profile = true;
+            },
+            .all => all = true,
+            .no_browser => no_browser = true,
+            .no_login => no_login = true,
+            .transport => {
+                const value = match.value.?;
+                transport = std.meta.stringToEnum(TransportChoice, value) orelse {
+                    if (std.mem.eql(u8, value, "ws")) return usage(arena, verb, "--transport doesn't take ws; fx connects over http, sse or stdio.", .{});
+                    return usage(arena, verb, "--transport takes http, sse or stdio, not '{f}'.", .{text_utils.terminalSafe(value)});
+                };
+            },
+            .scope => {
+                const value = match.value.?;
+                if (std.mem.eql(u8, value, "user")) {
+                    profile = true;
+                } else if (std.mem.eql(u8, value, "project")) {
+                    project = true;
+                } else if (std.mem.eql(u8, value, "local")) {
+                    local = true;
+                } else return usage(arena, verb, "--scope takes user, project or local, not '{f}'.", .{text_utils.terminalSafe(value)});
+            },
+            .env, .header => |id| {
+                if (pair_flag) |f| if (f != id) return usage(arena, verb, "--env is for stdio servers and --header for HTTP ones.", .{});
+                pair_flag = id;
+                const kv = match.value.?;
+                const eq = std.mem.findScalar(u8, kv, '=') orelse 0;
+                if (eq == 0) return usage(arena, verb, "--{s} needs KEY=VALUE.", .{@tagName(id)});
+                try pairs.append(arena, .{ .key = kv[0..eq], .value = kv[eq + 1 ..] });
+            },
+        }
+    }
+    if (dash < rest.len and verb != .add) return usage(arena, verb, "{s} {s} takes no command after --.", .{ p, @tagName(verb) });
+    const n = names.items;
+
+    switch (verb) {
+        .list => {
+            if (n.len > 0) return usage(arena, verb, "{s} list takes no server name.", .{p});
+            return .{ .command = .{ .list = .{ .json = json } } };
+        },
+        .add => {
+            if (n.len == 0) return usage(arena, verb, "{s} add needs a NAME.", .{p});
+            const name = n[0];
+            if (!isValidServerName(name))
+                return usage(arena, verb, "'{s}' can't be a server name: use letters, digits, '-' and '_'.", .{name});
+            if (project and profile) return usage(arena, verb, "Use --project or --global, not both.", .{});
+            if (local and (project or profile)) return usage(arena, verb, one_scope_words, .{});
+            const file: config_file.File = if (project) .project else .profile;
+            if (dash < rest.len) {
+                if (n.len > 1) return usage(arena, verb, "{s} add takes a URL or a command after --, not both.", .{p});
+                const command = rest[dash + 1 ..];
+                if (command.len == 0) return usage(arena, verb, "{s} add needs a command after --.", .{p});
+                if (pair_flag == .header) return usage(arena, verb, "--header is for HTTP servers; use --env for a command.", .{});
+                if (transport) |chosen| if (chosen != .stdio) return usage(arena, verb, "--transport {s} needs a URL, not a command after --.", .{@tagName(chosen)});
+                return .{ .command = .{ .add = .{ .name = name, .file = file, .entry = .{ .stdio = .{ .command = command[0], .args = command[1..], .env = pairs.items } }, .old_profile = old_profile, .local = local } } };
+            }
+
+            const url = if (n.len == 1 and std.mem.eql(u8, name, "slack")) slack.server_url else url: {
+                if (n.len != 2) return usage(arena, verb, "{s} add needs a URL, or -- and a command.", .{p});
+                break :url n[1];
+            };
+            if (!std.mem.startsWith(u8, url, "https://") and !std.mem.startsWith(u8, url, "http://"))
+                return usage(arena, verb, "'{s}' isn't a URL. A stdio server's command goes after --.", .{url});
+            if (pair_flag == .env) return usage(arena, verb, "--env is for stdio servers; use --header for HTTP.", .{});
+            if (transport == .stdio) return usage(arena, verb, "--transport stdio needs -- and a command, not a URL.", .{});
+            return .{ .command = .{ .add = .{ .name = name, .file = file, .entry = .{ .http = .{ .url = url, .headers = pairs.items, .sse = transport == .sse } }, .login = !no_login, .old_profile = old_profile, .local = local } } };
+        },
+        .call => {
+            if (surface == .shell) return usage(arena, verb, "/mcp call runs only in a command that fx's shell tool runs: fx mcp call TOOL [JSON].", .{});
+            if (n.len == 0) return usage(arena, verb, "{s} call needs a TOOL, or list, search, or help.", .{p});
+            const first = n[0];
+            const rest_names = n[1..];
+            if (std.mem.eql(u8, first, "list") or std.mem.eql(u8, first, "help")) {
+                if (rest_names.len != 1 or rest_names[0].len == 0) {
+                    return usage(arena, verb, "{s} call {s} needs one {s}.", .{ p, first, if (first[0] == 'l') "server NAME" else "TOOL" });
+                }
+                return .{ .command = .{ .call = if (first[0] == 'l') .{ .list = rest_names[0] } else .{ .help = rest_names[0] } } };
+            }
+            if (std.mem.eql(u8, first, "resources") or std.mem.eql(u8, first, "templates")) {
+                if (rest_names.len < 1 or rest_names.len > 2 or rest_names[0].len == 0) return usage(arena, verb, "{s} call {s} needs a server NAME and an optional CURSOR.", .{ p, first });
+                const server = rest_names[0];
+                const cursor: ?[]const u8 = if (rest_names.len == 2) rest_names[1] else null;
+                if (first[0] == 'r') return .{ .command = .{ .call = .{ .resources = .{ .server = server, .cursor = cursor } } } };
+                return .{ .command = .{ .call = .{ .templates = .{ .server = server, .cursor = cursor } } } };
+            }
+            if (std.mem.eql(u8, first, "prompts")) {
+                if (rest_names.len < 1 or rest_names.len > 2 or rest_names[0].len == 0) return usage(arena, verb, "{s} call prompts needs a server NAME and an optional CURSOR.", .{p});
+                const cursor: ?[]const u8 = if (rest_names.len == 2) rest_names[1] else null;
+                return .{ .command = .{ .call = .{ .prompts = .{ .server = rest_names[0], .cursor = cursor } } } };
+            }
+            if (std.mem.eql(u8, first, "prompt")) {
+                if (rest_names.len < 2 or rest_names.len > 3 or rest_names[0].len == 0 or rest_names[1].len == 0) return usage(arena, verb, "{s} call prompt needs a server NAME, a prompt NAME, and an optional JSON object of arguments.", .{p});
+                const arguments: ?[]const u8 = if (rest_names.len == 3) rest_names[2] else null;
+                return .{ .command = .{ .call = .{ .prompt = .{ .server = rest_names[0], .name = rest_names[1], .arguments = arguments } } } };
+            }
+            if (std.mem.eql(u8, first, "read")) {
+                if (rest_names.len != 2 or rest_names[0].len == 0 or rest_names[1].len == 0) return usage(arena, verb, "{s} call read needs a server NAME and a URI.", .{p});
+                return .{ .command = .{ .call = .{ .read = .{ .server = rest_names[0], .uri = rest_names[1] } } } };
+            }
+            if (std.mem.eql(u8, first, "search")) {
+                const query = std.mem.trim(u8, try std.mem.join(arena, " ", rest_names), " ");
+                if (query.len == 0) return usage(arena, verb, "{s} call search needs a QUERY.", .{p});
+                return .{ .command = .{ .call = .{ .search = query } } };
+            }
+            if (n.len > 2) return usage(arena, verb, "{s} call needs a TOOL and at most one JSON argument.", .{p});
+            return .{ .command = .{ .call = .{ .call = .{ .tool = first, .arguments = if (n.len == 2) n[1] else null } } } };
+        },
+        .approve => {
+            if (all and n.len > 0) return usage(arena, verb, "{s} approve takes a NAME or --all, not both.", .{p});
+            if (all) return .{ .command = .{ .approve = null } };
+        },
+        else => {},
+    }
+    if (n.len != 1) return usage(arena, verb, "{s} {s} needs one server NAME.", .{ p, @tagName(verb) });
+    const name = n[0];
+    return .{ .command = switch (verb) {
+        .show => .{ .show = .{ .name = name, .json = json } },
+        .remove => blk: {
+            if (project and profile) return usage(arena, verb, "Use --project or --global, not both.", .{});
+            if (local and (project or profile)) return usage(arena, verb, one_scope_words, .{});
+            break :blk .{ .remove = .{ .name = name, .file = if (project) .project else if (profile) .profile else null, .old_profile = old_profile, .local = local } };
+        },
+        .login => .{ .login = .{ .name = name, .browser = !no_browser } },
+        .logout => .{ .logout = name },
+        .approve => .{ .approve = name },
+        .reject => .{ .reject = name },
+        .list, .add, .call => unreachable,
+    } };
+}
+
+fn isHelp(a: []const u8) bool {
+    return std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help");
+}
+
+const Flag = enum { json, connect, global, profile, project, scope, transport, env, header, no_browser, no_login, all };
+
+const scope_options = builtin_commands.mcp_scope_options;
+const list_cli_options = builtin_commands.mcp_list_options;
+const list_shell_options = builtin_commands.mcp_list_shell_options;
+const show_cli_options = builtin_commands.mcp_show_options;
+const add_options = builtin_commands.mcp_add_options;
+const login_options = builtin_commands.mcp_login_options;
+const approve_options = builtin_commands.mcp_approve_options;
+
+const VerbFlags = struct { docs: []const OptionDoc, ids: []const Flag };
+
+fn verbFlagsFor(comptime docs: []const OptionDoc) VerbFlags {
+    const ids = comptime ids: {
+        var ids: [docs.len]Flag = undefined;
+        for (docs, &ids) |doc, *id| {
+            const name = cli_flags.flagName(doc)[2..];
+            var field: [name.len]u8 = undefined;
+            for (name, &field) |c, *f| f.* = if (c == '-') '_' else c;
+            const final = field;
+            id.* = @field(Flag, &final);
+        }
+        break :ids ids;
+    };
+    return .{ .docs = docs, .ids = &ids };
+}
+
+fn verbFlags(verb: Verb, surface: Surface) VerbFlags {
+    return switch (verb) {
+        .list => if (surface == .cli) verbFlagsFor(&list_cli_options) else verbFlagsFor(&list_shell_options),
+        .show => if (surface == .cli) verbFlagsFor(&show_cli_options) else verbFlagsFor(&.{}),
+        .add => verbFlagsFor(&add_options),
+        .remove => verbFlagsFor(&scope_options),
+        .login => verbFlagsFor(&login_options),
+        .approve => verbFlagsFor(&approve_options),
+        .logout, .reject, .call => verbFlagsFor(&.{}),
+    };
+}
+
+fn moved(arena: Allocator, comptime fmt: []const u8, args: anytype) Allocator.Error!Parsed {
+    return .{ .moved = try arena.print(fmt, args) };
+}
+
+fn usage(arena: Allocator, verb: ?Verb, comptime fmt: []const u8, args: anytype) Allocator.Error!Parsed {
+    return .{ .usage = .{ .verb = verb, .message = try arena.print(fmt, args) } };
+}
+
+const overview = [_][2][]const u8{
+    .{ "list", "configured servers; never connects" },
+    .{ "show NAME", "connect to NAME: status, version, tools" },
+    .{ "add NAME URL", "add an HTTP server" },
+    .{ "add NAME -- CMD [ARGS...]", "add a stdio server" },
+    .{ "add slack", "add Slack's server" },
+    .{ "remove NAME", "remove a server and its login" },
+    .{ "login NAME", "sign in to an HTTP server" },
+    .{ "logout NAME", "sign out and delete the login" },
+    .{ "approve NAME | --all", "approve project servers from .mcp.json" },
+    .{ "reject NAME", "reject a project server" },
+    .{ "call TOOL [JSON | -]", "run an MCP tool from a command fx runs" },
+    .{ "call list | search | help", "find MCP tools and their arguments" },
+    .{ "call resources | templates | read", "list and read MCP resources and templates" },
+    .{ "call prompts | prompt", "list MCP prompts and render one" },
+};
+
+pub fn writeUsage(w: *Writer, surface: Surface, verb: ?Verb) Writer.Error!void {
+    const p = surface.prog();
+    const json = if (surface == .cli) " [--json]" else "";
+    const v = verb orelse {
+        try w.print("usage: {s} COMMAND\n\n", .{p});
+        for (overview, 0..) |row, k| {
+            var buffer: [48]u8 = undefined;
+            const left = if (k < 2) std.mem.print(&buffer, "{s}{s}", .{ row[0], json }) catch row[0] else row[0];
+            try w.print("  {s:<28}{s}\n", .{ left, row[1] });
+        }
+        return w.print("\nRun '{s} COMMAND -h' for a command's flags.\n", .{p});
+    };
+    switch (v) {
+        .list => try w.print("usage: {s} list{s}\n", .{ p, json }),
+        .show => try w.print("usage: {s} show NAME{s}\n  get NAME is the same command\n", .{ p, json }),
+        .add => try w.print(
+            \\usage: {s} add [--global | --project] [--transport http|sse] [--no-login] [--header K=V]... NAME URL
+            \\       {s} add [--global | --project] [--transport stdio] [--env K=V]... NAME -- COMMAND [ARGS...]
+            \\       {s} add [--global | --project] [--no-login] slack
+            \\  --global     write ~/.fx/mcp.json, the default; --scope user is the same
+            \\  --project    write ./.mcp.json; --scope project is the same
+            \\  --scope local  keep the server for this project only, in ~/.fx/mcp.json
+            \\               under projects; it wins over the same name elsewhere
+            \\  --transport  http, sse or stdio; without it a URL is http and a command is stdio.
+            \\               sse is the older transport: name it for a server that has no
+            \\               http endpoint
+            \\  --no-login   don't sign in to an HTTP server that needs a login
+            \\
+        , .{ p, p, p }),
+        .remove => try w.print("usage: {s} remove [--global | --project | --scope user|project|local] NAME\n", .{p}),
+        .login => try w.print("usage: {s} login [--no-browser] NAME\n  --no-browser  print the address instead of opening it\n", .{p}),
+        .logout => try w.print("usage: {s} logout NAME\n", .{p}),
+        .approve => try w.print("usage: {s} approve NAME | --all\n", .{p}),
+        .reject => try w.print("usage: {s} reject NAME\n", .{p}),
+        .call => try w.print(
+            \\usage: {s} call TOOL [JSON | -]
+            \\       {s} call list SERVER
+            \\       {s} call search QUERY...
+            \\       {s} call help TOOL
+            \\       {s} call resources SERVER [CURSOR]
+            \\       {s} call templates SERVER [CURSOR]
+            \\       {s} call read SERVER URI
+            \\       {s} call prompts SERVER [CURSOR]
+            \\       {s} call prompt SERVER NAME [JSON | -]
+            \\  Runs the MCP tool TOOL, such as mcp_linear_list_issues, with the JSON
+            \\  object of arguments, or with the object on stdin for -. Prints just
+            \\  the tool's data, so a command can save it to a file or filter it.
+            \\  When stdout is not a terminal, one line on stderr gives the data's
+            \\  size and shape, with the values of short fields that repeat.
+            \\  list prints every tool of SERVER and search the tools that best
+            \\  match QUERY, one per line: the name, a tab, and the description.
+            \\  help prints the arguments TOOL takes and what it does.
+            \\  resources and templates print one page of SERVER's resources or
+            \\  resource templates as JSON; a page that has more ends with a
+            \\  nextCursor to pass as CURSOR. read prints what URI returns.
+            \\  prompts prints one page of SERVER's prompts as JSON; prompt renders
+            \\  NAME with the JSON object of arguments, or with the object on stdin.
+            \\  Works only in a command that fx's shell tool runs, while it runs, and
+            \\  asks permission as a direct call of TOOL would; list, search, and
+            \\  help need none and show only the tools that agent may use.
+            \\  Exits 0 on success, 1 when the call fails, 2 for a usage mistake,
+            \\  3 outside a running fx shell call, 4 when too many calls are
+            \\  running, 5 when permission is not granted, and 6 when the tool
+            \\  returns an error.
+            \\
+        , .{ p, p, p, p, p, p, p, p, p }),
+    }
+}
+
+pub const Hosts = struct {
+    context: *anyopaque,
+    get: *const fn (context: *anyopaque, notify: ?runtime_mod.Notify) anyerror!?*Host,
+    release: *const fn (context: *anyopaque, host: *Host) void,
+    changed: *const fn (context: *anyopaque) void,
+    sign_in_when_loaded: ?*const fn (context: *anyopaque, name: []const u8) void = null,
+};
+
+pub const Context = struct {
+    gpa: Allocator,
+    out: *Writer,
+    err: *Writer,
+    surface: Surface,
+    home: []const u8,
+    workspace_root: []const u8,
+    hosts: Hosts,
+    cancel: ?*const std.atomic.Value(bool) = null,
+};
+
+pub fn run(c: Context, args: []const []const u8) u8 {
+    var arena_state: std.heap.ArenaAllocator = .init(c.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const code = runParsed(c, arena, args) catch |err| code: {
+        debug_trace.logf("mcp", "MCP verb failed args0={s} err={s}", .{ if (args.len > 0) args[0] else "", @errorName(err) });
+        c.err.print("{s}: {s}\n", .{ c.surface.prog(), describe(err) }) catch {};
+        break :code 1;
+    };
+    c.out.flush() catch {};
+    c.err.flush() catch {};
+    return code;
+}
+
+fn jsonUsageKind(surface: Surface, verb: ?Verb, args: []const []const u8) ?[]const u8 {
+    if (surface != .cli) return null;
+    const kind: []const u8 = switch (verb orelse return null) {
+        .list => "mcp_list",
+        .show => "mcp_show",
+        else => return null,
+    };
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--")) break;
+        if (std.mem.eql(u8, arg, "--json")) return kind;
+    }
+    return null;
+}
+
+fn writeJsonUsage(w: *std.Io.Writer, kind: []const u8, prefix: []const u8, message: []const u8) !void {
+    const text = if (std.mem.startsWith(u8, message, prefix)) message[prefix.len..] else message;
+    var json: std.json.Stringify = .{ .writer = w };
+    try json.beginObject();
+    try json.objectField("kind");
+    try json.write(kind);
+    try json.objectField("error");
+    try json.write(text);
+    try json.objectField("code");
+    try json.write("InvalidLocalSurfaceArgs");
+    try json.endObject();
+    try w.writeByte('\n');
+}
+
+fn runParsed(c: Context, arena: Allocator, args: []const []const u8) !u8 {
+    const command = switch (try parse(arena, c.surface, args)) {
+        .command => |command| command,
+        .usage => |u| {
+            if (jsonUsageKind(c.surface, u.verb, args)) |kind| {
+                try writeJsonUsage(c.out, kind, try arena.print("{s} {s}: ", .{ c.surface.prog(), args[0] }), u.message);
+                return 2;
+            }
+            try c.err.print("{s}\n", .{u.message});
+            try writeUsage(c.err, c.surface, u.verb);
+            return 2;
+        },
+        .moved => |message| {
+            try c.err.print("{s}\n", .{message});
+            return 2;
+        },
+    };
+
+    switch (command) {
+        .help, .call => {},
+        else => if (!std.Io.Dir.path.isAbsolute(c.home)) return error.HomeNotSet,
+    }
+    const old_profile = switch (command) {
+        .add => |a| a.old_profile,
+        .remove => |r| r.old_profile,
+        else => false,
+    };
+    if (old_profile) try c.err.print("{s} {s}: --profile " ++ command_specs.deprecated_until ++ "; use --global\n", .{ c.surface.prog(), @tagName(command) });
+    return switch (command) {
+        .help => |verb| {
+            try writeUsage(c.out, c.surface, verb);
+            return 0;
+        },
+        .list => |l| list(c, arena, l.json),
+        .show => |s| show(c, arena, s.name, s.json),
+        .add => |a| if (a.local) addLocal(c, arena, a.name, a.entry) else add(c, arena, a.name, a.file, a.entry, a.login),
+        .remove => |r| if (r.local) removeLocal(c, arena, r.name) else remove(c, arena, r.name, r.file),
+        .login => |l| login(c, arena, l.name, l.browser),
+        .logout => |name| logout(c, arena, name),
+        .approve => |name| trust(c, arena, if (name) |n| .{ .approve = n } else .approve_all),
+        .reject => |name| trust(c, arena, .{ .reject = name }),
+        .call => |asked| mcp_call_client.run(arena, io_mod.getIo(), c.out, c.err, asked),
+    };
+}
+
+const not_plain_words = "isn't a plain file; replace it with one";
+const link_loop_words = "is a link that loops or passes through too many links; replace it with a plain file";
+const too_large_words = std.fmt.comptimePrint("is over {d} MB, the most fx reads; make it smaller", .{config_file.max_read_bytes / (1024 * 1024)});
+
+fn whyNot(arena: Allocator, err: anyerror, path: []const u8) ![]const u8 {
+    switch (err) {
+        error.SymLinkLoop => return "it " ++ link_loop_words,
+        error.StreamTooLong => return "it " ++ too_large_words,
+        else => {},
+    }
+
+    if (err != error.Linked and err != error.DurablePathUnsafe) return describe(err);
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = std.Io.Dir.readLinkAbsolute(io_mod.getIo(), path, &buffer) catch {
+        const stat = std.Io.Dir.cwd().statFile(io_mod.getIo(), path, .{ .follow_symlinks = false }) catch return describe(err);
+        if (stat.kind != .file) return "it " ++ not_plain_words;
+        return "it has another hard link, and fx edits only a plain file; edit it by hand";
+    };
+    const target = try safe(arena, buffer[0..n]);
+    return try arena.print("it's a link to {s}, and fx edits only a plain file; edit {s} by hand", .{ target, target });
+}
+
+pub fn describe(err: anyerror) []const u8 {
+    return switch (err) {
+        error.OutOfMemory => "out of memory",
+        error.Exists => "that name is already in the file; remove it first",
+        error.BothKeys => "the file has both \"mcp\" and \"mcpServers\"; merge them into one",
+        error.Unreadable => "the file isn't valid JSON, or repeats a key; fix it by hand first",
+        error.NotAnObject => "the file's servers aren't a JSON object; fix it by hand first",
+        error.HomeNotSet => io_mod.no_home_dir_reason,
+        error.AccessDenied => "permission denied",
+        error.DurablePathUnsafe => "an MCP config file " ++ not_plain_words,
+        error.SymLinkLoop => "an MCP config file " ++ link_loop_words,
+        error.StreamTooLong => "an MCP config file " ++ too_large_words,
+        error.Timeout, error.LockTimeout => "another fx is changing the MCP config; try again",
+        error.McpConfigInvalidJson => profile_paths.displayText("~/.fx/mcp.json isn't valid JSON"),
+        error.McpConfigNotPlainFile => profile_paths.displayText("~/.fx/mcp.json " ++ not_plain_words),
+        error.McpConfigLinkLoop => profile_paths.displayText("~/.fx/mcp.json " ++ link_loop_words),
+        error.McpConfigTooLarge => profile_paths.displayText("~/.fx/mcp.json " ++ too_large_words),
+        error.McpConfigInvalidHeaders, error.McpConfigAuthorizationHeader => profile_paths.displayText("a server in ~/.fx/mcp.json has headers fx won't send; put a token in bearer_token_env, or sign in with login"),
+        else => if (isProfileConfigError(err)) profile_paths.displayText("~/.fx/mcp.json has a server entry fx can't read") else "something went wrong",
+    };
+}
+
+pub fn profileConfigNotice(err: anyerror) ?[]const u8 {
+    return if (isProfileConfigError(err)) describe(err) else null;
+}
+
+fn isProfileConfigError(err: anyerror) bool {
+    return std.mem.startsWith(u8, @errorName(err), "McpConfig");
+}
+
+const Paths = struct { profile: []const u8, project: []const u8 };
+
+fn paths(c: Context, arena: Allocator) !Paths {
+    return .{
+        .profile = try profile_paths.mcpConfigPath(arena, c.home),
+        .project = try std.Io.Dir.path.join(arena, &.{ c.workspace_root, ".mcp.json" }),
+    };
+}
+
+fn fileLabel(file: config_file.File) []const u8 {
+    return switch (file) {
+        .profile => profile_paths.displayText("~/.fx/mcp.json"),
+        .project => ".mcp.json",
+    };
+}
+
+fn sourceFile(status: Status) config_file.File {
+    return if (status.source == .workspace) .project else .profile;
+}
+
+fn list(c: Context, arena: Allocator, json: bool) !u8 {
+    const host = try c.hosts.get(c.hosts.context, null);
+    defer if (host) |h| c.hosts.release(c.hosts.context, h);
+
+    if (host) |h| h.runtime.pickUpLogins() catch |err| debug_trace.logf("mcp", "MCP saved logins not checked err={s}", .{@errorName(err)});
+    const statuses = if (host) |h| try h.runtime.statuses(arena) else &.{};
+    if (host) |h| try writeNotes(c, h);
+    const p = try paths(c, arena);
+    if (json) {
+        try writeListJson(c.out, statuses, p);
+        return 0;
+    }
+    if (statuses.len == 0) {
+        try c.out.print("No MCP servers configured. Add one with: {s} add NAME URL\n", .{c.surface.prog()});
+        return 0;
+    }
+    try writeList(c.out, arena, statuses);
+    return 0;
+}
+
+pub fn statusText(arena: Allocator, s: Status) Allocator.Error![]const u8 {
+    return switch (s.state) {
+        .disabled => "disabled",
+        .waiting_for_approval => "waiting for approval",
+        .rejected => "rejected",
+        .unsupported => "not supported",
+        .missing_env => try arena.print("needs ${s}", .{s.missing orelse "a variable"}),
+        .invalid_env => try arena.print("can't use ${s}", .{s.missing orelse "a variable"}),
+        .removed => try arena.print("removed, {d} tool{s}", .{ s.tools, if (s.tools == 1) "" else "s" }),
+        else => if (s.needs_login) "needs login" else switch (s.state) {
+            .ready => try arena.print("ready, {d} tool{s}", .{ s.tools, if (s.tools == 1) "" else "s" }),
+            .connecting => "connecting",
+            .retrying => try retryingText(arena, s.next_retry_at_ms, io_mod.milliTimestamp()),
+            .failed => "failed",
+            .idle => if (s.signed_in) "signed in" else "not started",
+            else => unreachable,
+        },
+    };
+}
+
+fn retryingText(arena: Allocator, next_retry_at_ms: ?i64, now_ms: i64) Allocator.Error![]const u8 {
+    const at_ms = next_retry_at_ms orelse return "retrying";
+    const remaining_ms = at_ms - now_ms;
+    if (remaining_ms <= 0) return "retrying now";
+    const seconds: u64 = @intCast(@divFloor(remaining_ms + 999, 1000));
+    if (seconds < 60) return arena.print("retrying in {d}s", .{seconds});
+    return arena.print("retrying in {d}m {d}s", .{ seconds / 60, seconds % 60 });
+}
+
+fn listedError(arena: Allocator, s: Status) Allocator.Error!?[]const u8 {
+    if (s.needs_login or (s.state != .failed and s.state != .retrying)) return null;
+    const raw = s.last_error orelse return null;
+    var folded: std.ArrayList(u8) = .empty;
+    var tokens = std.mem.tokenizeAny(u8, raw, " \t\r\n");
+    while (tokens.next()) |token| {
+        if (folded.items.len > 0) try folded.append(arena, ' ');
+        try folded.appendSlice(arena, token);
+    }
+    if (folded.items.len == 0) return null;
+    return try safe(arena, folded.items);
+}
+
+fn statusToken(s: Status) []const u8 {
+    return switch (s.state) {
+        .disabled => "disabled",
+        .waiting_for_approval => "waiting_for_approval",
+        .rejected => "rejected",
+        .unsupported => "not_supported",
+        .missing_env => "missing_env",
+        .invalid_env => "invalid_env",
+        .removed => "removed",
+        else => if (s.needs_login) "needs_login" else switch (s.state) {
+            .ready => "ready",
+            .connecting => "connecting",
+            .retrying => "retrying",
+            .failed => "failed",
+            .idle => if (s.signed_in) "signed_in" else "not_started",
+            else => unreachable,
+        },
+    };
+}
+
+fn writeList(w: *Writer, arena: Allocator, statuses: []const Status) !void {
+    const headers = [_][]const u8{ "NAME", "SOURCE", "TRANSPORT", "STATUS" };
+    const rows = try arena.alloc([4][]const u8, statuses.len);
+    var widths: [3]usize = .{ headers[0].len, headers[1].len, headers[2].len };
+    for (statuses, rows) |s, *row| {
+        row.* = .{ try safe(arena, s.name), fileLabel(sourceFile(s)), @tagName(s.transport), try statusText(arena, s) };
+        for (0..3) |k| widths[k] = @max(widths[k], text_utils.terminalSafeVisibleWidth(row[k]));
+    }
+    try writeRow(w, headers, widths);
+    for (rows, statuses) |row, s| {
+        try writeRow(w, row, widths);
+        if (try listedError(arena, s)) |text| try w.print("  error: {s}\n", .{text});
+    }
+}
+
+fn writeRow(w: *Writer, row: [4][]const u8, widths: [3]usize) !void {
+    for (0..3) |k| {
+        try w.writeAll(row[k]);
+        try w.splatByteAll(' ', widths[k] - text_utils.terminalSafeVisibleWidth(row[k]) + 2);
+    }
+    try w.print("{s}\n", .{row[3]});
+}
+
+fn writeListJson(w: *Writer, statuses: []const Status, p: Paths) !void {
+    var jw: std.json.Stringify = .{ .writer = w };
+    try jw.beginObject();
+    try jw.objectField("servers");
+    try jw.beginArray();
+    for (statuses) |s| {
+        try jw.beginObject();
+        try writeStatusFields(&jw, s, p);
+        try jw.objectField("tools");
+        try jw.write(if (s.state == .ready or s.state == .removed) @as(?usize, s.tools) else null);
+        try jw.endObject();
+    }
+    try jw.endArray();
+    try jw.endObject();
+    try w.writeByte('\n');
+}
+
+fn writeStatusFields(jw: *std.json.Stringify, s: Status, p: Paths) !void {
+    const file = sourceFile(s);
+    try jw.objectField("name");
+    try jw.write(s.name);
+    try jw.objectField("source");
+    try jw.write(@tagName(file));
+    try jw.objectField("file");
+    try jw.write(if (file == .project) p.project else p.profile);
+    try jw.objectField("transport");
+    try jw.write(@tagName(s.transport));
+    try jw.objectField("status");
+    try jw.write(statusToken(s));
+    try jw.objectField("error");
+    try jw.write(s.last_error);
+    if (s.next_retry_at_ms) |at_ms| {
+        try jw.objectField("next_retry_at");
+        try jw.write(at_ms);
+    }
+}
+
+fn writeNotes(c: Context, host: *Host) !void {
+    host.notes_mutex.lockUncancelable(host.runtime.io);
+    defer host.notes_mutex.unlock(host.runtime.io);
+    for (host.notes) |note| try c.err.print("note: {s}\n", .{note});
+}
+
+const terminal_text_max_bytes = 240;
+const sign_in_address_max_bytes = 16 * 1024;
+
+fn safe(arena: Allocator, raw: []const u8) Allocator.Error![]const u8 {
+    return (try text_utils.encodeTerminalSafeInline(arena, raw, terminal_text_max_bytes)).bytes;
+}
+
+fn safeUrl(arena: Allocator, raw: []const u8) Allocator.Error![]const u8 {
+    return (try text_utils.encodeTerminalSafeInline(arena, raw, sign_in_address_max_bytes)).bytes;
+}
+
+fn findStatus(statuses: []const Status, name: []const u8) ?Status {
+    for (statuses) |s| if (std.mem.eql(u8, s.name, name)) return s;
+    return null;
+}
+
+fn show(c: Context, arena: Allocator, name: []const u8, json: bool) !u8 {
+    const host = (try c.hosts.get(c.hosts.context, null)) orelse return missing(c, arena, name);
+    defer c.hosts.release(c.hosts.context, host);
+    try writeNotes(c, host);
+    const server = findServer(host, name) orelse return missing(c, arena, name);
+    const tools: []runtime_mod.Tool = switch (host.runtime.tools(arena, name, c.cancel) catch |err| switch (err) {
+        error.Held => runtime_mod.ToolsResult{ .tools = &.{} },
+        else => return err,
+    }) {
+        .tools => |t| t,
+        .needs_login, .failed => &.{},
+        .unknown_server => return missing(c, arena, name),
+    };
+
+    const status = findStatus(try host.runtime.statuses(arena), name) orelse return missing(c, arena, name);
+    const p = try paths(c, arena);
+    if (json) {
+        var jw: std.json.Stringify = .{ .writer = c.out };
+        try jw.beginObject();
+        try writeStatusFields(&jw, status, p);
+        try jw.objectField("version");
+        try jw.write(status.version);
+        try jw.objectField("url");
+        try jw.write(server.url);
+        try jw.objectField("command");
+        try jw.write(server.command);
+        try jw.objectField("tools");
+        try jw.beginArray();
+        for (tools) |t| {
+            try jw.beginObject();
+            try jw.objectField("name");
+            try jw.write(t.name);
+            try jw.objectField("description");
+            try jw.write(try toolDescription(arena, t.raw));
+            try jw.endObject();
+        }
+        try jw.endArray();
+        try jw.endObject();
+        try c.out.writeByte('\n');
+    } else {
+        const w = c.out;
+        try w.print("{s}\n", .{try safe(arena, name)});
+        try w.print("  status     {s}\n", .{try statusText(arena, status)});
+        if (status.version) |v| try w.print("  version    {s}\n", .{try safe(arena, v)});
+        try w.print("  transport  {s}\n", .{@tagName(status.transport)});
+        if (server.url) |u| try w.print("  url        {s}\n", .{try safe(arena, u)});
+        if (server.command) |cmd| try w.print("  command    {s}\n", .{try safe(arena, cmd)});
+        try w.print("  source     {s}\n", .{fileLabel(sourceFile(status))});
+        if (status.last_error) |e| try w.print("  error      {s}\n", .{try safe(arena, e)});
+        if (status.needs_login) try w.print("  next       {s} login {s}\n", .{ c.surface.prog(), try safe(arena, name) });
+        if (status.state == .waiting_for_approval) try w.print("  next       {s} approve {s}\n", .{ c.surface.prog(), try safe(arena, name) });
+        if (tools.len > 0) {
+            try w.print("  tools      {d}\n", .{tools.len});
+            var width: usize = 0;
+            const names = try arena.alloc([]const u8, tools.len);
+            for (tools, names) |t, *n| {
+                n.* = try safe(arena, t.name);
+                width = @max(width, text_utils.terminalSafeVisibleWidth(n.*));
+            }
+            for (tools, names) |t, n| {
+                try w.print("    {s}", .{n});
+                const d = try toolDescription(arena, t.raw) orelse "";
+                if (d.len == 0) {
+                    try w.writeByte('\n');
+                    continue;
+                }
+                try w.splatByteAll(' ', width - text_utils.terminalSafeVisibleWidth(n) + 2);
+                try w.print("{s}\n", .{try safe(arena, d)});
+            }
+        }
+    }
+    return if (status.state == .ready and !status.needs_login) 0 else 1;
+}
+
+fn missing(c: Context, arena: Allocator, name: []const u8) !u8 {
+    try c.err.print("No MCP server named {s}. {s} list shows them.\n", .{ try safe(arena, name), c.surface.prog() });
+    return 1;
+}
+
+fn findServer(host: *Host, name: []const u8) ?@import("config.zig").Server {
+    for (host.runtime.servers()) |s| if (std.mem.eql(u8, s.name, name)) return s;
+    return null;
+}
+
+pub fn toolDescription(arena: Allocator, raw: []const u8) !?[]const u8 {
+    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return null;
+    if (value != .object) return null;
+    const d = value.object.get("description") orelse return null;
+    if (d != .string) return null;
+    const line = std.mem.trim(u8, d.string[0 .. std.mem.findScalar(u8, d.string, '\n') orelse d.string.len], " \t\r");
+    return line;
+}
+
+fn add(c: Context, arena: Allocator, name: []const u8, file: config_file.File, entry: config_file.Entry, login_after: bool) !u8 {
+    const p = try paths(c, arena);
+    const path = if (file == .project) p.project else p.profile;
+    _ = config_file.update(c.gpa, p.profile, file, path, .{ .add = .{ .name = name, .entry = entry } }) catch |err| {
+        try c.err.print("Couldn't add {s} to {s}: {s}.\n", .{ name, fileLabel(file), try whyNot(arena, err, path) });
+        return 1;
+    };
+    const next_session = c.surface == .shell and !inOpenSession(c, name);
+    c.hosts.changed(c.hosts.context);
+    try c.out.print("Added {s} to {s}.\n", .{ name, fileLabel(file) });
+    if (next_session) try c.out.writeAll(joins_next_session_note);
+    const other: config_file.File = if (file == .project) .profile else .project;
+    if (try defines(c, arena, other, if (other == .project) p.project else p.profile, name)) {
+        try c.out.print("{s} is also in {s}; the one in {s}/mcp.json is used.\n", .{ name, fileLabel(other), profile_paths.displayRoot() });
+    }
+
+    if (login_after and file == .profile and entry == .http) {
+        if (next_session) {
+            try c.out.print("If {s} needs a login, run fx mcp login {s} in a terminal, or /mcp login {s} in a new session.\n", .{ name, name, name });
+            return 0;
+        }
+        if (c.hosts.sign_in_when_loaded) |later| {
+            later(c.hosts.context, name);
+            return 0;
+        }
+        signInAfterAdd(c, arena, name) catch |err| {
+            debug_trace.logf("mcp", "MCP sign-in after add failed server={s} err={s}", .{ name, @errorName(err) });
+            try c.err.print("Couldn't check whether {s} needs a login: {s}. {s} login {s} signs in.\n", .{ name, describe(err), c.surface.prog(), name });
+        };
+    }
+    return 0;
+}
+
+const local_scope_words = "for this project only";
+
+fn addLocal(c: Context, arena: Allocator, name: []const u8, entry: config_file.Entry) !u8 {
+    const p = try paths(c, arena);
+    const project_root = project_config.localProjectKey(c.workspace_root);
+    _ = config_file.updateLocal(c.gpa, p.profile, project_root, .{ .add = .{ .name = name, .entry = entry } }) catch |err| {
+        try c.err.print("Couldn't add {s} to {s}: {s}.\n", .{ name, fileLabel(.profile), try whyNot(arena, err, p.profile) });
+        return 1;
+    };
+    const next_session = c.surface == .shell and !inOpenSession(c, name);
+    c.hosts.changed(c.hosts.context);
+    try c.out.print("Added {s} to {s}, {s}.\n", .{ name, fileLabel(.profile), local_scope_words });
+    if (next_session) try c.out.writeAll(joins_next_session_note);
+    if (entry == .http) try c.out.print("If {s} needs a login, sign in with: {s} login {s}\n", .{ name, c.surface.prog(), name });
+    return 0;
+}
+
+fn definesLocal(c: Context, arena: Allocator, path: []const u8, name: []const u8) !bool {
+    const text = (try config_file.read(arena, path)) orelse return false;
+    return config_file.hasLocal(arena, text, project_config.localProjectKey(c.workspace_root), name);
+}
+
+fn removeLocal(c: Context, arena: Allocator, name: []const u8) !u8 {
+    const p = try paths(c, arena);
+    const project_root = project_config.localProjectKey(c.workspace_root);
+    const updated = config_file.updateLocal(c.gpa, p.profile, project_root, .{ .remove = name }) catch |err| {
+        try c.err.print("Couldn't remove {s} from {s}: {s}.\n", .{ try safe(arena, name), fileLabel(.profile), try whyNot(arena, err, p.profile) });
+        return 1;
+    };
+    const url: ?[]u8 = switch (updated) {
+        .removed => |u| u,
+        .added => null,
+        .missing => {
+            try c.err.print("No MCP server named {s} in {s} {s}.\n", .{ try safe(arena, name), fileLabel(.profile), local_scope_words });
+            return 1;
+        },
+    };
+    defer if (url) |u| c.gpa.free(u);
+    const still_global = try defines(c, arena, .profile, p.profile, name);
+    var forgot = false;
+    if (url) |u| if (!still_global) {
+        const store = credentials.Store.detect(arena, c.home);
+        forgot = store.remove(arena, .{ .name = name, .url = u, .workspace = null }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => no: {
+                debug_trace.logf("mcp", "MCP credential not removed server={s} err={s}", .{ name, @errorName(err) });
+                break :no false;
+            },
+        };
+    };
+    c.hosts.changed(c.hosts.context);
+    try c.out.print("Removed {s} from {s}, where it was {s}{s}.\n", .{ name, fileLabel(.profile), local_scope_words, if (forgot) ", and deleted its login" else "" });
+    return 0;
+}
+
+const joins_next_session_note = "It joins the sessions you start from now on; this session keeps the servers it started with.\n";
+const removed_in_session_note = "This session lists it as removed, and its tools now answer with a removal notice.\n";
+
+fn inOpenSession(c: Context, name: []const u8) bool {
+    const host = (c.hosts.get(c.hosts.context, null) catch return false) orelse return false;
+    defer c.hosts.release(c.hosts.context, host);
+    return findServer(host, name) != null;
+}
+
+fn signInAfterAdd(c: Context, arena: Allocator, name: []const u8) !void {
+    var waiter: Waiter = .{ .gpa = c.gpa, .name = name };
+    defer waiter.deinit();
+    const host = (try c.hosts.get(c.hosts.context, waiter.notify())) orelse return;
+    defer c.hosts.release(c.hosts.context, host);
+    const server = findServer(host, name) orelse return;
+    const listed = host.runtime.tools(arena, name, c.cancel) catch |err| switch (err) {
+        error.Held => return,
+        else => return err,
+    };
+    if (listed != .needs_login) return;
+    if (!canOpenBrowser()) {
+        try c.out.print("{s} needs a login. Sign in with: {s} login {s}\n", .{ name, c.surface.prog(), name });
+        return;
+    }
+    try c.out.print("{s} needs a login.\n", .{name});
+    try c.out.flush();
+    const code = (try beginLogin(c, arena, host, server, name, true)) orelse try waitForLogin(c, arena, host, &waiter, true);
+    if (code != 0) try c.err.print("{s} is added. Sign in later with: {s} login {s}\n", .{ name, c.surface.prog(), name });
+}
+
+fn defines(c: Context, arena: Allocator, file: config_file.File, path: []const u8, name: []const u8) !bool {
+    _ = c;
+    const text = (try config_file.read(arena, path)) orelse return false;
+    return config_file.has(arena, file, text, name);
+}
+
+fn remove(c: Context, arena: Allocator, name: []const u8, only: ?config_file.File) !u8 {
+    const p = try paths(c, arena);
+    const in_profile = (only == null or only == .profile) and try defines(c, arena, .profile, p.profile, name);
+    const in_project = (only == null or only == .project) and try defines(c, arena, .project, p.project, name);
+    if (in_profile and in_project) {
+        try c.err.print("{s} is in both {s}/mcp.json and .mcp.json. Add --global or --project.\n", .{ try safe(arena, name), profile_paths.displayRoot() });
+        return 2;
+    }
+    if (!in_profile and !in_project) {
+        if (only == null and try definesLocal(c, arena, p.profile, name)) return removeLocal(c, arena, name);
+        const where = if (only) |f| fileLabel(f) else profile_paths.displayText("~/.fx/mcp.json or .mcp.json");
+        try c.err.print("No MCP server named {s} in {s}.\n", .{ try safe(arena, name), where });
+        return 1;
+    }
+    const file: config_file.File = if (in_profile) .profile else .project;
+    const path = if (file == .project) p.project else p.profile;
+    const updated = config_file.update(c.gpa, p.profile, file, path, .{ .remove = name }) catch |err| {
+        try c.err.print("Couldn't remove {s} from {s}: {s}.\n", .{ try safe(arena, name), fileLabel(file), try whyNot(arena, err, path) });
+        return 1;
+    };
+    const url = switch (updated) {
+        .removed => |u| u,
+        .added, .missing => null,
+    };
+    defer if (url) |u| c.gpa.free(u);
+    var forgot = false;
+    var kept: ?struct { store: credentials.Store, err: anyerror } = null;
+
+    if (url) |u| {
+        const store = credentials.Store.detect(arena, c.home);
+        forgot = store.remove(arena, .{ .name = name, .url = u, .workspace = if (file == .project) c.workspace_root else null }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => no: {
+                debug_trace.logf("mcp", "MCP credential not removed server={s} err={s}", .{ name, @errorName(err) });
+                kept = .{ .store = store, .err = err };
+                break :no false;
+            },
+        };
+    }
+    c.hosts.changed(c.hosts.context);
+
+    if (kept) |k| {
+        var buffer: [320]u8 = undefined;
+        const shown = try safe(arena, name);
+        try c.err.print("Removed {s} from {s}, but couldn't delete its saved login: {s}. Once that's fixed, add it back and run {s} logout {s} to delete it.\n", .{
+            shown, fileLabel(file), k.store.writeFailure(&buffer, k.err), c.surface.prog(), shown,
+        });
+        return 1;
+    }
+    try c.out.print("Removed {s} from {s}{s}.\n", .{ name, fileLabel(file), if (forgot) ", and deleted its login" else "" });
+    const other: config_file.File = if (file == .project) .profile else .project;
+    const still_defined = try defines(c, arena, other, if (other == .project) p.project else p.profile, name);
+    if (c.surface == .shell and !still_defined and inOpenSession(c, name)) try c.out.writeAll(removed_in_session_note);
+    return 0;
+}
+
+fn trust(c: Context, arena: Allocator, action: project_config.ProjectMcpAction) !u8 {
+    const host = try c.hosts.get(c.hosts.context, null);
+    defer if (host) |h| c.hosts.release(c.hosts.context, h);
+    const servers: []const @import("config.zig").Server = if (host) |h| h.runtime.servers() else &.{};
+
+    var targets: std.ArrayList(@import("config.zig").Server) = .empty;
+    for (servers) |s| {
+        if (s.source != .workspace) continue;
+        switch (action) {
+            .approve, .reject => |name| if (std.mem.eql(u8, s.name, name)) try targets.append(arena, s),
+            .approve_all => if (s.held != .rejected) try targets.append(arena, s),
+            .reset => {},
+        }
+    }
+    if (targets.items.len == 0) {
+        switch (action) {
+            .approve, .reject => |name| try c.err.print("No project server named {s} in .mcp.json.\n", .{try safe(arena, name)}),
+            else => try c.err.print("No project servers are waiting for approval.\n", .{}),
+        }
+        return 1;
+    }
+
+    for (0..if (action == .approve_all) targets.items.len else 1) |i| {
+        const one: project_config.ProjectMcpAction = if (action == .approve_all) .{ .approve = targets.items[i].name } else action;
+        var attempt = config_runtime.attemptProjectMcpMutation(arena, c.workspace_root, one);
+        defer attempt.deinit(arena);
+        switch (attempt) {
+            .failure => |f| {
+                try c.err.print("Couldn't save that choice: {s}.\n", .{describe(f.err)});
+                return 1;
+            },
+            .outcome => {},
+        }
+    }
+    c.hosts.changed(c.hosts.context);
+    for (targets.items) |s| {
+        const verb = if (action == .reject) "Rejected" else "Approved";
+        const target = s.command orelse s.url orelse "";
+        const how = if (s.command != null) "runs" else "connects to";
+        if (action == .reject) {
+            try c.out.print("{s} {s}. fx won't start it in this project.\n", .{ verb, try safe(arena, s.name) });
+        } else {
+            try c.out.print("{s} {s}, which {s}: {s}\n", .{ verb, try safe(arena, s.name), how, try safe(arena, target) });
+            if (s.headers_helper) |helper| try c.out.print("  Each time it connects, fx runs this command for its headers: {s}\n", .{try safe(arena, helper)});
+        }
+    }
+    return 0;
+}
+
+fn unreadableLogins(c: Context, arena: Allocator, doing: []const u8, name: []const u8) !u8 {
+    try c.err.print("Can't {s} {s}: fx can't read the saved MCP sign-ins in {s}. A newer fx saved them, or they're damaged; fix or delete them, then try again.\n", .{
+        doing, try safe(arena, name), credentials.Store.detect(arena, c.home).place(),
+    });
+    return 1;
+}
+
+fn notSignedOut(c: Context, arena: Allocator, name: []const u8, store: credentials.Store, err: anyerror) !u8 {
+    var buffer: [320]u8 = undefined;
+    try c.err.print("Couldn't sign out of {s}: {s}. Try again once that's fixed.\n", .{ try safe(arena, name), store.writeFailure(&buffer, err) });
+    return 1;
+}
+
+fn logout(c: Context, arena: Allocator, name: []const u8) !u8 {
+    const host = (try c.hosts.get(c.hosts.context, null)) orelse return missing(c, arena, name);
+    defer c.hosts.release(c.hosts.context, host);
+    const server = findServer(host, name) orelse return missing(c, arena, name);
+    if (server.transport == .stdio) {
+        try c.err.print("{s} runs a command, so it has no login.\n", .{try safe(arena, name)});
+        return 1;
+    }
+    const was = findStatus(try host.runtime.statuses(arena), name) orelse return missing(c, arena, name);
+    const store = credentials.Store.detect(arena, c.home);
+
+    const saved = store.get(arena, server.credentialKey()) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return notSignedOut(c, arena, name, store, err),
+    };
+    defer if (saved) |v| secret.zeroAndFree(arena, v);
+    const kept: ?anyerror = host.runtime.logout(name) catch |err| switch (err) {
+        error.UnknownServer => held: {
+            _ = store.remove(arena, server.credentialKey()) catch |e| switch (e) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.CredentialStoreUnreadable => return unreadableLogins(c, arena, "sign out of", name),
+                else => return notSignedOut(c, arena, name, store, e),
+            };
+            break :held null;
+        },
+        error.CredentialStoreUnreadable => return unreadableLogins(c, arena, "sign out of", name),
+        else => return err,
+    };
+    if (kept) |err| {
+        if (saved == null and !was.signed_in) return notSignedOut(c, arena, name, store, err);
+        var buffer: [320]u8 = undefined;
+        try c.err.print("Signed out of {s} here, but couldn't remove its saved login: {s}. Sign out again once that's fixed.\n", .{
+            try safe(arena, name), store.writeFailure(&buffer, err),
+        });
+        return 1;
+    }
+    if (saved != null or was.signed_in) {
+        try c.out.print("Signed out of {s}.\n", .{try safe(arena, name)});
+    } else {
+        try c.out.print("{s} wasn't signed in.\n", .{try safe(arena, name)});
+    }
+    return 0;
+}
+
+const Waiter = struct {
+    mutex: std.Io.Mutex = .init,
+    authorize: ?[]u8 = null,
+    shown: bool = false,
+    done: ?bool = null,
+    reason: ?[]u8 = null,
+    not_saved: ?[]u8 = null,
+    gpa: Allocator,
+    name: []const u8,
+
+    fn notify(w: *Waiter) runtime_mod.Notify {
+        return .{ .context = w, .notice = onNotice };
+    }
+
+    fn onNotice(context: *anyopaque, notice: runtime_mod.Notice) void {
+        const w: *Waiter = @ptrCast(@alignCast(context));
+        const io = io_mod.getIo();
+        w.mutex.lockUncancelable(io);
+        defer w.mutex.unlock(io);
+        switch (notice) {
+            .authorize => |a| if (std.mem.eql(u8, a.server, w.name) and w.authorize == null) {
+                w.authorize = w.gpa.dupe(u8, a.url) catch null;
+            },
+            .signed_in => |server| if (std.mem.eql(u8, server, w.name)) {
+                w.done = true;
+            },
+            .sign_in_failed => |f| if (std.mem.eql(u8, f.server, w.name)) {
+                w.reason = w.gpa.dupe(u8, f.reason) catch null;
+                w.done = false;
+            },
+            .needs_login => {},
+            .not_saved => |n| if (std.mem.eql(u8, n.server, w.name) and w.not_saved == null) {
+                w.not_saved = w.gpa.dupe(u8, n.reason) catch null;
+            },
+        }
+    }
+
+    fn deinit(w: *Waiter) void {
+        if (w.authorize) |a| w.gpa.free(a);
+        if (w.reason) |r| w.gpa.free(r);
+        if (w.not_saved) |r| w.gpa.free(r);
+    }
+};
+
+pub fn canOpenBrowser() bool {
+    if (io_mod.getenv("FX_NO_OPEN_BROWSER") != null or io_mod.getenv("SSH_CONNECTION") != null) return false;
+    return @import("builtin").target.os.tag == .macos or io_mod.getenv("DISPLAY") != null or io_mod.getenv("WAYLAND_DISPLAY") != null;
+}
+
+fn login(c: Context, arena: Allocator, name: []const u8, browser: bool) !u8 {
+    const open = browser and canOpenBrowser();
+    var waiter: Waiter = .{ .gpa = c.gpa, .name = name };
+    defer waiter.deinit();
+    const host = (try c.hosts.get(c.hosts.context, if (c.surface == .cli) waiter.notify() else null)) orelse return missing(c, arena, name);
+    defer c.hosts.release(c.hosts.context, host);
+    const server = findServer(host, name) orelse return missing(c, arena, name);
+    if (server.transport == .stdio) {
+        try c.err.print("{s} runs a command, so it has no login.\n", .{try safe(arena, name)});
+        return 1;
+    }
+    if (try beginLogin(c, arena, host, server, name, open)) |code| return code;
+
+    if (c.surface == .shell) return 0;
+    return waitForLogin(c, arena, host, &waiter, open);
+}
+
+fn beginLogin(c: Context, arena: Allocator, host: *Host, server: @import("config.zig").Server, name: []const u8, open: bool) !?u8 {
+    host.runtime.login(name, open) catch |err| switch (err) {
+        error.Held => {
+            const status = findStatus(try host.runtime.statuses(arena), name) orelse return try missing(c, arena, name);
+            try c.err.print("{s} is {s}", .{ try safe(arena, name), try statusText(arena, status) });
+            if (status.state == .waiting_for_approval) try c.err.print(": {s} approve {s}", .{ c.surface.prog(), try safe(arena, name) });
+            try c.err.writeAll(".\n");
+            return 1;
+        },
+        error.CredentialStoreUnreadable => return try unreadableLogins(c, arena, "sign in to", name),
+        error.CallbackPortInUse => {
+            try c.err.print("Couldn't sign in to {s}: port {d} is in use, maybe by another app signing in. Try again once it's free.\n", .{ try safe(arena, name), server.callback_port.? });
+            return 1;
+        },
+        else => return err,
+    };
+    return null;
+}
+
+const login_poll_ms = 100;
+
+fn waitForLogin(c: Context, arena: Allocator, host: *Host, waiter: *Waiter, open: bool) !u8 {
+    const io = io_mod.getIo();
+    const name = waiter.name;
+    var line: std.ArrayList(u8) = .empty;
+    while (true) {
+        var done: ?bool = null;
+        var url: ?[]const u8 = null;
+        var not_saved: ?[]const u8 = null;
+        {
+            waiter.mutex.lockUncancelable(io);
+            defer waiter.mutex.unlock(io);
+            done = waiter.done;
+            if (waiter.not_saved) |why| not_saved = try arena.dupe(u8, why);
+            if (!waiter.shown and waiter.authorize != null) {
+                waiter.shown = true;
+                url = try arena.dupe(u8, waiter.authorize.?);
+            }
+        }
+        if (url) |u| {
+            const shown = try safeUrl(arena, u);
+            if (open) {
+                try c.out.print("Approve in your browser. If it didn't open, go to:\n  {s}\n", .{shown});
+            } else {
+                try c.out.print("Open this address in a browser and approve:\n  {s}\nThen paste the address the browser ends on here, or wait if it comes back on its own.\n", .{shown});
+            }
+            try c.out.flush();
+        }
+        if (done) |ok| {
+            if (ok) if (not_saved) |why| {
+                try c.err.print("Signed in to {s}, but couldn't save the login: {s}. Sign in again once that's fixed.\n", .{ try safe(arena, name), try safe(arena, why) });
+                return 1;
+            };
+            if (ok) {
+                try c.out.print("Signed in to {s}.\n", .{try safe(arena, name)});
+                return 0;
+            }
+            try c.err.print("Couldn't sign in to {s}: {s}.\n", .{ try safe(arena, name), try safe(arena, waiter.reason orelse "the server refused") });
+            return 1;
+        }
+        if (!open and waiter.shown) {
+            if (try readPasted(arena, &line)) |pasted| {
+                host.runtime.finishLogin(name, pasted) catch |err| switch (err) {
+                    error.NotSigningIn => {},
+                    else => return err,
+                };
+                continue;
+            }
+        } else io_mod.sleep(login_poll_ms * std.time.ns_per_ms);
+    }
+}
+
+fn readPasted(arena: Allocator, line: *std.ArrayList(u8)) !?[]const u8 {
+    var fds = [_]std.posix.pollfd{.{ .fd = std.posix.STDIN_FILENO, .events = std.posix.POLL.IN, .revents = 0 }};
+    if (try std.posix.poll(&fds, login_poll_ms) == 0) return null;
+    var buffer: [1024]u8 = undefined;
+    const n = std.posix.read(std.posix.STDIN_FILENO, &buffer) catch return null;
+    if (n == 0) {
+        io_mod.sleep(login_poll_ms * std.time.ns_per_ms);
+        return null;
+    }
+    try line.appendSlice(arena, buffer[0..n]);
+    const end = std.mem.findScalar(u8, line.items, '\n') orelse return null;
+    const pasted = std.mem.trim(u8, line.items[0..end], " \t\r");
+    const copy = try arena.dupe(u8, pasted);
+    line.replaceRangeAssumeCapacity(0, end + 1, &.{});
+    return if (copy.len == 0) null else copy;
+}
+
+const testing = std.testing;
+
+fn parseCli(arena: Allocator, args: []const []const u8) !Parsed {
+    return parse(arena, .cli, args);
+}
+
+pub fn isValidServerName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    for (name) |byte| {
+        if (std.ascii.isAlphanumeric(byte) or byte == '_' or byte == '-') continue;
+        return false;
+    }
+    return true;
+}
+
+test "a server name is letters, digits, underscores, and hyphens" {
+    try testing.expect(isValidServerName("my-server_2"));
+    for ([_][]const u8{ "", "bad/name", "bad name", "bad.name" }) |name| try testing.expect(!isValidServerName(name));
+}
+
+test "parse reads every verb, with flags before --" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    try testing.expect((try parseCli(a, &.{"list"})).command.list.json == false);
+    try testing.expect((try parseCli(a, &.{ "list", "--json" })).command.list.json);
+    const s = (try parseCli(a, &.{ "show", "--json", "ctx" })).command.show;
+    try testing.expectEqualStrings("ctx", s.name);
+    try testing.expect(s.json);
+
+    const http = (try parseCli(a, &.{ "add", "web", "https://w/mcp", "--header", "X-Key=${K}", "--project" })).command.add;
+    try testing.expectEqualStrings("web", http.name);
+    try testing.expectEqual(config_file.File.project, http.file);
+    try testing.expectEqualStrings("https://w/mcp", http.entry.http.url);
+    try testing.expectEqualStrings("X-Key", http.entry.http.headers[0].key);
+    try testing.expectEqualStrings("${K}", http.entry.http.headers[0].value);
+
+    try testing.expect(http.login);
+    try testing.expect(!(try parseCli(a, &.{ "add", "--no-login", "web", "https://w/mcp" })).command.add.login);
+    try testing.expect(!(try parse(a, .shell, &.{ "add", "slack", "--no-login" })).command.add.login);
+
+    try testing.expectEqualStrings("https://mcp.slack.com/mcp", (try parseCli(a, &.{ "add", "slack" })).command.add.entry.http.url);
+    try testing.expectEqualStrings("https://slack.example/mcp", (try parseCli(a, &.{ "add", "slack", "https://slack.example/mcp" })).command.add.entry.http.url);
+
+    const stdio = (try parseCli(a, &.{ "add", "--env", "A=1=2", "local", "--", "node", "server.js", "--help", "-h" })).command.add;
+    try testing.expectEqual(config_file.File.profile, stdio.file);
+    try testing.expectEqualStrings("node", stdio.entry.stdio.command);
+    try testing.expectEqual(@as(usize, 3), stdio.entry.stdio.args.len);
+    try testing.expectEqualStrings("-h", stdio.entry.stdio.args[2]);
+    try testing.expectEqualStrings("1=2", stdio.entry.stdio.env[0].value);
+
+    try testing.expectEqual(@as(?config_file.File, .project), (try parseCli(a, &.{ "remove", "--project", "x" })).command.remove.file);
+
+    try testing.expectEqual(@as(?config_file.File, .profile), (try parseCli(a, &.{ "remove", "--global", "x" })).command.remove.file);
+    try testing.expectEqual(@as(?config_file.File, .profile), (try parseCli(a, &.{ "remove", "--profile", "x" })).command.remove.file);
+    try testing.expectEqual(config_file.File.profile, (try parseCli(a, &.{ "add", "--global", "web", "https://w/mcp" })).command.add.file);
+    try testing.expectEqual(@as(?config_file.File, null), (try parseCli(a, &.{ "remove", "x" })).command.remove.file);
+    try testing.expect(!(try parseCli(a, &.{ "login", "--no-browser", "x" })).command.login.browser);
+    try testing.expectEqualStrings("x", (try parseCli(a, &.{ "logout", "x" })).command.logout);
+    try testing.expect((try parseCli(a, &.{ "approve", "--all" })).command.approve == null);
+    try testing.expectEqualStrings("x", (try parseCli(a, &.{ "reject", "x" })).command.reject);
+    try testing.expectEqual(@as(?Verb, .add), (try parseCli(a, &.{ "add", "-h" })).command.help);
+    try testing.expectEqual(@as(?Verb, null), (try parseCli(a, &.{})).command.help);
+
+    const call = (try parseCli(a, &.{ "call", "mcp_linear_list_issues", "-" })).command.call.call;
+    try testing.expectEqualStrings("mcp_linear_list_issues", call.tool);
+    try testing.expectEqualStrings("-", call.arguments.?);
+    try testing.expect((try parseCli(a, &.{ "call", "mcp_linear_list_issues" })).command.call.call.arguments == null);
+    try testing.expectEqualStrings("linear", (try parseCli(a, &.{ "call", "list", "linear" })).command.call.list);
+    try testing.expectEqualStrings("mcp_linear_list_issues", (try parseCli(a, &.{ "call", "help", "mcp_linear_list_issues" })).command.call.help);
+
+    try testing.expectEqualStrings("open issues", (try parseCli(a, &.{ "call", "search", "open", "issues" })).command.call.search);
+    try testing.expectEqual(@as(?Verb, .call), (try parseCli(a, &.{ "call", "-h" })).command.help);
+}
+
+test "parse turns fx mcp call mistakes into usage" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const cases = [_]struct { args: []const []const u8, message: []const u8 }{
+        .{ .args = &.{"call"}, .message = "fx mcp call needs a TOOL, or list, search, or help." },
+        .{ .args = &.{ "call", "t", "{}", "{}" }, .message = "fx mcp call needs a TOOL and at most one JSON argument." },
+        .{ .args = &.{ "call", "list" }, .message = "fx mcp call list needs one server NAME." },
+        .{ .args = &.{ "call", "list", "a", "b" }, .message = "fx mcp call list needs one server NAME." },
+        .{ .args = &.{ "call", "help" }, .message = "fx mcp call help needs one TOOL." },
+        .{ .args = &.{ "call", "help", "" }, .message = "fx mcp call help needs one TOOL." },
+        .{ .args = &.{ "call", "search", " " }, .message = "fx mcp call search needs a QUERY." },
+    };
+    for (cases) |case| try testing.expectEqualStrings(case.message, (try parseCli(a, case.args)).usage.message);
+    try testing.expect((try parse(a, .shell, &.{ "call", "list", "linear" })).usage.message.len > 0);
+}
+
+test "list and show report a usage error as JSON only when the line asks for it" {
+    try testing.expectEqualStrings("mcp_list", jsonUsageKind(.cli, .list, &.{ "list", "--bogus", "--json" }).?);
+    try testing.expectEqualStrings("mcp_show", jsonUsageKind(.cli, .show, &.{ "show", "--json" }).?);
+    try testing.expect(jsonUsageKind(.cli, .list, &.{ "list", "--bogus" }) == null);
+    try testing.expect(jsonUsageKind(.shell, .list, &.{ "list", "--json" }) == null);
+    try testing.expect(jsonUsageKind(.cli, .add, &.{ "add", "x", "--", "cmd", "--json" }) == null);
+    try testing.expect(jsonUsageKind(.cli, null, &.{"lsit"}) == null);
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try writeJsonUsage(&out.writer, "mcp_list", "fx mcp list: ", "fx mcp list: unknown flag --bogus");
+    try testing.expectEqualStrings("{\"kind\":\"mcp_list\",\"error\":\"unknown flag --bogus\",\"code\":\"InvalidLocalSurfaceArgs\"}\n", out.written());
+}
+
+test "parse turns mistakes into usage, and old verbs into pointers" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    const cases = [_]struct { args: []const []const u8, message: []const u8 }{
+        .{ .args = &.{"nope"}, .message = "'nope' isn't an fx mcp command." },
+        .{ .args = &.{"lsit"}, .message = "'lsit' isn't an fx mcp command; did you mean list?" },
+        .{ .args = &.{"show"}, .message = "fx mcp show needs one server NAME." },
+        .{ .args = &.{ "show", "a", "b" }, .message = "fx mcp show needs one server NAME." },
+        .{ .args = &.{ "add", "bad name", "https://w" }, .message = "'bad name' can't be a server name: use letters, digits, '-' and '_'." },
+        .{ .args = &.{ "add", "web", "w.example" }, .message = "'w.example' isn't a URL. A stdio server's command goes after --." },
+        .{ .args = &.{ "add", "web" }, .message = "fx mcp add needs a URL, or -- and a command." },
+        .{ .args = &.{ "add", "web", "--" }, .message = "fx mcp add needs a command after --." },
+        .{ .args = &.{ "add", "--env", "A=1", "web", "https://w" }, .message = "--env is for stdio servers; use --header for HTTP." },
+        .{ .args = &.{ "add", "--header", "A=1", "web", "--", "node" }, .message = "--header is for HTTP servers; use --env for a command." },
+        .{ .args = &.{ "add", "--env", "noequals", "web", "--", "node" }, .message = "--env needs KEY=VALUE." },
+        .{ .args = &.{ "remove", "--project", "--profile", "x" }, .message = "Use --project or --global, not both." },
+        .{ .args = &.{ "add", "--global", "--project", "web", "https://w/mcp" }, .message = "Use --project or --global, not both." },
+        .{ .args = &.{ "approve", "--all", "x" }, .message = "fx mcp approve takes a NAME or --all, not both." },
+        .{ .args = &.{ "logout", "--json", "x" }, .message = "fx mcp logout: unknown flag --json" },
+        .{ .args = &.{ "show", "x", "--", "y" }, .message = "fx mcp show takes no command after --." },
+    };
+    for (cases) |case| {
+        const parsed = try parseCli(a, case.args);
+        try testing.expectEqualStrings(case.message, parsed.usage.message);
+    }
+    try testing.expectEqualStrings("fx mcp auth is now fx mcp login NAME.", (try parseCli(a, &.{ "auth", "x" })).moved);
+    try testing.expectEqualStrings("/mcp reload is gone: fx loads MCP config changes at your next prompt or /mcp command.", (try parse(a, .shell, &.{"reload"})).moved);
+    try testing.expectEqualStrings("/mcp list: unknown flag --json", (try parse(a, .shell, &.{ "list", "--json" })).usage.message);
+    try testing.expectEqualStrings("'nope' isn't a /mcp command.", (try parse(a, .shell, &.{"nope"})).usage.message);
+}
+
+test "status words follow commands.md, held states first" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const base: Status = .{ .name = "x", .source = .profile, .transport = .http, .state = .idle };
+    var s = base;
+    try testing.expectEqualStrings("not started", try statusText(a, s));
+    s.signed_in = true;
+    try testing.expectEqualStrings("signed in", try statusText(a, s));
+    s = base;
+    s.state = .ready;
+    s.tools = 1;
+    try testing.expectEqualStrings("ready, 1 tool", try statusText(a, s));
+    s.needs_login = true;
+    try testing.expectEqualStrings("needs login", try statusText(a, s));
+    try testing.expectEqualStrings("needs_login", statusToken(s));
+    s = base;
+    s.state = .missing_env;
+    s.missing = "TOKEN";
+    s.needs_login = true;
+    try testing.expectEqualStrings("needs $TOKEN", try statusText(a, s));
+    s.state = .waiting_for_approval;
+    try testing.expectEqualStrings("waiting for approval", try statusText(a, s));
+}
+
+test "a server deleted from the config while the session is open reads as removed, with the tools it had" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const removed: Status = .{ .name = "docs", .source = .profile, .transport = .stdio, .state = .removed, .tools = 2, .needs_login = true };
+    try testing.expectEqualStrings("removed, 2 tools", try statusText(a, removed));
+    try testing.expectEqualStrings("removed", statusToken(removed));
+
+    var out: Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try writeListJson(&out.writer, &.{removed}, .{ .profile = "/h/.fx/mcp.json", .project = "/w/.mcp.json" });
+    try testing.expectEqualStrings(
+        \\{"servers":[{"name":"docs","source":"profile","file":"/h/.fx/mcp.json","transport":"stdio","status":"removed","error":null,"tools":2}]}
+        \\
+    , out.written());
+}
+
+test "every verb that uses ~/.fx needs an absolute home" {
+    const NoHosts = struct {
+        fn get(_: *anyopaque, _: ?runtime_mod.Notify) anyerror!?*Host {
+            return null;
+        }
+        fn release(_: *anyopaque, _: *Host) void {}
+        fn changed(_: *anyopaque) void {}
+    };
+    var unused: u8 = 0;
+    for ([_][]const u8{ "", "relative/home" }) |home| {
+        var out: Writer.Allocating = .init(testing.allocator);
+        defer out.deinit();
+        var err: Writer.Allocating = .init(testing.allocator);
+        defer err.deinit();
+        const c: Context = .{
+            .gpa = testing.allocator,
+            .out = &out.writer,
+            .err = &err.writer,
+            .surface = .shell,
+            .home = home,
+            .workspace_root = "/Users/example/project",
+            .hosts = .{ .context = &unused, .get = NoHosts.get, .release = NoHosts.release, .changed = NoHosts.changed },
+        };
+        try testing.expectEqual(@as(u8, 1), run(c, &.{ "add", "probe", "http://127.0.0.1:9/mcp" }));
+        try testing.expectEqualStrings("/mcp: HOME is not set to an absolute path\n", err.written());
+        try testing.expectEqual(@as(u8, 0), run(c, &.{"help"}));
+        try testing.expect(out.written().len > 0);
+    }
+}
+
+test "a retrying server says when it tries again, and a failed one lists its error on one line" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try testing.expectEqualStrings("retrying", try retryingText(a, null, 1_000));
+    try testing.expectEqualStrings("retrying now", try retryingText(a, 900, 1_000));
+    try testing.expectEqualStrings("retrying in 5s", try retryingText(a, 5_001, 1_000));
+    try testing.expectEqualStrings("retrying in 59s", try retryingText(a, 60_000, 1_000));
+    try testing.expectEqualStrings("retrying in 5m 0s", try retryingText(a, 301_000, 1_000));
+
+    const statuses = [_]Status{
+        .{ .name = "docs", .source = .profile, .transport = .stdio, .state = .failed, .last_error = "its command was not found;\n  its last stderr lines: sh: 1" },
+        .{ .name = "web", .source = .profile, .transport = .http, .state = .ready, .tools = 1, .last_error = "stale" },
+    };
+    var out: Writer.Allocating = .init(a);
+    try writeList(&out.writer, a, &statuses);
+    try testing.expectEqualStrings(
+        \\NAME  SOURCE          TRANSPORT  STATUS
+        \\docs  ~/.fx/mcp.json  stdio      failed
+        \\  error: its command was not found; its last stderr lines: sh: 1
+        \\web   ~/.fx/mcp.json  http       ready, 1 tool
+        \\
+    , out.written());
+
+    const retrying = [_]Status{.{ .name = "api", .source = .profile, .transport = .http, .state = .retrying, .last_error = "its session ended", .next_retry_at_ms = 1_700_000_005_000 }};
+    var json: Writer.Allocating = .init(a);
+    try writeListJson(&json.writer, &retrying, .{ .profile = "/h/.fx/mcp.json", .project = "/w/.mcp.json" });
+    try testing.expectEqualStrings(
+        \\{"servers":[{"name":"api","source":"profile","file":"/h/.fx/mcp.json","transport":"http","status":"retrying","error":"its session ended","next_retry_at":1700000005000,"tools":null}]}
+        \\
+    , json.written());
+}
+
+test "list lines up its columns and keeps hostile names inert" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const statuses = [_]Status{
+        .{ .name = "context7", .source = .profile, .transport = .http, .state = .ready, .tools = 2 },
+        .{ .name = "x\x1b[2J", .source = .workspace, .transport = .stdio, .state = .waiting_for_approval },
+    };
+    var out: Writer.Allocating = .init(a);
+    try writeList(&out.writer, a, &statuses);
+    try testing.expectEqualStrings(
+        \\NAME      SOURCE          TRANSPORT  STATUS
+        \\context7  ~/.fx/mcp.json  http       ready, 2 tools
+        \\x\x1b[2J  .mcp.json       stdio      waiting for approval
+        \\
+    , out.written());
+
+    var json: Writer.Allocating = .init(a);
+    try writeListJson(&json.writer, statuses[0..1], .{ .profile = "/h/.fx/mcp.json", .project = "/w/.mcp.json" });
+    try testing.expectEqualStrings(
+        \\{"servers":[{"name":"context7","source":"profile","file":"/h/.fx/mcp.json","transport":"http","status":"ready","error":null,"tools":2}]}
+        \\
+    , json.written());
+}
+
+test "an MCP file fx can't read gets fx's words, and only mcp.json's own errors name it" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try testing.expectEqualStrings(
+        profile_paths.displayText("~/.fx/mcp.json is a link that loops or passes through too many links; replace it with a plain file"),
+        profileConfigNotice(error.McpConfigLinkLoop).?,
+    );
+    try testing.expectEqualStrings(
+        profile_paths.displayText("~/.fx/mcp.json is over 1 MB, the most fx reads; make it smaller"),
+        profileConfigNotice(error.McpConfigTooLarge).?,
+    );
+    try testing.expectEqualStrings(
+        profile_paths.displayText("~/.fx/mcp.json isn't a plain file; replace it with one"),
+        profileConfigNotice(error.McpConfigNotPlainFile).?,
+    );
+    try testing.expectEqualStrings(profile_paths.displayText("~/.fx/mcp.json isn't valid JSON"), profileConfigNotice(error.McpConfigInvalidJson).?);
+
+    try testing.expect(profileConfigNotice(error.SymLinkLoop) == null);
+    try testing.expect(profileConfigNotice(error.AccessDenied) == null);
+    try testing.expectEqualStrings("an MCP config file is a link that loops or passes through too many links; replace it with a plain file", describe(error.SymLinkLoop));
+    try testing.expectEqualStrings("an MCP config file is over 1 MB, the most fx reads; make it smaller", describe(error.StreamTooLong));
+    try testing.expectEqualStrings("it is a link that loops or passes through too many links; replace it with a plain file", try whyNot(a, error.SymLinkLoop, "/example/.mcp.json"));
+    try testing.expectEqualStrings("it is over 1 MB, the most fx reads; make it smaller", try whyNot(a, error.StreamTooLong, "/example/.mcp.json"));
+}
+
+test "add takes --transport and --scope, and get is show" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    const sse = (try parseCli(a, &.{ "add", "--transport", "sse", "--scope", "project", "old", "https://o/sse" })).command.add;
+    try testing.expect(sse.entry.http.sse);
+    try testing.expectEqual(config_file.File.project, sse.file);
+    const http = (try parseCli(a, &.{ "add", "--transport", "http", "--scope", "user", "web", "https://w/mcp" })).command.add;
+    try testing.expect(!http.entry.http.sse);
+    try testing.expectEqual(config_file.File.profile, http.file);
+    const stdio = (try parseCli(a, &.{ "add", "--transport", "stdio", "--env", "K=v", "ctx", "--", "npx", "-y", "ctx" })).command.add;
+    try testing.expectEqualStrings("npx", stdio.entry.stdio.command);
+    try testing.expectEqual(config_file.File.project, (try parseCli(a, &.{ "remove", "--scope", "project", "ctx" })).command.remove.file.?);
+    try testing.expectEqualStrings("ctx", (try parseCli(a, &.{ "get", "ctx" })).command.show.name);
+
+    const cases = [_]struct { args: []const []const u8, message: []const u8 }{
+        .{ .args = &.{ "add", "--transport", "ws", "sock", "https://s/ws" }, .message = "--transport doesn't take ws; fx connects over http, sse or stdio." },
+        .{ .args = &.{ "add", "--transport", "pipe", "p", "https://p/mcp" }, .message = "--transport takes http, sse or stdio, not 'pipe'." },
+        .{ .args = &.{ "add", "--transport", "stdio", "web", "https://w/mcp" }, .message = "--transport stdio needs -- and a command, not a URL." },
+        .{ .args = &.{ "add", "--transport", "sse", "ctx", "--", "node" }, .message = "--transport sse needs a URL, not a command after --." },
+        .{ .args = &.{ "add", "--scope", "team", "web", "https://w/mcp" }, .message = "--scope takes user, project or local, not 'team'." },
+        .{ .args = &.{ "add", "--scope", "local", "--project", "web", "https://w/mcp" }, .message = one_scope_words },
+        .{ .args = &.{ "remove", "--scope", "local", "--global", "web" }, .message = one_scope_words },
+        .{ .args = &.{ "add", "--scope", "user", "--project", "web", "https://w/mcp" }, .message = "Use --project or --global, not both." },
+    };
+    for (cases) |case| try testing.expectEqualStrings(case.message, (try parseCli(a, case.args)).usage.message);
+    const local_add = (try parseCli(a, &.{ "add", "--scope", "local", "web", "https://w/mcp" })).command.add;
+    try testing.expect(local_add.local);
+    try testing.expectEqual(config_file.File.profile, local_add.file);
+    const local_remove = (try parseCli(a, &.{ "remove", "--scope", "local", "web" })).command.remove;
+    try testing.expect(local_remove.local);
+    try testing.expect(local_remove.file == null);
+    try testing.expect(!(try parseCli(a, &.{ "remove", "web" })).command.remove.local);
+}
