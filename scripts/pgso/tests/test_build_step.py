@@ -10,9 +10,11 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 
-def host_target() -> str:
-    machine = {"arm64": "aarch64", "aarch64": "aarch64", "AMD64": "x86_64", "x86_64": "x86_64"}[platform.machine()]
-    return f"{machine}-macos" if platform.system() == "Darwin" else f"{machine}-linux"
+def target_flags() -> list[str]:
+    if platform.system() != "Darwin":
+        return []
+    machine = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64"}[platform.machine()]
+    return [f"-Dtarget={machine}-macos"]
 
 
 class PgsoBuildStepTests(unittest.TestCase):
@@ -25,7 +27,7 @@ class PgsoBuildStepTests(unittest.TestCase):
                     "pgso-ir",
                     f"-Dpgso-artifact={selector}",
                     "-Doptimize=ReleaseSafe",
-                    f"-Dtarget={host_target()}",
+                    *target_flags(),
                     "--prefix",
                     tmp,
                 ],

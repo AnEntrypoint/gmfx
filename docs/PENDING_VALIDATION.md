@@ -5054,3 +5054,12 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0.
 - Red check (Phase B): remove the verify-goal-print line from corpus.json in a copy restored from HEAD afterwards. The count assertion must fail with `AssertionError: 95 != 96`, RC 1.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: PGSO IR test builds the native target on Linux (2026-11-21, Phase A)
+
+- Cause: the Linux PGSO candidate jobs run test_fx_ir_step_emits_release_safe_bitcode, which passes an explicit `-Dtarget=x86_64-linux`. That target fails to link on this host. txiki's libuv is compiled by CMake with the host cc, so it references glibc 2.38+ `__isoc23_sscanf`, and the link uses zig's bundled glibc, which lacks it: `error: ld.lld: undefined symbol: __isoc23_sscanf`. The commit c6867a21 made this explicit target the host_target, so it also replaced the aarch64-macos literal from the previous Release run.
+- Change: scripts/pgso/tests/test_build_step.py replaces host_target with target_flags. macOS keeps `-Dtarget=<arch>-macos`. Linux passes no -Dtarget, so zig builds the native target, the same way ci.yml builds Linux with `zig build -Doptimize=...`. This supersedes the host_target part of c6867a21.
+- Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_build_step -v` on this Linux host: Ran 3 tests, OK (446.8 s).
+- Red check (Phase B): the explicit `-Dtarget=x86_64-linux` form fails at the link with `ld.lld: undefined symbol: __isoc23_sscanf` (run3 W3). A build.zig attempt that routed Linux txiki through zig cc removed the __isoc23 symbols but still failed with `undefined symbol: getrlimit64`, so it was reverted and is not part of this commit.
+- OPEN, not fixed: an explicit `-Dtarget=x86_64-linux` build still fails to link in this environment. dev-release.yml builds that explicit target (and aarch64-linux). Its recent runs are skipped, so there is no CI evidence either way.
+- Status: written, witness run in Phase B.
