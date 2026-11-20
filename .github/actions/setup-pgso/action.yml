@@ -184,3 +184,7 @@ runs:
         binary="$RUNNER_TEMP/$name/hyperfine"
         test "$("$binary" --version)" = "hyperfine 1.20.0"
         echo "path=$binary" >> "$GITHUB_OUTPUT"
+
+    - name: Vendor txiki sources
+      shell: bash
+      run: node scripts/vendor-txiki.mjs

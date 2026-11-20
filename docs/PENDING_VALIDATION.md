@@ -4990,3 +4990,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness: timeout 1800 zig build test -Dtest-area=core -Dtest-filter='plugin system prompts are appended to the base prompt when enabled'. Must pass with RC 0.
 - Red check 201a: contributions.zig `for (try systemPrompts(arena, plugins)) |prompt| {` changed to `for (try systemPrompts(arena, plugins[0..0])) |prompt| {`. Expect RC 1 with a named `error: 'core` failure for this test. Restore from HEAD and cmp.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: vendor txiki sources in the PGSO setup action (2026-11-20, Phase A)
+
+- Cause: .gitignore:61 ignores /native/third_party/, and no workflow runs scripts/vendor-txiki.mjs. A clean checkout has no native/third_party/txiki/libuv, so cmake fails: `CMake Error at CMakeLists.txt:25 (add_subdirectory): add_subdirectory given source ".../native/third_party/txiki/libuv" which is not an existing directory.` Release run 44808353715 shows it in build-linux-aarch64, build-linux-x86_64, build-macos-arm64 (Build seed and plan shards) and Build macos-x86_64.
+- Change: .github/actions/setup-pgso/action.yml ends with a step "Vendor txiki sources" that runs `node scripts/vendor-txiki.mjs`, the pinned fetch in scripts/txiki/pin.json. Every PGSO job uses this action after checkout.
+- Witness (Phase B): `W=$(mktemp -d) && git archive HEAD | tar -x -C "$W" && (cd "$W" && node scripts/vendor-txiki.mjs && timeout 600 cmake -S native/txiki -B "$W/cfg" -DCMAKE_BUILD_TYPE=Release)` must exit 0.
+- Red check (Phase B): the same archive without the vendor command. cmake must exit 1 with the add_subdirectory error at CMakeLists.txt:25.
+- Status: written, NOT run in Phase B yet.
