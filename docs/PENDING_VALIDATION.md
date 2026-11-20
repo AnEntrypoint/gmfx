@@ -5046,3 +5046,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0.
 - Red check (Phase B): remove the tuple line in a copy of the file, or with rep.py on the working tree restored from HEAD afterwards. The test must fail with the Tuples differ assertion at goal-print.test.ts, RC 1.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: corpus candidate count includes goal-print (2026-11-20, Phase A)
+
+- Cause: test_production_manifest_classifies_every_e2e_file asserts `len(corpus.candidate_scenarios) == 95`. The goal-print scenario makes it 96, so the test fails with `AssertionError: 95 != 96` (Phase B run2, W4).
+- Change: scripts/pgso/tests/test_corpus.py expects 96.
+- Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0.
+- Red check (Phase B): remove the verify-goal-print line from corpus.json in a copy restored from HEAD afterwards. The count assertion must fail with `AssertionError: 95 != 96`, RC 1.
+- Status: written, NOT run in Phase B yet.
