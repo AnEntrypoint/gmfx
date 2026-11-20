@@ -4998,3 +4998,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): `W=$(mktemp -d) && git archive HEAD | tar -x -C "$W" && (cd "$W" && node scripts/vendor-txiki.mjs && timeout 600 cmake -S native/txiki -B "$W/cfg" -DCMAKE_BUILD_TYPE=Release)` must exit 0.
 - Red check (Phase B): the same archive without the vendor command. cmake must exit 1 with the add_subdirectory error at CMakeLists.txt:25.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: vendor txiki sources before the macOS x86 build (2026-11-20, Phase A)
+
+- Cause: same as the entry above. The Build macos-x86_64 job in .github/workflows/release.yml runs `zig build` on a checkout with no native/third_party.
+- Change: release.yml, job build-macos-x86_64, gets a step "Vendor txiki sources" (`node scripts/vendor-txiki.mjs`) between checkout and Build. The apple-signing environment and the signing steps are unchanged.
+- Witness (Phase B): `python3 -c "import yaml,sys; s=yaml.safe_load(open('.github/workflows/release.yml'))['jobs']['build-macos-x86_64']['steps']; n=[x.get('name') for x in s]; assert n.index('Vendor txiki sources') < n.index('Build'); print('ORDER_OK')"`, and the clean-archive cmake witness from the entry above, must both pass.
+- Red check (Phase B): remove the Vendor step from the job in a scratch copy. The order assertion must fail with ValueError, and the cmake configure from the clean archive must fail with the add_subdirectory error.
+- Status: written, NOT run in Phase B yet.
