@@ -4997,7 +4997,7 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Change: .github/actions/setup-pgso/action.yml ends with a step "Vendor txiki sources" that runs `node scripts/vendor-txiki.mjs`, the pinned fetch in scripts/txiki/pin.json. Every PGSO job uses this action after checkout.
 - Witness (Phase B): `W=$(mktemp -d) && git archive HEAD | tar -x -C "$W" && (cd "$W" && node scripts/vendor-txiki.mjs && timeout 600 cmake -S native/txiki -B "$W/cfg" -DCMAKE_BUILD_TYPE=Release)` must exit 0.
 - Red check (Phase B): the same archive without the vendor command. cmake must exit 1 with the add_subdirectory error at CMakeLists.txt:25.
-- Status: written, NOT run in Phase B yet.
+- Status: Phase B run4 on b45bcc44: W1 (clean archive, vendor step, then cmake configure) RC 0. R1 (same archive without the vendor step) RC 1 with `CMake Error at CMakeLists.txt:25 (add_subdirectory)`. Both as expected.
 
 ## Release CI: vendor txiki sources before the macOS x86 build (2026-11-20, Phase A)
 
@@ -5005,7 +5005,7 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Change: release.yml, job build-macos-x86_64, gets a step "Vendor txiki sources" (`node scripts/vendor-txiki.mjs`) between checkout and Build. The apple-signing environment and the signing steps are unchanged.
 - Witness (Phase B): `python3 -c "import yaml,sys; s=yaml.safe_load(open('.github/workflows/release.yml'))['jobs']['build-macos-x86_64']['steps']; n=[x.get('name') for x in s]; assert n.index('Vendor txiki sources') < n.index('Build'); print('ORDER_OK')"`, and the clean-archive cmake witness from the entry above, must both pass.
 - Red check (Phase B): remove the Vendor step from the job in a scratch copy. The order assertion must fail with ValueError, and the cmake configure from the clean archive must fail with the add_subdirectory error.
-- Status: written, NOT run in Phase B yet.
+- Status: Phase B run4 on b45bcc44: W2 (release.yml step order) RC 0, `ORDER_OK 1 3`. R2 (copy without the vendor step) RC 1 with `ValueError: 'Vendor txiki sources' is not in list`. Both as expected.
 
 ## Release CI: PGSO IR test targets the host, not aarch64-macos (2026-11-20, Phase A)
 
@@ -5013,7 +5013,7 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Change: test_build_step.py adds host_target(), which returns aarch64-macos on Darwin arm64, x86_64-macos on Darwin x86_64, and <arch>-linux elsewhere, and uses it for the -Dtarget argument.
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_build_step -v` on this Linux x86_64 host, RC 0.
 - Red check (Phase B): change host_target's argument back to the literal `"-Dtarget=aarch64-macos"` in the test. The test must fail with the CoreFoundation error and RC 1.
-- Status: written, NOT run in Phase B yet.
+- Status: superseded by b45bcc44 (last section). Phase B run3: the aarch64-macos literal on this Linux host failed with `unable to find system framework "CoreFoundation"` (RC 1, restored, cmp equal). Its explicit `-Dtarget=x86_64-linux` form failed at the link with `ld.lld: undefined symbol: __isoc23_sscanf`, so this commit alone does not pass on Linux.
 
 ## Release CI: goal-print e2e test is classified as a verify scenario (2026-11-20, Phase A)
 
@@ -5021,7 +5021,7 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Change: scripts/pgso/corpus.json adds verify-goal-print after verify-goal-start-prompt, with requires_tmux false.
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0. This does not run the bun e2e test itself; that remains unverified here.
 - Red check (Phase B): delete the verify-goal-print line from a copy of corpus.json. The test must fail with `unclassified E2E test file: goal-print.test.ts`.
-- Status: written, NOT run in Phase B yet.
+- Status: Phase B run4 on b45bcc44: W4 (test_corpus, 35 tests) RC 0. Red: run3 R4 removed the goal-print scenario from corpus.json and failed with `PgsoError: unclassified E2E test file: goal-print.test.ts` (RC 1, restored, cmp equal). The bun e2e file itself was not run in Phase B.
 
 ## Release CI: profile-use IR fixtures are valid (2026-11-20, Phase A)
 
@@ -5029,7 +5029,7 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Change: the three fixtures use define lines with `#N {` and `attributes #N = { ... }` groups: hot noinline, cold minsize, mem.helper noinline. The parser itself is unchanged.
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_profile_supplement -v`, RC 0.
 - Red check (Phase B): in scripts/pgso/profile_supplement.py change `elif "minsize" in attributes.split():` to `elif False:` in verify_supplement_functions. test_rejects_a_supplement_function_left_size_shaped must fail, RC 1. Restore from HEAD and cmp.
-- Status: written, NOT run in Phase B yet.
+- Status: Phase B run4 on b45bcc44: W5 (test_profile_supplement, 12 tests) RC 0. R5 (minsize-check mutation of profile_supplement.py) RC 1: `test_rejects_a_supplement_function_left_size_shaped` fails with `PgsoError not raised`. Restored, cmp equal.
 
 ## Release CI: IR size outlining fixture ends with a valid attribute group (2026-11-20, Phase A)
 
@@ -5037,7 +5037,7 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Change: the line becomes `attributes #0 = { nounwind }`, the group the declare on line 1 already references.
 - Witness (Phase B): run llvm-as from the pinned LLVM 22.1.8 on the fixture text (TARGET + DROPPED_OUTPUT, extracted with ast from the test file). It must exit 0. If the pinned tool cannot be streamed from the release tarball on this host, this witness is not run and the entry stays open.
 - Red check (Phase B): the same extraction from HEAD. llvm-as must exit 1 with `expected attribute group id` at line 42.
-- Status: written, NOT run in Phase B yet.
+- Status: Phase B run4 on b45bcc44: W6 `LLVM_AS_FIXED_RC=0` with llvm-as 22.1.8. R6 (HEAD fixture) `LLVM_AS_OLD_RC=1` with `expected attribute group id`. The llvm-as binary came from the release tarball by a stream stopped once the member was written; the rest of the 1.9 GB archive was not read.
 
 ## Release CI: goal-print in the corpus verification tuple (2026-11-20, Phase A)
 
@@ -5045,7 +5045,7 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Change: scripts/pgso/tests/test_corpus.py adds "goal-print.test.ts" after "goal-start-prompt.test.ts", the corpus order.
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0.
 - Red check (Phase B): remove the tuple line in a copy of the file, or with rep.py on the working tree restored from HEAD afterwards. The test must fail with the Tuples differ assertion at goal-print.test.ts, RC 1.
-- Status: written, NOT run in Phase B yet.
+- Status: Phase B run4 on b45bcc44: W4 RC 0 (35 tests). Red: before this commit the same test failed with `AssertionError: Tuples differ` at goal-print.test.ts (run1 W4). No separate mutation was run for this commit.
 
 ## Release CI: corpus candidate count includes goal-print (2026-11-20, Phase A)
 
@@ -5053,7 +5053,7 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Change: scripts/pgso/tests/test_corpus.py expects 96.
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0.
 - Red check (Phase B): remove the verify-goal-print line from corpus.json in a copy restored from HEAD afterwards. The count assertion must fail with `AssertionError: 95 != 96`, RC 1.
-- Status: written, NOT run in Phase B yet.
+- Status: Phase B run4 on b45bcc44: W4 RC 0 (35 tests). Red: before this commit the same test failed with `AssertionError: 95 != 96` (run2 W4).
 
 ## Release CI: PGSO IR test builds the native target on Linux (2026-11-21, Phase A)
 
@@ -5062,4 +5062,4 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_build_step -v` on this Linux host: Ran 3 tests, OK (446.8 s).
 - Red check (Phase B): the explicit `-Dtarget=x86_64-linux` form fails at the link with `ld.lld: undefined symbol: __isoc23_sscanf` (run3 W3). A build.zig attempt that routed Linux txiki through zig cc removed the __isoc23 symbols but still failed with `undefined symbol: getrlimit64`, so it was reverted and is not part of this commit.
 - OPEN, not fixed: an explicit `-Dtarget=x86_64-linux` build still fails to link in this environment. dev-release.yml builds that explicit target (and aarch64-linux). Its recent runs are skipped, so there is no CI evidence either way.
-- Status: written, witness run in Phase B.
+- Status: Phase B run4 on b45bcc44: W3 (test_build_step, 3 tests) RC 0. FULL discover command (301 tests) `OK (skipped=39)`, RC 0. Red R3 (explicit `-Dtarget=x86_64-linux`) RC 1 with `ld.lld: undefined symbol: __isoc23_sscanf` and `__fprintf_chk`. Restored, cmp equal.
