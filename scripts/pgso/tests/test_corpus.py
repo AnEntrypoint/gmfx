@@ -95,6 +95,7 @@ VERIFICATION_E2E_TESTS = (
     "lifecycle-hooks.test.ts",
     "approval-panel.test.ts",
     "goal-start-prompt.test.ts",
+    "goal-print.test.ts",
     "permission-picker.test.ts",
     "plan-approval-notice.test.ts",
     "plan-command.test.ts",

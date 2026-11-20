@@ -5038,3 +5038,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Witness (Phase B): run llvm-as from the pinned LLVM 22.1.8 on the fixture text (TARGET + DROPPED_OUTPUT, extracted with ast from the test file). It must exit 0. If the pinned tool cannot be streamed from the release tarball on this host, this witness is not run and the entry stays open.
 - Red check (Phase B): the same extraction from HEAD. llvm-as must exit 1 with `expected attribute group id` at line 42.
 - Status: written, NOT run in Phase B yet.
+
+## Release CI: goal-print in the corpus verification tuple (2026-11-20, Phase A)
+
+- Cause: the previous commit classifies goal-print.test.ts in corpus.json, but test_production_manifest_classifies_every_e2e_file also compares that corpus list with the hardcoded VERIFICATION_E2E_TESTS tuple in scripts/pgso/tests/test_corpus.py. The tuple lacks goal-print, so the test fails with `AssertionError: Tuples differ` at the first differing element, goal-print.test.ts. The superagent-view.test.ts entry in the diff is only a shift from that insertion.
+- Change: scripts/pgso/tests/test_corpus.py adds "goal-print.test.ts" after "goal-start-prompt.test.ts", the corpus order.
+- Witness (Phase B): `python3 -m unittest scripts.pgso.tests.test_corpus -v`, RC 0.
+- Red check (Phase B): remove the tuple line in a copy of the file, or with rep.py on the working tree restored from HEAD afterwards. The test must fail with the Tuples differ assertion at goal-print.test.ts, RC 1.
+- Status: written, NOT run in Phase B yet.
