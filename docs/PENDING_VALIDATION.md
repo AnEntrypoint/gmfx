@@ -5143,3 +5143,35 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Every witness and red check ran under timeout, PIDs captured by the driver (pid 1443765 and its children). Window closed 02:11:32Z. The driver was not stopped by PID; it finished on its own.
 - Git tree clean after the window.
 - W6 archive limit: unchanged. The 1.9 GB archive was only partly read, and it was not re-downloaded.
+
+## Release CI: dev-release linux-aarch64 native on the arm64 runner (2026-11-21, Phase A and B, 81e84f70)
+
+- Cause: dev-release built linux-aarch64 by cross compiling on ubuntu-latest (x86). A static fx cannot link for a cross glibc target (libc of the specified target requires dynamic linking; see the 496a5b24 entry).
+- Change (.github/workflows/dev-release.yml): the build job runs-on is ${{ matrix.runner }}; linux-x86_64 has runner ubuntu-latest and zig_args -Dcpu=baseline; linux-aarch64 has runner ubuntu-24.04-arm and zig_args -Dcpu=baseline with no -Dtarget; the macOS entries keep ubuntu-latest and their -Dtarget (open, see the entry below).
+- Change (scripts/check_dev_release_matrix.py, new): reads the workflow YAML and fails when a linux-* entry runs on a runner whose architecture differs from the entry name, when a -Dtarget in zig_args is not that architecture, or when the build job runs-on is not ${{ matrix.runner }}. It also fails when no linux-* entry exists.
+- Witness (Phase B3-style window through gate-ticket, 02:36:18Z): python3 -I -B scripts/check_dev_release_matrix.py .github/workflows/dev-release.yml printed MATRIX_OK .github/workflows/dev-release.yml, RC 0.
+- Red check (same window): the copy in /tmp/fx-d/pb14/red/dev-release.yml with the linux-aarch64 runner set back to ubuntu-latest. The script printed MISMATCH build: linux-aarch64 runs on ubuntu-latest (x86_64), expected aarch64, RC 1.
+- Not witnessed: an actual arm64 build of the dev-release entry. Its first run on ubuntu-24.04-arm is the next Dev Release run, which is not started by this change.
+
+## Release CI: run 44851567634 (push 12ce5134) job conclusions (2026-11-21, read at 01:48:30Z and completed by 03:02:53Z)
+
+- check-version: success.
+- Build macos-x86_64: failure. Real failing line: error: error: libc of the specified target requires dynamic linking (fixed by 496a5b24).
+- build-macos-arm64 / Build seed and plan shards: failure. Real failing line: FAIL test_fx_ir_step_emits_release_safe_bitcode, with the same libc line (fixed by 496a5b24).
+- build-linux-x86_64 / Linux x86_64 PGSO candidate: failure, hung. Step "Run the unit tests on transformed code" (started 01:51:20Z) has no output after 2616/16000 test number 2616 with a long enough name to fill the log...OK. The step conclusion is blank and the job failed at 03:02:53Z. No test failure line is printed. Not reproduced here. OPEN.
+- build-linux-aarch64 / Linux arm64 PGSO candidate: failure. Real failing line: PGSO failed: unit tests failed twice: command failed with exit code -6 ... fx-test, failed [core.app.app_agents_runtime.test.the switch order holds for fuzzed hosts]. Test output: 791/12210 core.app.app_agents_runtime.test.the switch order holds for fuzzed hosts...thread 8443 panic: error logs detected. Cause in the log before it: [SafeAllocator] (err): leaked [len: 17 (0x11) align: 1] printed between test 58 and test 59 (main.test a subagent turn is stamped with its run model, permissions, credential, and root request). Test 59 leaks 17 bytes; the leak is logged at error level and counted by tests/test_runner.zig log(). That count is checked at fuzz entry (tests/test_runner.zig fuzz, the log_err_count != 0 check). OPEN: the leaking allocation is not located; the stack is disabled in the log. A runner-only reset was tried and reverted, because the end-of-suite check at test_runner.zig:336 still fails the run on any logged error.
+
+## Release CI: run 44854581633 (push 94285dd5) status (read at 03:16:23Z)
+
+- check-version: success.
+- Build macos-x86_64: failure at Sign and notarize. Real failing line: Missing required environment variable: APPLE_DEVELOPER_ID_P12_BASE64. The step env has APPLE_DEVELOPER_ID_P12_PASSWORD, APPLE_NOTARY_KEY_P8_BASE64, APPLE_NOTARY_KEY_ID and APPLE_NOTARY_ISSUER_ID empty. Job log: Build macos-x86_64, step "Run scripts/sign-and-notarize-macos.sh zig-out/bin/fx", exit code 1. HELD FOR OWNER: missing signing secret. Compile and link passed in this job.
+- build-macos-arm64 / Build seed and plan shards: in progress at 03:16:23Z.
+- build-linux-x86_64 / Linux x86_64 PGSO candidate: in progress at 03:16:23Z.
+- build-linux-aarch64 / Linux arm64 PGSO candidate: in progress at 03:16:23Z.
+
+## Release CI: open items after 81e84f70 (2026-11-21)
+
+- Signing secrets: APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD, APPLE_NOTARY_KEY_P8_BASE64, APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID are missing in the repo secrets. Held for owner.
+- arm64 PGSO fuzz panic: the 17-byte leak in test 59 (see the run 44851567634 entry above). Not fixed. A fix must remove the leaked allocation, not only the counter.
+- x86 PGSO hang: the transformed-code unit test step stops after 2616/16000 with no failing line. Not reproduced on this host. The arm64 job ran the same fixture to 15999 passed in about 3 seconds.
+- W6 archive limit: unchanged. The 1.9 GB archive was only partly read and was not re-downloaded.
