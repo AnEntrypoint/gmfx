@@ -20,18 +20,22 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     name: Build ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: linux-x86_64
+            runner: ubuntu-latest
             zig_args: -Dcpu=baseline
           - name: linux-aarch64
-            zig_args: -Dtarget=aarch64-linux
+            runner: ubuntu-24.04-arm
+            zig_args: -Dcpu=baseline
           - name: macos-x86_64
+            runner: ubuntu-latest
             zig_args: -Dtarget=x86_64-macos
           - name: macos-aarch64
+            runner: ubuntu-latest
             zig_args: -Dtarget=aarch64-macos
     steps:
       - uses: actions/checkout@v4
