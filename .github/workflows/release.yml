@@ -175,7 +175,7 @@ jobs:
           version: "0.17.0"
 
       - name: Build
-        run: zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
+        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 
       - name: Sign and notarize
         env:
