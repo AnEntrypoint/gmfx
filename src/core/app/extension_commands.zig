@@ -496,7 +496,7 @@ test "/copy N copies the N-th latest reply and says when there is none that far 
     const Session = struct {
         replies: []const []const u8,
 
-        fn nthAssistantReply(self: *const @This(), ordinal: usize) ?[]const u8 {
+        pub fn nthAssistantReply(self: *const @This(), ordinal: usize) ?[]const u8 {
             if (ordinal == 0 or ordinal > self.replies.len) return null;
             return self.replies[self.replies.len - ordinal];
         }
