@@ -106,6 +106,27 @@ class PgsoRunnerTests(unittest.TestCase):
             log = json.loads((root / "timing.json").read_text())
             self.assertEqual(results[0].elapsed_seconds, log["elapsed_seconds"])
 
+    def test_output_pipe_held_open_after_exit_fails_instead_of_hanging(self) -> None:
+        from scripts.pgso import runner
+
+        with tempfile.TemporaryDirectory(prefix="fx-pgso-runner-") as tmp:
+            root = pathlib.Path(tmp)
+            script = root / "leaked-pipe.sh"
+            script.write_text("#!/bin/sh\n(sleep 300) &\nprintf 'exited\\n'\n", encoding="utf-8")
+            log_path = root / "leaked-pipe.json"
+
+            with mock.patch.object(runner, "PIPE_DRAIN_GRACE_S", 0.5):
+                with self.assertRaisesRegex(PgsoError, "output pipes did not close within 0.5 seconds"):
+                    run_checked(
+                        ["/bin/sh", str(script)],
+                        cwd=root,
+                        env=os.environ.copy(),
+                        timeout_s=30,
+                        log_path=log_path,
+                    )
+
+            self.assertEqual("pipes_open", json.loads(log_path.read_text(encoding="utf-8"))["status"])
+
     def test_cancellation_guard_converts_sigterm_and_restores_handlers(self) -> None:
         installed: dict[object, object] = {}
 

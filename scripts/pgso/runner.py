@@ -19,6 +19,7 @@ from scripts.pgso.model import PgsoError, require_empty_stderr as ensure_empty_s
 
 
 COMMAND_HEARTBEAT_SECONDS = 30.0
+PIPE_DRAIN_GRACE_S = 30.0
 MAX_CAPTURED_OUTPUT_CHARS = 1024 * 1024
 INHERITED_ENVIRONMENT_KEYS = (
     "LANG",
@@ -342,8 +343,13 @@ def run_checked(
             process.stdin.close()
 
     elapsed_seconds = completed_at - started
-    stdout_thread.join()
-    stderr_thread.join()
+    stdout_thread.join(PIPE_DRAIN_GRACE_S)
+    stderr_thread.join(PIPE_DRAIN_GRACE_S)
+    pipes_open = stdout_thread.is_alive() or stderr_thread.is_alive()
+    if pipes_open:
+        _terminate_process_group(process)
+        stdout_thread.join(PIPE_DRAIN_GRACE_S)
+        stderr_thread.join(PIPE_DRAIN_GRACE_S)
     stdout = stdout_capture.text()
     stderr = stderr_capture.text()
 
@@ -369,6 +375,15 @@ def run_checked(
         )
         raise PgsoError(
             f"command timed out after {timeout_s:g} seconds: {argv_tuple[0]}"
+        )
+
+    if pipes_open:
+        write_status("pipes_open")
+        emit_progress(
+            f"command output pipes stayed open after exit: {command_display}"
+        )
+        raise PgsoError(
+            f"command output pipes did not close within {PIPE_DRAIN_GRACE_S:g} seconds after exit: {argv_tuple[0]}"
         )
 
     result = CommandResult(
