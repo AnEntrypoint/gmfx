@@ -5584,6 +5584,7 @@ test "ACP full advertisement includes direct provider search with explicit permi
     };
     var projection = try tool_projection_mod.buildModelToolProjectionForSet(std.testing.allocator, builtin_tools.advertisement_set, .{
         .permission_rules = .{ .rules = &rules },
+        .run_code_surface = false,
     });
     defer projection.deinit(std.testing.allocator);
     try std.testing.expect(tool_projection_mod.containsName(projection.advertised_names, "WebSearch"));

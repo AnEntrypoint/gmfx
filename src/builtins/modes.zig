@@ -66,7 +66,7 @@ test "built-in mode projections carry included custom provider guidance" {
             std.testing.allocator,
             builtin_tools.advertisement_set,
             mode_id,
-            .{},
+            .{ .run_code_surface = false },
         );
         defer projection.deinit(std.testing.allocator);
 
