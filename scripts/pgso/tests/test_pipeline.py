@@ -7,6 +7,7 @@ import pathlib
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 from scripts.pgso import macos
 from scripts.pgso.model import PgsoError, sha256_file
@@ -32,6 +33,10 @@ from scripts.pgso.pipeline import (
     GENERATION_FLAGS,
     IR_OUTLINER_FLAGS,
     IR_OUTLINER_ROUNDS,
+    NATIVE_ARCHIVE_NAMES,
+    _discover_compiler_runtime,
+    native_link_archives,
+    native_link_libraries,
     OUTLINE_CLEANUP_FLAGS,
     PROFILE_PREPARATION_PASSES,
     USE_FLAGS,
@@ -194,6 +199,40 @@ class PgsoPipelineTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(PgsoError):
                 apple_ld_system_stub(invalid)
 
+    def test_native_archives_are_required_and_ordered(self) -> None:
+        self.assertEqual(self.native_archives, native_link_archives(self.paths))
+        self.assertEqual(("-lc++",), native_link_libraries(self.paths))
+        benchmark = PipelinePaths.create(self.root / "native-bench", selector="ui_activity")
+        self.assertEqual((), native_link_archives(benchmark))
+        self.assertEqual((), native_link_libraries(benchmark))
+        missing = pathlib.Path(self.native_archives[1])
+        missing.unlink()
+        with self.assertRaisesRegex(PgsoError, "native link archive is missing or empty.*libfx_quickjs_ng.a"):
+            native_link_archives(self.paths)
+        with self.assertRaises(PgsoError):
+            candidate_link_argv(self.toolchain, self.paths)
+        missing.write_bytes(b"")
+        with self.assertRaises(PgsoError):
+            instrumented_link_argv(self.toolchain, self.paths, self.root / "rt.o", "13.0")
+
+    def test_compiler_runtime_probe_links_native_archives(self) -> None:
+        captured: list[tuple[str, ...]] = []
+
+        def fake_run_checked(command, **kwargs):
+            captured.append(tuple(command))
+            return mock.Mock(stdout="", stderr="")
+
+        with mock.patch("scripts.pgso.pipeline.run_checked", fake_run_checked), \
+                mock.patch("scripts.pgso.pipeline.parse_compiler_runtime", return_value=self.root / "rt.a"), \
+                mock.patch("scripts.pgso.pipeline._require_nonempty_file"):
+            _discover_compiler_runtime(self.toolchain, self.paths)
+        command = captured[0]
+        object_index = command.index(str(self.paths.instrumented_object))
+        self.assertEqual(self.native_archives, command[object_index + 1:object_index + 4])
+        self.assertEqual(str(self.toolchain.profile_runtime), command[object_index + 4])
+        self.assertEqual("-lc++", command[-1])
+        self.assertLess(command.index("-o"), len(command) - 1)
+
     def test_temporal_link_preserves_the_control_platform_and_original_object(self) -> None:
         runtime = self.root / "libcompiler_rt_zcu.o"
         contract = MacosLinkContract(1, "13.3", "26.4", 16 * 1024 * 1024, ())
@@ -209,6 +248,13 @@ class PgsoPipelineTests(unittest.TestCase):
         self.assertNotIn(str(self.toolchain.profile_runtime), command)
         self.assertEqual("1000000", command[command.index("-stack_size") + 1])
         self.assertIn(str(stub), command)
+        object_index = command.index(str(self.paths.profile_use_object))
+        self.assertEqual(
+            self.native_archives,
+            command[object_index + 1:object_index + 4],
+        )
+        self.assertEqual(object_index + 4, command.index(str(runtime)))
+        self.assertEqual(("-o", str(self.paths.candidate_binary), "-lc++"), command[-3:])
         self.assertNotIn(str(toolchain.tools.zig_darwin_sdk / "libSystem.tbd"), command)
         self.assertIn(str(self.paths.logs / "candidate-order.txt"), command)
         for flag in (
@@ -232,8 +278,17 @@ class PgsoPipelineTests(unittest.TestCase):
         )
         self.root = pathlib.Path(self.temporary_directory.name)
         self.paths = PipelinePaths.create(self.root / "run")
+        self.native_archives = self.install_native_archives(self.paths)
         self.toolchain = self.make_toolchain()
         self.spec = ArtifactSpec(repo_root=self.root / "repo")
+
+    @staticmethod
+    def install_native_archives(paths: PipelinePaths) -> tuple[str, ...]:
+        native = paths.ir_prefix / "pgso" / "native"
+        native.mkdir(parents=True, exist_ok=True)
+        for name in NATIVE_ARCHIVE_NAMES:
+            (native / name).write_bytes(b"archive")
+        return tuple(str(native / name) for name in NATIVE_ARCHIVE_NAMES)
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -827,12 +882,33 @@ print('{{}}')""",
                 "-Wl,-dead_strip",
                 "-s",
                 str(self.paths.profile_use_object),
+                *self.native_archives,
                 "-o",
                 str(self.paths.candidate_binary),
                 "-lc",
+                "-lc++",
             ),
             candidate,
         )
+        self.assertEqual(
+            (
+                "libfx_txiki.a",
+                "libfx_quickjs_ng.a",
+                "libuv.a",
+            ),
+            tuple(pathlib.Path(archive).name for archive in self.native_archives),
+        )
+        object_index = instrumented.index(str(self.paths.instrumented_object))
+        self.assertEqual(
+            self.native_archives,
+            instrumented[object_index + 1:object_index + 4],
+        )
+        self.assertLess(
+            instrumented.index(self.native_archives[-1]),
+            instrumented.index(str(self.toolchain.profile_runtime)),
+        )
+        self.assertLess(instrumented.index("-o"), instrumented.index("-lc"))
+        self.assertEqual(("-lc", "-lc++"), instrumented[-2:])
         for flag in FX_CODEGEN_FLAGS:
             self.assertIn(flag, candidate_object)
             self.assertNotIn(flag, benchmark_object)
@@ -941,8 +1017,9 @@ pathlib.Path(sys.argv[sys.argv.index('-map') + 1]).write_bytes({link_map!r}.enco
                 f"{self.paths.profile_use_bitcode} -o "
                 f"{self.paths.profile_use_object}",
                 "probe cc -### -target aarch64-macos -O2 -Wl,-dead_strip -s "
-                f"{self.paths.profile_use_object} -o "
-                f"{self.paths.candidate_binary} -lc",
+                f"{self.paths.profile_use_object} "
+                f"{' '.join(self.native_archives)} -o "
+                f"{self.paths.candidate_binary} -lc -lc++",
                 f"ar t {runtime}",
                 f"ar x {runtime}",
                 f"order order {self.paths.merged_profile} -o {self.paths.logs / 'candidate-profile.order'}",

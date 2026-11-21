@@ -114,6 +114,9 @@ ARTIFACT_LAYOUTS = {
     "unit_tests": ("install-test", "fx-test", "unit-tests.bc"),
 }
 
+NATIVE_ARCHIVE_NAMES = ("libfx_txiki.a", "libfx_quickjs_ng.a", "libuv.a")
+NATIVE_CXX_RUNTIME_FLAG = "-lc++"
+
 
 @dataclasses.dataclass(frozen=True)
 class ArtifactSpec:
@@ -328,6 +331,20 @@ def _decode_llvm_identifier(value: str) -> str:
 def _require_nonempty_file(path: pathlib.Path, label: str) -> None:
     if not path.is_file() or path.stat().st_size == 0:
         raise PgsoError(f"{label} is missing or empty: {path}")
+
+
+def native_link_archives(paths: PipelinePaths) -> tuple[str, ...]:
+    if paths.selector != "fx":
+        return ()
+    native = paths.ir_prefix / "pgso" / "native"
+    archives = tuple(native / name for name in NATIVE_ARCHIVE_NAMES)
+    for archive in archives:
+        _require_nonempty_file(archive, "native link archive")
+    return tuple(str(archive) for archive in archives)
+
+
+def native_link_libraries(paths: PipelinePaths) -> tuple[str, ...]:
+    return (NATIVE_CXX_RUNTIME_FLAG,) if paths.selector == "fx" else ()
 
 
 def _runtime_environment(paths: PipelinePaths) -> dict[str, str]:
@@ -707,9 +724,11 @@ def _discover_compiler_runtime(
             toolchain.target,
             "-###",
             str(paths.instrumented_object),
+            *native_link_archives(paths),
             str(toolchain.profile_runtime),
             "-o",
             str(paths.instrumented / "runtime-probe"),
+            *native_link_libraries(paths),
         ),
         cwd=paths.root,
         env=os.environ.copy(),

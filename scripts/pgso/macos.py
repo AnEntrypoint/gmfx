@@ -22,6 +22,8 @@ from scripts.pgso.pipeline import (
     _discover_compiler_runtime,
     _extract_compiler_runtime,
     _require_nonempty_file,
+    native_link_archives,
+    native_link_libraries,
     parse_compiler_runtime,
     validate_archive_unchanged,
 )
@@ -212,11 +214,13 @@ def instrumented_link_argv(
         "-Wl,-dead_strip",
         *PROFILE_SECTION_ALIGNMENTS,
         str(paths.instrumented_object),
+        *native_link_archives(paths),
         str(toolchain.profile_runtime),
         str(compiler_runtime_object),
         "-o",
         str(paths.instrumented_binary),
         "-lc",
+        *native_link_libraries(paths),
     )
 
 
@@ -233,9 +237,11 @@ def candidate_link_argv(
         *ZIG_CC_LINK_FLAGS,
         "-s",
         str(paths.profile_use_object),
+        *native_link_archives(paths),
         "-o",
         str(paths.candidate_binary),
         "-lc",
+        *native_link_libraries(paths),
     )
 
 
@@ -297,10 +303,12 @@ def temporal_candidate_link_argv(
         "-map",
         str(paths.logs / "candidate-link.map"),
         str(paths.profile_use_object),
+        *native_link_archives(paths),
         str(compiler_runtime),
         str(system_stub),
         "-o",
         str(paths.candidate_binary),
+        *native_link_libraries(paths),
     )
 
 

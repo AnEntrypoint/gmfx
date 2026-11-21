@@ -462,6 +462,22 @@ pub fn build(b: *std.Build) void {
         );
         pgso_ir_step.dependOn(&install_ir.step);
 
+        if (artifact == .fx) {
+            const native_archives = [_]struct { source: []const u8, name: []const u8 }{
+                .{ .source = "libfx_txiki.a", .name = "libfx_txiki.a" },
+                .{ .source = "libfx_quickjs_ng.a", .name = "libfx_quickjs_ng.a" },
+                .{ .source = "libuv/libuv.a", .name = "libuv.a" },
+            };
+            for (native_archives) |archive| {
+                const install_archive = b.addInstallFile(
+                    txiki_build_dir.path(b, archive.source),
+                    b.fmt("pgso/native/{s}", .{archive.name}),
+                );
+                install_archive.step.dependOn(&txiki_build.step);
+                pgso_ir_step.dependOn(&install_archive.step);
+            }
+        }
+
         if (artifact == .unit_tests) pgso_ir_step.dependOn(b.getInstallStep());
     } else {
         const missing_artifact = b.addFail(
