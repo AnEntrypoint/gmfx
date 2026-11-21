@@ -37,12 +37,11 @@ test "process heap gives a freed large block back to the system every time" {
     if (comptime !tunes_glibc_heap) return error.SkipZigTest;
     giveFreedLargeBlocksBack();
     const alloc = std.heap.c_allocator;
-    const probe_bytes = 64 * 1024 * 1024;
     const mapped_before = mallinfo2().hblks;
     for (0..4) |_| {
-        const block = try alloc.alloc(u8, probe_bytes);
-        block[0] = 1;
-        block[block.len - 1] = 1;
+        const block = try alloc.alloc(u8, 4 * 1024 * 1024);
+        @memset(block, 1);
+        std.mem.doNotOptimizeAway(block.ptr);
         try std.testing.expectEqual(mapped_before + 1, mallinfo2().hblks);
         alloc.free(block);
         try std.testing.expectEqual(mapped_before, mallinfo2().hblks);
