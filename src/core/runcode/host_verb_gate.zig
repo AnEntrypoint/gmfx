@@ -42,6 +42,7 @@ pub const table = [_]Row{
 };
 
 comptime {
+    @setEvalBranchQuota(20000);
     if (table.len != host_verbs.names.len) @compileError("every host verb needs exactly one permission row");
     for (host_verbs.names) |name| {
         var rows: usize = 0;
