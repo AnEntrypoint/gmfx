@@ -75,7 +75,7 @@ pub fn refusal(
     const args = parsed.value.object;
     if (row.class == .execute) {
         const command = try shellCommand(ctx.allocator, args);
-        const call_json = try encodeJson(ctx.allocator, .{ .action = "run", .command = command });
+        const call_json = try encodeJson(ctx.allocator, .{ .command = command });
         return try admit(ctx, registry, reply_alloc, verb, "Bash", call_json);
     }
     const tool_name = if (row.class == .read) "read_file" else "write_file";
