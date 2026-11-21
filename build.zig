@@ -55,15 +55,19 @@ fn testAreaFilters(b: *std.Build, areas: []const u8) []const []const u8 {
     return filters.toOwnedSlice(b.allocator) catch @panic("out of memory");
 }
 
-fn addAppleTxikiToolchain(b: *std.Build, configure: *std.Build.Step.Run, arch: std.Target.Cpu.Arch) void {
+fn addZigTxikiToolchain(b: *std.Build, configure: *std.Build.Step.Run, arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag) void {
     const zig = b.graph.zig_exe;
-    const triple = b.fmt("{s}-macos", .{@tagName(arch)});
+    const triple = switch (os) {
+        .macos => b.fmt("{s}-macos", .{@tagName(arch)}),
+        .linux => b.fmt("{s}-linux-gnu", .{@tagName(arch)}),
+        else => unreachable,
+    };
     const cwd = std.process.currentPathAlloc(b.graph.io, b.allocator) catch @panic("cannot read the working directory");
-    const dir = std.Io.Dir.path.join(b.allocator, &.{ cwd, ".zig-cache", "apple-txiki-toolchain" }) catch @panic("out of memory");
+    const dir = std.Io.Dir.path.join(b.allocator, &.{ cwd, ".zig-cache", "txiki-toolchain" }) catch @panic("out of memory");
     const install = b.addSystemCommand(&.{
         "sh",
         "-c",
-        "mkdir -p \"$0\" && printf '%s\n' \"$1\" > \"$0/apple-cc\" && printf '%s\n' \"$2\" > \"$0/apple-c++\" && printf '%s\n' \"$3\" > \"$0/apple-ar\" && printf '%s\n' \"$4\" > \"$0/apple-ranlib\" && chmod +x \"$0/apple-cc\" \"$0/apple-c++\" \"$0/apple-ar\" \"$0/apple-ranlib\"",
+        "mkdir -p \"$0\" && printf '%s\n' \"$1\" > \"$0/txiki-cc\" && printf '%s\n' \"$2\" > \"$0/txiki-c++\" && printf '%s\n' \"$3\" > \"$0/txiki-ar\" && printf '%s\n' \"$4\" > \"$0/txiki-ranlib\" && chmod +x \"$0/txiki-cc\" \"$0/txiki-c++\" \"$0/txiki-ar\" \"$0/txiki-ranlib\"",
         dir,
         b.fmt("#!/bin/sh\nexec \"{s}\" cc -target {s} \"$@\"", .{ zig, triple }),
         b.fmt("#!/bin/sh\nexec \"{s}\" c++ -target {s} \"$@\"", .{ zig, triple }),
@@ -71,11 +75,11 @@ fn addAppleTxikiToolchain(b: *std.Build, configure: *std.Build.Step.Run, arch: s
         b.fmt("#!/bin/sh\nexec \"{s}\" ranlib \"$@\"", .{zig}),
     });
     configure.step.dependOn(&install.step);
-    configure.addArg("-DCMAKE_SYSTEM_NAME=Darwin");
-    configure.addArg(b.fmt("-DCMAKE_C_COMPILER={s}/apple-cc", .{dir}));
-    configure.addArg(b.fmt("-DCMAKE_CXX_COMPILER={s}/apple-c++", .{dir}));
-    configure.addArg(b.fmt("-DCMAKE_AR={s}/apple-ar", .{dir}));
-    configure.addArg(b.fmt("-DCMAKE_RANLIB={s}/apple-ranlib", .{dir}));
+    if (os == .macos) configure.addArg("-DCMAKE_SYSTEM_NAME=Darwin");
+    configure.addArg(b.fmt("-DCMAKE_C_COMPILER={s}/txiki-cc", .{dir}));
+    configure.addArg(b.fmt("-DCMAKE_CXX_COMPILER={s}/txiki-c++", .{dir}));
+    configure.addArg(b.fmt("-DCMAKE_AR={s}/txiki-ar", .{dir}));
+    configure.addArg(b.fmt("-DCMAKE_RANLIB={s}/txiki-ranlib", .{dir}));
 }
 
 pub fn build(b: *std.Build) void {
@@ -159,7 +163,8 @@ pub fn build(b: *std.Build) void {
     txiki_configure.addArg("-B");
     const txiki_build_dir = txiki_configure.addOutputDirectoryArg("txiki-build");
     txiki_configure.addArg("-DCMAKE_BUILD_TYPE=Release");
-    if (target.result.os.tag == .macos) addAppleTxikiToolchain(b, txiki_configure, target.result.cpu.arch);
+    if (target.result.os.tag == .macos) addZigTxikiToolchain(b, txiki_configure, target.result.cpu.arch, .macos);
+    if (target.result.os.tag == .linux and !target.query.isNative()) addZigTxikiToolchain(b, txiki_configure, target.result.cpu.arch, .linux);
     const txiki_build = b.addSystemCommand(&.{ "cmake", "--build" });
     txiki_build.addDirectoryArg(txiki_build_dir);
     txiki_build.addArgs(&.{ "--target", "fx_txiki" });
@@ -171,7 +176,7 @@ pub fn build(b: *std.Build) void {
         exe.root_module.linkFramework("CoreFoundation", .{});
         exe.root_module.linkFramework("CoreServices", .{});
     }
-    if (target.result.os.tag == .linux) {
+    if (target.result.os.tag == .linux and target.query.isNative()) {
         exe.root_module.addObjectFile(.{ .cwd_relative = discoverGccArchive(b, "libstdc++.a") });
         exe.root_module.addObjectFile(.{ .cwd_relative = discoverGccArchive(b, "libgcc_eh.a") });
     } else {
@@ -230,6 +235,7 @@ pub fn build(b: *std.Build) void {
 
     const pgso_tests = b.addTest(.{ .root_module = exe.root_module });
     pgso_tests.pie = true;
+    pgso_tests.step.dependOn(&txiki_build.step);
     const install_pgso_tests = b.addInstallArtifact(pgso_tests, .{ .dest_sub_path = "fx-test" });
     b.step("install-test", "Install the unit test executable without running it").dependOn(&install_pgso_tests.step);
 
