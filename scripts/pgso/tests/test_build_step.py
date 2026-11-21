@@ -1,20 +1,11 @@
 from __future__ import annotations
 
 import pathlib
-import platform
 import subprocess
 import tempfile
 import unittest
 
-from scripts.pgso.pipeline import zig_target_arguments
-
-
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-
-
-def host_target() -> str:
-    machine = {"arm64": "aarch64", "aarch64": "aarch64", "AMD64": "x86_64", "x86_64": "x86_64"}[platform.machine()]
-    return f"{machine}-macos" if platform.system() == "Darwin" else f"{machine}-linux"
 
 
 class PgsoBuildStepTests(unittest.TestCase):
@@ -27,7 +18,7 @@ class PgsoBuildStepTests(unittest.TestCase):
                     "pgso-ir",
                     f"-Dpgso-artifact={selector}",
                     "-Doptimize=ReleaseSafe",
-                    *zig_target_arguments(host_target()),
+                    "-Dcpu=baseline",
                     "--prefix",
                     tmp,
                 ],

@@ -709,12 +709,12 @@ print('{{}}')""",
             instrumented_run_argv(self.paths, ()),
         )
 
-    def test_zig_build_arguments_pin_linux_to_glibc_2_34(self) -> None:
+    def test_zig_build_arguments_build_linux_natively_with_baseline_cpu(self) -> None:
         linux = dataclasses.replace(self.spec, target="x86_64-linux")
         control = zig_build_argv(self.toolchain, linux, self.paths, emit_ir=False)
 
-        self.assertIn("-Dtarget=x86_64-linux-gnu.2.34", control)
-        self.assertNotIn("-Dtarget=x86_64-linux", control)
+        self.assertIn("-Dcpu=baseline", control)
+        self.assertFalse([arg for arg in control if arg.startswith("-Dtarget=")])
 
     def test_zig_build_arguments_pin_release_safe_target_and_caches(self) -> None:
         control = zig_build_argv(

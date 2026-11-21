@@ -344,12 +344,6 @@ def _runtime_environment(paths: PipelinePaths) -> dict[str, str]:
     return environment
 
 
-def zig_target_arguments(target: str) -> tuple[str, ...]:
-    if target.endswith("-linux"):
-        return (f"-Dtarget={target}-gnu.2.34",)
-    return ("-Dcpu=baseline",)
-
-
 def zig_build_argv(
     toolchain: Toolchain,
     spec: ArtifactSpec,
@@ -367,9 +361,9 @@ def zig_build_argv(
         build_step = ARTIFACT_LAYOUTS[spec.selector][0]
         if build_step is not None:
             argv.append(build_step)
-    argv.extend(zig_target_arguments(spec.target))
     argv.extend(
         (
+            "-Dcpu=baseline",
             f"-Doptimize={spec.optimize}",
             f"-Dupdate-channel={spec.update_channel}",
             "--prefix",
