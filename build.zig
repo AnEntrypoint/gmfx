@@ -151,7 +151,7 @@ pub fn build(b: *std.Build) void {
             .sanitize_thread = sanitize_thread,
         }),
     });
-    exe.linkage = .static;
+    if (target.result.os.tag == .linux) exe.linkage = .static;
     exe.root_module.addImport("build_options", build_options.createModule());
     exe.root_module.addImport("fuzz_corpus", fuzz_corpus);
     exe.root_module.addImport("fuzz_seed", fuzz_seed);
