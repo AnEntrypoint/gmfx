@@ -26,9 +26,9 @@ jobs:
       matrix:
         include:
           - name: linux-x86_64
-            target: x86_64-linux
+            target: x86_64-linux-gnu.2.34
           - name: linux-aarch64
-            target: aarch64-linux
+            target: aarch64-linux-gnu.2.34
           - name: macos-x86_64
             target: x86_64-macos
           - name: macos-aarch64
