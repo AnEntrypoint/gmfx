@@ -5063,3 +5063,48 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Red check (Phase B): the explicit `-Dtarget=x86_64-linux` form fails at the link with `ld.lld: undefined symbol: __isoc23_sscanf` (run3 W3). A build.zig attempt that routed Linux txiki through zig cc removed the __isoc23 symbols but still failed with `undefined symbol: getrlimit64`, so it was reverted and is not part of this commit.
 - OPEN, not fixed: an explicit `-Dtarget=x86_64-linux` build still fails to link in this environment. dev-release.yml builds that explicit target (and aarch64-linux). Its recent runs are skipped, so there is no CI evidence either way.
 - Status: Phase B run4 on b45bcc44: W3 (test_build_step, 3 tests) RC 0. FULL discover command (301 tests) `OK (skipped=39)`, RC 0. Red R3 (explicit `-Dtarget=x86_64-linux`) RC 1 with `ld.lld: undefined symbol: __isoc23_sscanf` and `__fprintf_chk`. Restored, cmp equal.
+
+## Release CI: Linux x86_64 explicit target link (2026-11-21, Phase A and B)
+
+- Cause: the explicit -Dtarget=x86_64-linux build links txiki (compiled by CMake with host cc) against a libc it does not match, so the link fails with glibc 2.38+ symbols such as __isoc23_sscanf, getrlimit64, fcntl64, open64, mmap64, stat64.
+- Change (build.zig, 14f1ec17): Linux txiki goes through a zig cc wrapper when the target is not native, and libc++ replaces the host GCC archives for non-native Linux. Native Linux keeps the host archives.
+- Change (scripts/pgso/pipeline.py, eb6aa2b6; scripts/pgso/tests/test_pipeline.py; scripts/pgso/tests/test_build_step.py): PGSO builds the native target with -Dcpu=baseline and passes no -Dtarget. Supersedes 7881c36d, which pinned -Dtarget=x86_64-linux-gnu.2.34. The pinned form broke the static fx link with libc of the specified target requires dynamic linking, so it was reverted.
+- Change (.github/workflows/dev-release.yml, f0fcbecb): linux-x86_64 runs zig build -Doptimize=ReleaseSafe -Dcpu=baseline with no -Dtarget. Supersedes 2a710282. macOS entries are unchanged.
+- Deviation disclosed: the owner asked for native on the x86_64 host and zig cc for aarch64. The x86_64 part is native. The aarch64 part still builds txiki through zig cc (witness below), but a static fx for aarch64 cross from x86 has not been witnessed.
+- Witness (Phase B window 2, HEAD f0fcbecb): zig build native produces zig-out/bin/fx, RC 0 (W_E2E_build_native). W_PY_unit_discover: Ran 302 tests, OK (skipped=39), RC 0. This includes test_fx_ir_step_emits_release_safe_bitcode, which failed on the pinned target.
+- Witness (Phase B window 1): W_L1 native install-test RC 0; W_L2 x86_64-linux-gnu.2.34 install-test RC 0; W_L3 aarch64-linux-gnu.2.34 cross install-test RC 0 (txiki built with zig cc for the same target; test binary is dynamic).
+- Red R_L1 (window 1): explicit -Dtarget=x86_64-linux install-test RC 1 with 17 undefined symbols: fcntl64, fstat64, fstatfs64, ftruncate64, getrlimit64, gnu_get_libc_version, lstat64, mkstemp64, mmap64, open64, pread64, pwrite64, readdir64, scandir64, sendfile64, stat64, statfs64.
+- Red R_BS (window 2): test_build_step with -Dtarget=x86_64-linux restored, RC 1 at the link: ld.lld undefined symbol getrlimit64, gnu_get_libc_version, mmap64, fstat64, open64, sendfile64. build.zig and test_build_step restored (RESTORE_OK).
+- Red R_PIPE (window 2): the mutated argv with -Dtarget=x86_64-linux fails test_zig_build_arguments_build_linux_natively_with_baseline_cpu, RC 1 (AssertionError: [-Dtarget=x86_64-linux] is not false). pipeline.py restored (RESTORE_OK).
+- OPEN: aarch64 static fx from x86 has no witness. The x86_64 pinned form hit the static-link error, so dev-release linux-aarch64 (-Dtarget=aarch64-linux, built on ubuntu-latest) may fail the same way. Not run in Phase B.
+
+## Release CI: goal-print e2e under bun (2026-11-21, Phase B)
+
+- Witness: cd tests/e2e && bun test --max-concurrency 1 ./goal-print.test.ts, under timeout 1800, against zig-out/bin/fx built from HEAD. Window 1 and window 2 both RC 0: 4 pass, 0 fail, 8 expect() calls.
+
+## Release CI: W6 archive limit (2026-11-21)
+
+- Limit: the 1.9 GB W6 archive was only partly read. llvm-as came from a stream stopped by PID after the member was written. The binary ran as LLVM 22.1.8. Not re-downloaded, per owner.
+
+## Release CI: macOS framework link (2026-11-21, OPEN, unwitnessed)
+
+- Cause: run 44833594333 failed both macOS builds at the framework search for CoreFoundation and CoreServices (searched paths: none) on the macOS runner.
+- Change: ba6c1b86 (.github/workflows/release.yml Build step: zig build -Doptimize=ReleaseSafe -Dcpu=baseline, no -Dtarget) and eb6aa2b6 (PGSO macOS argv: -Dcpu=baseline, no -Dtarget).
+- Witness: none on this Linux host. test_pipeline (54 tests, OK) and test_build_step cover argv only, not a macOS link.
+- OPEN: the Release run is the only macOS witness. Owner decision needed before pushing.
+- Pre-existing, open: dev-release.yml macOS entries cross-compile from ubuntu-latest with no SDK.
+
+## Release CI: run 44833594333 job conclusions (2026-11-21)
+
+- check-version: success.
+- Build macos-x86_64: failure (framework link, see above).
+- build-linux-aarch64 / PGSO candidate: failure (libfx_txiki.a file not found from missing pgso_tests dependency, then the explicit-target link; fixed in the entries above).
+- build-linux-x86_64 / PGSO candidate: failure (same causes as aarch64).
+- build-macos-arm64 / Build seed and plan shards: failure (framework link). Train, Merge, Startup, Heavy, Verify, Aggregate, Sign macos-arm64, Package, release: skipped.
+- Licence or signing-secret lines: none seen in the failed-step logs read so far. Nothing to hold for the owner from these logs.
+
+## Release CI: Phase B gate windows (2026-11-21)
+
+- Window 1 (driver opened 00:28:42Z): gate clear at open. Driver stopped by PID mid R_EXT after R_PIPE; R_EXT restored by checkout. Pinned argv results from this window are superseded by window 2.
+- Window 2 (opened 01:18:08Z, HEAD f0fcbecb): vmstat 1 2 first sample (average since boot) si=3404 so=4498; second sample si=88 so=0. Heavy-jobs clear. Every witness and red check ran under timeout with the PID logged.
+- Git tree clean after window 2, except the new commit.
