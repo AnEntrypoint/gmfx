@@ -180,8 +180,8 @@ fn copyNthReply(app: anytype, agent: anytype, rest: []const u8) !void {
     const ordinal = replyOrdinal(rest) orelse return say(app, "", .@"error", copy_usage);
     const reply = if (comptime @hasDecl(@TypeOf(agent.session), "nthAssistantReply"))
         agent.session.nthAssistantReply(ordinal)
-    else if (ordinal == 1)
-        agent.session.lastAssistantReply()
+    else if (comptime @hasDecl(@TypeOf(agent.session), "lastAssistantReply"))
+        if (ordinal == 1) agent.session.lastAssistantReply() else null
     else
         null;
     const text = reply orelse return sayOwned(app, "clipboard", .neutral, try std.fmt.allocPrint(
