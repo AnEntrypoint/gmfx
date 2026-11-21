@@ -26,13 +26,13 @@ jobs:
       matrix:
         include:
           - name: linux-x86_64
-            target: x86_64-linux-gnu.2.34
+            zig_args: -Dcpu=baseline
           - name: linux-aarch64
-            target: aarch64-linux-gnu.2.34
+            zig_args: -Dtarget=aarch64-linux
           - name: macos-x86_64
-            target: x86_64-macos
+            zig_args: -Dtarget=x86_64-macos
           - name: macos-aarch64
-            target: aarch64-macos
+            zig_args: -Dtarget=aarch64-macos
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,7 +44,7 @@ jobs:
           version: "0.17.0"
 
       - name: Build dev binary
-        run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }} -Dupdate-channel=dev
+        run: zig build -Doptimize=ReleaseSafe ${{ matrix.zig_args }} -Dupdate-channel=dev
 
       - name: Package
         run: |
