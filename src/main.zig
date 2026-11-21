@@ -6453,6 +6453,7 @@ test "each instance keeps its own permission mode and session approvals" {
     defer app.shell.deinit(alloc);
     defer app.pacer.deinit(alloc);
     defer App.AgentsAppRuntime.deinitChildren(&app);
+    defer app.command_hooks.deinit(alloc);
     defer Permission.deinitSessionGrants(&app, &app.main_agent);
     const second = try addTestChildAgent(&app, "instance-2");
     second.agent.role = .instance;
