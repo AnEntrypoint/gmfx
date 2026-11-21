@@ -41,6 +41,8 @@ curl -fsSL https://fx.sh/setup.sh | bash
 
 fx runs on macOS and Linux, on x86_64 and arm64. The installer puts it in `~/.local/bin`. fx checks for updates in the background, and `fx upgrade` installs the latest release right away. [CHANGELOG.md](CHANGELOG.md) lists what changed in each release. You can also [try fx in your browser](https://fx.sh/try) without installing anything.
 
+Binaries fetched with curl, gh or `fx upgrade` carry no quarantine flag and run as is. Only a browser download shows a one-time Gatekeeper prompt.
+
 ## Quick start
 
 Sign in with one of these:

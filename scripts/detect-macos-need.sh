@@ -89,8 +89,6 @@ while IFS= read -r path; do
       require "$path: the macOS checks changed" ;;
     build.zig | build.zig.zon)
       require "$path: build configuration changed" ;;
-    scripts/sign-and-notarize-macos.sh)
-      require "$path: macOS signing changed" ;;
     src/napi_*.zig | sdk/node.js | sdk/tests/test-node-napi.mjs)
       require_sdk_native "$path: native SDK addon changed" ;;
     *.zig)

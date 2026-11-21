@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       validate_only:
-        description: Build all platforms and compare arm64 signing pages without publishing
+        description: Build and ad-hoc sign all platforms without publishing
         type: boolean
         default: false
 
@@ -162,7 +162,6 @@ jobs:
     if: needs.check-version.outputs.needed == 'true'
     name: Build macos-x86_64
     runs-on: macos-15-intel
-    environment: apple-signing
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
@@ -177,19 +176,15 @@ jobs:
       - name: Build
         run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 
-      - name: Sign and notarize
-        env:
-          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
-          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: scripts/sign-and-notarize-macos.sh zig-out/bin/fx
+      - name: Ad-hoc sign
+        run: |
+          codesign --force -s - ./zig-out/bin/fx
+          codesign --verify --strict ./zig-out/bin/fx
+          codesign -dv ./zig-out/bin/fx
 
-      - name: Verify notarized Intel binary
+      - name: Verify Intel binary
         if: github.event_name == 'workflow_dispatch' && inputs.validate_only
         run: |
-          codesign --verify --strict --check-notarization -R=notarized ./zig-out/bin/fx
           ./zig-out/bin/fx --version
           ./zig-out/bin/fx help
 
@@ -227,7 +222,6 @@ jobs:
     if: needs.check-version.outputs.needed == 'true'
     name: Sign macos-arm64
     runs-on: macos-15
-    environment: apple-signing
     timeout-minutes: 20
     permissions:
       actions: read
@@ -251,44 +245,21 @@ jobs:
       - name: Confirm release eligibility
         run: python3 -m scripts.pgso report --output-dir "$RUNNER_TEMP/fx-pgso-aggregate" >/dev/null
 
-      - name: Sign and notarize stable release candidate
-        env:
-          VALIDATE_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.validate_only }}
-          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
-          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+      - name: Ad-hoc sign stable release candidate
         run: |
-          if [[ "$VALIDATE_ONLY" == true ]]; then
-            control_dir="$RUNNER_TEMP/fx-signing-control"
-            mkdir -p "$control_dir"
-            cp "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx" "$control_dir/fx"
-            scripts/sign-and-notarize-macos.sh "$control_dir/fx" 4096
-            scripts/sign-and-notarize-macos.sh "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx" 16384
-          else
-            scripts/sign-and-notarize-macos.sh "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx"
-          fi
+          binary="$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx"
+          codesign --force -s - "$binary"
+          codesign --verify --strict "$binary"
+          codesign -dv "$binary"
 
-      - name: Verify notarized arm64 binaries
+      - name: Verify arm64 binary
         if: github.event_name == 'workflow_dispatch' && inputs.validate_only
         run: |
-          for binary in "$RUNNER_TEMP/fx-signing-control/fx" "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx"; do
-            codesign --verify --strict --check-notarization -R=notarized "$binary"
-            "$binary" --version
-            "$binary" help
-            python3 -c 'import pathlib, sys; n = pathlib.Path(sys.argv[1]).stat().st_size; print(f"{sys.argv[1]}: {n:,} bytes ({n / 1048576:.6f} MiB)")' "$binary" >> "$GITHUB_STEP_SUMMARY"
-            shasum -a 256 "$binary" >> "$GITHUB_STEP_SUMMARY"
-          done
-          tar -czf "$RUNNER_TEMP/fx-signing-control.tar.gz" -C "$RUNNER_TEMP/fx-signing-control" fx
-
-      - name: Upload arm64 signing control
-        if: github.event_name == 'workflow_dispatch' && inputs.validate_only
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: signing-control-macos-arm64
-          path: ${{ runner.temp }}/fx-signing-control.tar.gz
-          if-no-files-found: error
+          binary="$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx"
+          "$binary" --version
+          "$binary" help
+          python3 -c 'import pathlib, sys; n = pathlib.Path(sys.argv[1]).stat().st_size; print(f"{sys.argv[1]}: {n:,} bytes ({n / 1048576:.6f} MiB)")' "$binary" >> "$GITHUB_STEP_SUMMARY"
+          shasum -a 256 "$binary" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package stable release candidate
         run: |

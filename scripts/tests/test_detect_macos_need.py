@@ -130,7 +130,7 @@ class DetectMacosNeedTests(unittest.TestCase):
         self.assertIn("src/renamed.zig", text)
 
     def test_build_and_signing_changes_need_macos(self) -> None:
-        for path in ("build.zig", "build.zig.zon", "scripts/sign-and-notarize-macos.sh"):
+        for path in ("build.zig", "build.zig.zon"):
             with self.subTest(path=path):
                 self.write(path, f"{path}\n")
                 self.commit(path)

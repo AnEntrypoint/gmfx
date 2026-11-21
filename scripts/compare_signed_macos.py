@@ -1,4 +1,4 @@
-"""Measure two notarized copies of one macOS arm64 payload."""
+"""Measure two signed copies of one macOS arm64 payload."""
 
 from __future__ import annotations
 
@@ -102,10 +102,10 @@ def main() -> None:
     for label, path in binaries.items():
         if not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
             raise ValueError(f"invalid {label} binary")
-        subprocess.run(["codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", str(path)], check=True, timeout=60)
+        subprocess.run(["codesign", "--verify", "--strict", str(path)], check=True, timeout=60)
         details = subprocess.run(["codesign", "--display", "--verbose=4", str(path)], capture_output=True, text=True, check=True, timeout=30).stderr
         page = 4096 if label == "control" else 16384
-        for required in ("Identifier=com.vercel.fx", "TeamIdentifier=JW6Y669B67", f"Page size={page}", "flags=0x10000(runtime)", "Timestamp="):
+        for required in (f"Page size={page}", "Signature=adhoc"):
             if required not in details:
                 raise ValueError(f"unexpected {label} signature: missing {required}")
     manifest = compare_payloads(binaries["control"].read_bytes(), binaries["candidate"].read_bytes())
