@@ -88,18 +88,18 @@ else
     verdict fail "spin body restored byte for byte"
 fi
 
-printf "return await gm.write_file({ path: 'gate-target.txt', content: 'written' });\n" >"$work/gate.cjs"
+printf "return gm.fs_write({ path: 'gate-target.txt', base64: 'd3JpdHRlbg==' });\n" >"$work/gate.cjs"
 cp "$work/gate.cjs" "$work/gate.cjs.orig"
 rm -f "$work/gate-target.txt"
 run_js "$work/gate.out" gate.cjs
-if [ ! -e "$work/gate-target.txt" ] && expect_in '"value":{"ok":false' "$work/gate.out"; then
-    verdict pass "write_file verb refused by the Zig gate in ask mode"
+if [ ! -e "$work/gate-target.txt" ] && expect_in '"value":{"ok":false,"code":"EFX_PERMISSION_DENIED"' "$work/gate.out"; then
+    verdict pass "fs_write host verb refused by the Zig gate in ask mode"
 else
-    verdict fail "write_file verb refused by the Zig gate in ask mode"
+    verdict fail "fs_write host verb refused by the Zig gate in ask mode"
 fi
 
 run_js "$work/gate.mut.out" gate.cjs --permission-mode yolo
-if [ -e "$work/gate-target.txt" ] && expect_in '"value":{"ok":true' "$work/gate.mut.out"; then
+if [ -e "$work/gate-target.txt" ] && expect_in '"value":{"ok":true,"written":7' "$work/gate.mut.out"; then
     verdict pass "red check: the same verb is admitted in yolo mode"
 else
     verdict fail "red check: the same verb is admitted in yolo mode"

@@ -2,7 +2,6 @@ const std = @import("std");
 const io_mod = @import("../shared/io.zig");
 const imports = @import("imports.zig");
 const cordis = @import("cordis.zig");
-const host_verbs = @import("host_verbs.zig");
 const resolve = @import("resolve.zig");
 
 const bootstrap: []const u8 = @embedFile("runcode_bootstrap.js");
@@ -97,7 +96,6 @@ const Session = struct {
         if (remaining_ms == 0) return replyError(self.alloc, "the body passed its JavaScript deadline before this call");
         const bounded = try clampTimeout(self.alloc, name, args_json, remaining_ms);
         defer self.alloc.free(bounded);
-        if (host_verbs.isHostVerb(name)) return host_verbs.call(self.alloc, name, bounded);
         return self.verbs.invoke(self.verbs.context, self.alloc, name, bounded);
     }
 };

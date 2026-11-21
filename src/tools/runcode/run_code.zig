@@ -7,6 +7,7 @@ const message = @import("../../core/shared/message.zig");
 const permission_gate = @import("../../core/permissions/permission_gate.zig");
 const command_admission = @import("../../core/permissions/command_admission.zig");
 const host_verbs = @import("../../core/runcode/host_verbs.zig");
+const host_verb_gate = @import("../../core/runcode/host_verb_gate.zig");
 const managed_execution = @import("../../core/execution/managed_execution.zig");
 
 pub const tool_name = "run_code";
@@ -92,6 +93,10 @@ fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, a
     var ctx = bridge.ctx;
     ctx.allocator = verb_alloc;
     ctx.command_outcome = .{ .context = bridge, .outcome = commandOutcome };
+    if (host_verbs.isHostVerb(name)) {
+        if (try host_verb_gate.refusal(ctx, bridge.registry, alloc, name, args_json)) |denied| return denied;
+        return host_verbs.call(alloc, name, args_json);
+    }
     const result = try tool_dispatch.dispatchToolCall(ctx, bridge.registry, .{ .id = id, .name = name, .arguments_json = args_json });
     return verbReply(alloc, result.status == .success, result.body);
 }
