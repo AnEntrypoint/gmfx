@@ -5108,3 +5108,38 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Window 1 (driver opened 00:28:42Z): gate clear at open. Driver stopped by PID mid R_EXT after R_PIPE; R_EXT restored by checkout. Pinned argv results from this window are superseded by window 2.
 - Window 2 (opened 01:18:08Z, HEAD f0fcbecb): vmstat 1 2 first sample (average since boot) si=3404 so=4498; second sample si=88 so=0. Heavy-jobs clear. Every witness and red check ran under timeout with the PID logged.
 - Git tree clean after window 2, except the new commit.
+
+## Release CI: macOS static fx link (2026-11-21, Phase A and B, HEAD 496a5b24)
+
+- Cause: run 44851567634 (push 12ce5134) failed both macOS builds on the same error. Job "Build macos-x86_64", step Build: "error: error: libc of the specified target requires dynamic linking" from zig build-exe on libfx_txiki.a. Job "build-macos-arm64 / Build seed and plan shards", step "Test the PGSO driver": FAIL test_fx_ir_step_emits_release_safe_bitcode, same line. build.zig sets exe.linkage = .static for every target, and zig refuses a static libc on macOS.
+- Change (build.zig, 496a5b24): exe.linkage = .static only when target.result.os.tag == .linux.
+- Witness (Phase B3 window, 01:58:37Z): W_MAC_hello_dynamic, a minimal main.zig built with -target aarch64-macos -lc, RC 0. W_LIN_native_fx_static, native zig build with -Dcpu=baseline, RC 0; file reports the fx binary as statically linked (STATIC_LINUX_OK). W_E2E_goal_print RC 0, 4 pass, 0 fail. W_PY_build_step RC 0, Ran 3 tests, OK (353.7 s), including the fx IR bitcode test.
+- Red (Phase B3): R_MAC_hello_static, the same minimal program with -static, RC 1 with "error: libc of the specified target requires dynamic linking". That is the exact line from the Release run.
+- Not witnessed here: the full macOS fx link. W_MAC_fx_post_fix (zig build -Dtarget=aarch64-macos, after the fix) RC 1 with "unable to find system framework CoreFoundation / CoreServices. searched paths: none". This Linux host has no macOS SDK, so the static error line is no longer reached and the framework step is the only failure left here. The macOS link is witnessed only by the Release run.
+- Held for owner: none. No macOS SDK licence acceptance and no missing signing-secret line appears in the macOS job logs of run 44851567634.
+
+## Release CI: dev-release linux-aarch64 static fx from x86 (2026-11-21, OPEN)
+
+- The dev-release linux-aarch64 entry runs on ubuntu-latest (x86) and builds with -Dtarget=aarch64-linux (f0fcbecb, replacing the pinned aarch64-linux-gnu.2.34 of 2a710282). The static exe needs a static libc.
+- Probe (Phase A, hello analog, run outside a gate window): static -lc with -target aarch64-linux-gnu, RC 1 with "error: libc of the specified target requires dynamic linking". Static with -target x86_64-linux-gnu, RC 1 with the same line. Static with -target aarch64-linux, RC 0 (musl libc).
+- Risk: -Dtarget=aarch64-linux resolves to musl for the static exe, while txiki is built for aarch64-linux-gnu through addZigTxikiToolchain. That mismatch is unwitnessed. Not run as a full build.
+- Run evidence: none. dev-release runs only on workflow_run, and no dev-release run exists for these commits. No CI line to quote.
+- OPEN: the native fix is an arm64 runner (ubuntu-24.04-arm, as pgso-linux-arm64.yml uses). Not changed in this push.
+
+## Release CI: run 44851567634 job conclusions (2026-11-21)
+
+- check-version: success.
+- Build macos-x86_64: failure, static libc line above.
+- build-macos-arm64 / Build seed and plan shards: failure, static libc line above (via test_fx_ir_step_emits_release_safe_bitcode). Train, Merge, Verify, Startup, Heavy, Aggregate, Sign macos-arm64: skipped.
+- build-linux-x86_64 / Linux x86_64 PGSO candidate: in progress at the last read (02:11:51Z).
+- build-linux-aarch64 / Linux arm64 PGSO candidate: in progress at the last read (02:11:51Z).
+- Status read used: one jobs read at 01:48:30Z (wait of about 10 minutes first), then the failing-line reads at about 01:44-01:52Z, then a last read at 02:11:51Z.
+- The Linux candidate jobs are not reported as passed or failed. Their conclusions must be read from the run once it completes.
+
+## Release CI: Phase B3 gate window (2026-11-21, HEAD 496a5b24)
+
+- Gate before the wait: vmstat 1 2 first sample (average since boot) si=3285 so=4345; second sample si=2048 so=0, heavy-jobs busy. The driver waited.
+- Gate at window open: 01:58:37Z, second sample si=40 so=0, heavy-jobs clear.
+- Every witness and red check ran under timeout, PIDs captured by the driver (pid 1443765 and its children). Window closed 02:11:32Z. The driver was not stopped by PID; it finished on its own.
+- Git tree clean after the window.
+- W6 archive limit: unchanged. The 1.9 GB archive was only partly read, and it was not re-downloaded.
