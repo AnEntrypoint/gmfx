@@ -1499,7 +1499,7 @@ test "built-in model-facing tool contract stays byte exact" {
         if (builtin.target.os.tag.isDarwin())
             "7f0ef876f0c4cc95aed507c22b36304528b37841db19f034d34101c541a7aa83"
         else
-            "3689abe11d51dd372b8df4bc5dbf852dfa86e1b462e4b4941006de5c112e7709",
+            "5f73399dde26f70e15d48a9220ac333d93ba6fd6f6c472e0c63ca5501399c3fa",
         &actual_hex,
     );
 }
@@ -1547,6 +1547,7 @@ fn nameInSet(names: []const []const u8, wanted: []const u8) bool {
 
 test "built-in tools register exact active local order" {
     const expected_names = [_][]const u8{
+        "run_code",
         "glob_files",
         "grep_files",
         "read_file",
