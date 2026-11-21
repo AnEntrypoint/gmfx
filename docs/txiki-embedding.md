@@ -1,27 +1,44 @@
 # txiki.js embedding in fx: Stage 0 inventory
 
-Read-only. Nothing is built or changed by this stage. Sources: fx at b03a9ffc, gm at /workspace/gm, thebird at /workspace/thebird.
+Stage 0 was an inventory; sections 1, 3 and 5 are updated to the current tree. Sources: fx, gm at /workspace/gm, thebird at /workspace/thebird.
 
 ## 1. The current run_code path
 
-- fx has no JavaScript engine. A search of fx/src for quickjs, QuickJS, JS_NewRuntime and JS_Eval finds nothing. build.zig has no C sources (no addCSourceFiles, no third_party tree).
-- run_code in src/core/tooling/tool_dispatch.zig (lines 1742-1850) is a permission-gate fixture. countRunCodeRouteCall increments a counter and returns the text "executed". The same mock is reused as gm_run_code and playwriter_execute. These tests check that the gate refuses denied calls and passes permitted ones. No body runs.
-- The production body runner is gm. fx references it through its MCP route (gm_run_code) and in docs/gm-native-parity-matrix.md, docs/kimi-parity-matrix.md and docs/native-browser-orchestration.md.
-- So "route run_code through txiki" means building the runner in fx. It is not a swap of an engine. The fixture tests keep passing unchanged, and the old route stays until the new runner passes its witnesses.
+- fx embeds txiki. native/txiki/CMakeLists.txt builds quickjs-ng, libuv and the txiki core into libfx_txiki.a, libfx_quickjs_ng.a and libuv.a, with the network modules stubbed in native/txiki/glue/txiki_stubs.c. build.zig drives it (cmake -S native/txiki, target fx_txiki) and links the three archives into the fx exe. The step is part of the default exe and pgso test graph, not an opt-in step.
+- The runner is src/core/runcode/ (runcode.zig, host_verbs.zig, imports.zig, resolve.zig, cordis/) over native/txiki/glue/runcode_shim.c. src/tools/runcode/run_code.zig is the model-facing run_code tool; every verb a body calls is dispatched through tool_dispatch.dispatchToolCall, the same entry as a model tool call, so the Zig permission gate decides each call.
+- The command is `fx run-code --file <path>`, with `fx js <file>` as its short form. Flags: --deadline-ms, --format <esm|cjs> (a .mjs file defaults to esm), --permission-mode <ask|auto|yolo|dontAsk>. It prints one JSON line {ok, value | error, console, console_dropped} and exits 1 when the body fails.
+- The earlier tool_dispatch.zig run_code fixtures remain as gate tests.
 
 ## 2. Tool registration: native Zig versus txiki
 
-- Every registered tool is Zig. The names found by a search of src/core/tooling and src/core/tools (all .zig) are: read_file, write_file, edit_file, glob_files, grep_files, bash, shell, run_command, exa_search, vision, install_skill, select_tools, set_budget, workflow, agent, coder, reviewer, boss, capability_search, dynamic_tool. The gate-routed names are gm_run_code and playwriter_execute. run_code appears only as a fixture.
+- Every registered tool is Zig. The names found by a search of src/core/tooling and src/core/tools (all .zig) are: read_file, write_file, edit_file, glob_files, grep_files, bash, shell, run_command, exa_search, vision, install_skill, select_tools, set_budget, workflow, agent, coder, reviewer, boss, capability_search, dynamic_tool. The gate-routed names are gm_run_code and playwriter_execute. run_code is now also a registered tool (src/tools/runcode/run_code.zig).
 - Stays native Zig: every file, shell, search, network, permission and gate tool. The permission gate must run in Zig, before any JavaScript body can reach a tool.
 - Moves into txiki: nothing existing moves. The new txiki-hosted pieces are (a) the run_code body runner, and (b) the agent side of Cordis, which freddie hands to fx and which runs as JavaScript inside txiki. Cordis is not rebuilt in Zig.
 - LeafVerbs: the native tools above are exposed to a body as gm.<verb>(args), each call passing through the same gate as a model tool call.
 
-## 3. Duplicated logic that the shared vendor step removes
+## 3. The shared vendor step and where fx diverges from gm
 
-- Vendor script: gm tools/vendor-txiki.mjs (149 lines) and thebird scripts/vendor-txiki.mjs (208 lines). 315 lines differ between them. Both fetch the same three tarballs and check each sha256. thebird also builds a wasm variant, pinned by tjsWasmSha256 in scripts/txiki/pin.json.
-- Pins: the same three values appear in gm tools/vendor-txiki.mjs, in thebird scripts/vendor-txiki.mjs and in gm DESIGN.md. A grep confirms all three in thebird: txiki 763025ac98e4d6629f9ebe8396c027ff22966a6322b0dc43e442d45c6d7f8059, libuv dd9f081cc55a4d83e2a976848d074f28ee5f34eb (f5185440ee939936d6375755498b7f07915f747bd9bbfe6ea058a9ee173f88d0), quickjs-ng 7b5f588e0f9b643e2996f291bfc861abeaceddc2 (f27b2e93647e73f91201e12c4f2ee0c0d07e2f6dc06b539422bf03269d601366).
-- Glue: gm native/components/quickjs/txiki has txiki_shim.c, txiki_shim.h, txiki_stubs.c, run_entry.cpp and overlay/. thebird scripts/txiki has browser/, include/ and stubs.tsv, the browser port. The two stub sets differ.
-- fx has no copy yet. The shared step gives all three repos one pin file and one script, so fx does not copy the 315 divergent lines.
+- fx: scripts/vendor-txiki.mjs (99 lines, sha256 324930c619a8199305b5a496ff1450835234f4859ea48be2d9c367573b80bdac) reads scripts/txiki/pin.json (txiki v26.11.0, libuv dd9f081c, quickjs-ng 7b5f588e, each with url and sha256) and takes `--pin <file>`.
+- gm: tools/vendor-txiki.mjs (149 lines, sha256 dd5ac6deb2f2017184e06d9ce9b4c5af0f632854cf971f5eb0b40684a575e432) hard-codes the same three pins and values.
+- thebird: scripts/vendor-txiki.mjs (208 lines, sha256 b9ccd3e955bbdab26075412472968d11a2639246fd89b8b7a086e21d64d598db) exports the pins as constants, adds a sqlite and wasm build, and pins the wasm variant in scripts/txiki/pin.json.
+- The three pinned archive sha256 values are identical in all three repos.
+
+Differences between fx 324930c6 and gm dd5ac6de:
+
+- Pins: fx loads JSON from --pin or scripts/txiki/pin.json; gm has an inline PINS array.
+- ASCII normalisation: gm has TEXT_SOURCE, ASCII_FOR, withoutComments and asciiCopy, which rewrite non-ASCII characters in comments and licence text and refuse non-ASCII in code. fx copies verbatim.
+- Browser port: gm has BROWSER_PORT (four thebird files with sha256 each), checks them in the target, and runs tools/browser-stubs.mjs to generate browser/stubs.c, whose sha256 it records. fx has no browser port and no generated stubs; its stubs are hand-written in native/txiki/glue/txiki_stubs.c.
+- Layout constants: fx lists TXIKI_BUNDLES over several lines and moves LIBUV_BUILD_FILES; the lists carry the same entries.
+- Run helper: timeout 900000 ms in fx against 600000 in gm; the error and the final log line are built by string concatenation in fx and by template literals in gm; gm also logs the count of normalised characters and prefixes the log with its TOOL name.
+- VERSION.txt: the wording and the list of left-out modules differ.
+- Neither pin file records a sha256 for the stubbed or patched files (gm: txiki_stubs.c, the overlay headers; fx: native/txiki/glue/*).
+
+Needs from gm and thebird to adopt one script and one pin file:
+
+- gm: replace the inline PINS array with the shared pin file; keep BROWSER_PORT and the stubs step as optional pin-file sections so fx can leave them out; move the ASCII normalisation behind a flag, or have fx adopt it.
+- thebird: replace the exported constants with the same pin file; keep the sqlite and wasm build outside the shared script; pin its stubs.tsv by sha256 in the pin file.
+- All three: add per-file sha256 entries for the stub and overlay files to the pin file, and agree on one stub list (gm: txiki_stubs.c, fx: native/txiki/glue/txiki_stubs.c, thebird: stubs.tsv).
+- Decide which repo owns the script and the pin, and have the others copy it with a sha256 check.
 
 ## 4. gm semantics to keep (gm native/components/quickjs/engine.cpp, runcode.cpp, run_entry.cpp, include/gm/runcode.hpp)
 
@@ -33,12 +50,23 @@ Read-only. Nothing is built or changed by this stage. Sources: fx at b03a9ffc, g
 
 ## 5. Build facts
 
-- gm txiki core (native/components/quickjs/CMakeLists.txt): quickjs-ng as a static library from dtoa.c, libregexp.c, libunicode.c and quickjs.c; libuv through add_subdirectory (uv_a); gm_txiki from 25 txiki sources, deps/ada/ada.cpp and the glue; network, TLS, websocket, hashing, wasm, ffi, sqlite and miniz modules stubbed in txiki_stubs.c.
-- fx: build.zig has no C yet. Available here: zig 0.17.0, cmake 4.2.3, gcc 15.2, node 24.22.
+- Present: native/txiki (cmake) driven from build.zig, the glue in native/txiki/glue, the vendored tree in native/third_party/txiki with VERSION.txt.
+- Toolchain on this host: zig 0.17.0, cmake 4.2.3, gcc 15.2, node 24.22.
 - Network: codeload.github.com streams the tarballs. A 20-second curl timeout cut a 3.8 MB transfer short, so vendoring needs a longer timeout and a sha256 check after download.
 
-## 6. Plan
+## 6. Stage 1 status
 
-Phase A: (1) the shared vendor step: one pin file and one script, copied from gm and verified; (2) the txiki core built as a static library by cmake from build.zig, with the network modules stubbed; (3) a C shim and a Zig runner with the gm semantics in section 4; (4) run_code routed through the runner, with the old route and its fixtures kept; (5) witnesses in Phase B.
+| Item | Present | Added now | Needs the gated build window |
+| --- | --- | --- | --- |
+| Shared pin file and vendor script | scripts/txiki/pin.json, scripts/vendor-txiki.mjs (--pin) | divergence from gm recorded in section 3 | gm and thebird adopting the pin and script |
+| txiki core as static libraries | native/txiki/CMakeLists.txt, build.zig step, glue | none | a build to confirm the archives link |
+| C shim and Zig runner | runcode_shim.c, src/core/runcode, src/tools/runcode | none | running the runner tests |
+| Deadline, node: refusal, console sink | in runcode_shim.c and runcode.zig | none | scripts/txiki-witness.sh deadline check |
+| Permission gate on every verb | invokeVerb in src/tools/runcode/run_code.zig through dispatchToolCall | none | scripts/txiki-witness.sh gate check |
+| fx run-code command | src/builtins/commands.zig row, main.zig branch | fx js <file> alias, positional file, .mjs defaults to esm, isCliToken, parse tests | one-line hook in main.zig, then a build |
+| Witness script | none | scripts/txiki-witness.sh | running it against a built fx |
+| Cordis agent side | src/core/runcode/cordis | none | an end-to-end run with freddie |
 
-Open at Stage 0: the Cordis agent interface is not in this repo, so its side is specified only as "freddie hands fx JavaScript that runs inside txiki".
+The fx js hook in src/main.zig (the run-code branch near line 3901) changes `std.mem.eql(u8, cli_args[0], "run-code")` to `run_code_tool.isCliToken(cli_args[0])`. scripts/cli_shape_registry.json may need a js entry if its checker lists top-level tokens.
+
+Open: the Cordis agent interface is not in this repo, so its side is specified only as "freddie hands fx JavaScript that runs inside txiki".

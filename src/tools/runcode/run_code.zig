@@ -148,6 +148,16 @@ fn buildCatalog(alloc: std.mem.Allocator, registry: tool_dispatch.Registry) ![]u
     return out.toOwnedSlice();
 }
 
+pub fn isCliToken(token: []const u8) bool {
+    return std.mem.eql(u8, token, "run-code") or std.mem.eql(u8, token, "js");
+}
+
+test "run-code and its js alias are the two command tokens" {
+    try std.testing.expect(isCliToken("run-code"));
+    try std.testing.expect(isCliToken("js"));
+    try std.testing.expect(!isCliToken("json"));
+}
+
 pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry) !u8 {
     var ctx = ctx_base;
     var forwarded: std.ArrayList([]const u8) = .empty;

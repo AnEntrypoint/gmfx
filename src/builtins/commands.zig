@@ -296,11 +296,13 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .run_code,
         .token = "run-code",
-        .usage = "run-code --file <path> [--deadline-ms <n>] [--format <esm|cjs>]",
+        .aliases = &.{"js"},
+        .usage = "run-code|js --file <path> [--deadline-ms <n>] [--format <esm|cjs>]",
         .summary = "Run a JavaScript body through the embedded txiki runtime",
         .options = &run_code_options,
         .details = &.{
             "The body receives gm (the leaf verbs, one per fx tool), require (relative files), and tjs as undefined.",
+            "fx js <file> is the short form: the file is the first argument, and a .mjs file runs as esm.",
             "Prints one JSON line: {ok, value | error, console, console_dropped}. Exits 1 when the body fails.",
             "The same runner serves the run_code tool the model sees.",
         },

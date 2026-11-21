@@ -245,6 +245,7 @@ pub const CliOptions = struct {
 
 pub fn parseCliArgs(args: []const []const u8) !CliOptions {
     var file_path: ?[]const u8 = null;
+    var format_given = false;
     var options: CliOptions = .{ .file = "" };
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
@@ -257,12 +258,16 @@ pub fn parseCliArgs(args: []const []const u8) !CliOptions {
             options.deadline_ms = try std.fmt.parseInt(u64, args[index], 10);
         } else if (std.mem.eql(u8, arg, "--format") and index + 1 < args.len) {
             index += 1;
+            format_given = true;
             options.format = if (std.mem.eql(u8, args[index], "esm")) .esm else .cjs;
+        } else if (file_path == null and !std.mem.startsWith(u8, arg, "--")) {
+            file_path = arg;
         } else {
             return error.UsageRunCode;
         }
     }
     options.file = file_path orelse return error.UsageRunCode;
+    if (!format_given and std.mem.endsWith(u8, options.file, ".mjs")) options.format = .esm;
     return options;
 }
 
@@ -282,6 +287,23 @@ pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Ver
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), report);
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), "\n");
     return if (outcome.ok) 0 else 1;
+}
+
+test "fx js takes the file as its first argument and keeps the run-code flags" {
+    const short = try parseCliArgs(&.{ "body.cjs", "--deadline-ms", "250" });
+    try std.testing.expectEqualStrings("body.cjs", short.file);
+    try std.testing.expectEqual(@as(u64, 250), short.deadline_ms);
+    try std.testing.expectEqual(Format.cjs, short.format);
+    const long = try parseCliArgs(&.{ "--file", "body.cjs" });
+    try std.testing.expectEqualStrings("body.cjs", long.file);
+}
+
+test "a .mjs file runs as esm unless the format is given, and a second file or no file is a usage error" {
+    try std.testing.expectEqual(Format.esm, (try parseCliArgs(&.{"main.mjs"})).format);
+    try std.testing.expectEqual(Format.cjs, (try parseCliArgs(&.{ "main.mjs", "--format", "cjs" })).format);
+    try std.testing.expectError(error.UsageRunCode, parseCliArgs(&.{ "a.mjs", "b.mjs" }));
+    try std.testing.expectError(error.UsageRunCode, parseCliArgs(&.{"--deadline-ms"}));
+    try std.testing.expectError(error.UsageRunCode, parseCliArgs(&.{}));
 }
 
 test "the wrapped body ends in a NUL byte past its length, so the engine's lexer never reads beyond it" {

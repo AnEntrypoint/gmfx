@@ -3898,7 +3898,7 @@ fn mainC(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) !v
         try command_runner.runForegroundSessionBootstrap(cli_args);
         return;
     }
-    if (cli_args.len >= 2 and std.mem.eql(u8, cli_args[0], "run-code")) {
+    if (cli_args.len >= 2 and run_code_tool.isCliToken(cli_args[0])) {
         io_mod.setRawEnviron(raw_env);
         const process_args = argsFromRaw(raw_args);
         var threaded = std.Io.Threaded.init(processAllocator(), processIoOptions(process_args, environBlockFromRaw(raw_env)));
