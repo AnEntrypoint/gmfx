@@ -389,6 +389,7 @@
     "-v": "Short form of --version.",
     "--file": "run-code parses its own flags in src/core/runcode/runcode.zig; main.zig dispatches the run-code branch before the command registry runs.",
     "--deadline-ms": "run-code parses its own flags in src/core/runcode/runcode.zig; main.zig dispatches the run-code branch before the command registry runs.",
+    "--engine": "run-code reads its own flags in src/tools/runcode/run_code.zig before the body runs; main.zig dispatches the run-code branch before the command registry runs.",
     "--format": "run-code parses its own flags in src/core/runcode/runcode.zig; main.zig dispatches the run-code branch before the command registry runs.",
     "--permission-mode": "run-code reads its own flags in src/tools/runcode/run_code.zig before the body runs; main.zig dispatches the run-code branch before the command registry runs.",
     "--json": "Picks the error format when a command's own parser has rejected its arguments.",

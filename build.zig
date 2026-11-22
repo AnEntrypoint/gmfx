@@ -124,6 +124,8 @@ pub fn build(b: *std.Build) void {
 
     build_options.addOption(bool, "libfx", false);
     build_options.addOption(bool, "builtin_tools", true);
+    const edgejs = b.option([]const u8, "edgejs", "Link the edgejs runtime: a directory holding fx_edge.o and the edgejs static libraries");
+    build_options.addOption(bool, "edgejs", edgejs != null);
 
     const fuzz_corpora = readFuzzCorpora(b);
     const fuzz_corpus = addFuzzCorpusModule(b, fuzz_corpora);
@@ -153,6 +155,7 @@ pub fn build(b: *std.Build) void {
     });
     if (target.result.os.tag == .linux) exe.linkage = .static;
     exe.root_module.addImport("build_options", build_options.createModule());
+    if (edgejs) |dir| linkEdgejs(b, exe, dir);
     exe.root_module.addImport("fuzz_corpus", fuzz_corpus);
     exe.root_module.addImport("fuzz_seed", fuzz_seed);
     const session_manager = addSessionManager(b, exe.root_module, target, optimize, null, fuzz_corpora);
@@ -516,6 +519,7 @@ fn addWasmArtifact(
     wasm_options.addOption(WasmSurface, "wasm_surface", surface);
     wasm_options.addOption(bool, "libfx", true);
     wasm_options.addOption(bool, "builtin_tools", true);
+    wasm_options.addOption(bool, "edgejs", false);
 
     const wasm_root = switch (surface) {
         .core => "src/wasm_core_main.zig",
@@ -564,6 +568,7 @@ fn addNapiArtifact(
     napi_options.addOption(bool, "libfx", true);
 
     napi_options.addOption(bool, "builtin_tools", false);
+    napi_options.addOption(bool, "edgejs", false);
 
     const root = switch (surface) {
         .core => "src/napi_core_main.zig",
@@ -633,6 +638,19 @@ fn discoverGccArchive(b: *std.Build, name: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, out, " \t\r\n");
     if (!std.fs.path.isAbsolute(trimmed)) std.process.fatal("g++ did not return an absolute path for {s}", .{name});
     return b.allocator.dupe(u8, trimmed) catch std.process.fatal("could not allocate the path for {s}", .{name});
+}
+
+fn linkEdgejs(b: *std.Build, exe: *std.Build.Step.Compile, dir: []const u8) void {
+    const io = b.graph.io;
+    exe.linkage = .dynamic;
+    var handle = std.Io.Dir.cwd().openDir(io, dir, .{ .iterate = true }) catch |err| std.process.fatal("could not open {s}: {t}", .{ dir, err });
+    defer handle.close(io);
+    var entries = handle.iterate();
+    while (entries.next(io) catch |err| std.process.fatal("could not list {s}: {t}", .{ dir, err })) |entry| {
+        if (!std.mem.endsWith(u8, entry.name, ".o") and !std.mem.endsWith(u8, entry.name, ".a")) continue;
+        exe.root_module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ dir, entry.name }) });
+    }
+    exe.root_module.linkSystemLibrary("stdc++", .{});
 }
 
 fn readGitCommit(b: *std.Build) []const u8 {

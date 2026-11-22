@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const tool_dispatch = @import("../../core/tooling/tool_dispatch.zig");
 const model_tool_schema = @import("../../core/tooling/model_tool_schema.zig");
 const runcode = @import("../../core/runcode/runcode.zig");
@@ -167,8 +168,15 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
     var ctx = ctx_base;
     var forwarded: std.ArrayList([]const u8) = .empty;
     defer forwarded.deinit(alloc);
+    var edge_engine = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        if (std.mem.eql(u8, args[index], "--engine") and index + 1 < args.len) {
+            index += 1;
+            edge_engine = std.mem.eql(u8, args[index], "edge");
+            if (!edge_engine and !std.mem.eql(u8, args[index], "txiki")) return error.UsageRunCode;
+            continue;
+        }
         if (std.mem.eql(u8, args[index], "--permission-mode") and index + 1 < args.len) {
             index += 1;
             ctx.permission_mode = std.meta.stringToEnum(@TypeOf(ctx.permission_mode), args[index]) orelse return error.UsageRunCode;
@@ -182,7 +190,12 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
     const catalog = try buildCatalog(alloc, registry);
     defer alloc.free(catalog);
     var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
-    return runcode.runCommand(alloc, forwarded.items, .{ .context = &bridge, .catalog = catalog, .invoke = invokeVerb });
+    const verbs: runcode.Verbs = .{ .context = &bridge, .catalog = catalog, .invoke = invokeVerb };
+    if (edge_engine) {
+        if (comptime build_options.edgejs) return @import("../../core/runcode/edge.zig").runCommand(alloc, forwarded.items, verbs, ctx.permission_mode != .yolo);
+        return error.UsageRunCode;
+    }
+    return runcode.runCommand(alloc, forwarded.items, verbs);
 }
 
 pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput, registry: tool_dispatch.Registry) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
