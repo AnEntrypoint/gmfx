@@ -8,9 +8,8 @@ fails=0
 check() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1 (got $2, want $3)"; fails=$((fails+1)); fi; }
 mkdir -p "$P/lib" "$P/js" "$P/prefix"
 rm -f "$P/lib"/*
-flags=$(find "$BUILD" -path '*edge_cli.dir/flags.make' | head -1)
-[ -n "$flags" ] || { echo "no edge_cli flags.make under $BUILD"; echo "EDGE_DONE 1"; exit 1; }
-cxx_flags=$(sed -n 's/^CXX_FLAGS = //p;s/^CXX_DEFINES = //p;s/^CXX_INCLUDES = //p' "$flags" | tr '\n' ' ')
+cxx_flags=$(awk '/edge_cli.cc.o:/{f=1;next} f&&/^build/{exit} f' "$BUILD/build.ninja" | sed -n 's/^  DEFINES = //p;s/^  FLAGS = //p;s/^  INCLUDES = //p' | tr '\n' ' ')
+[ -n "$cxx_flags" ] || { echo "no edge_cli compile flags in $BUILD/build.ninja"; echo "EDGE_DONE 1"; exit 1; }
 eval "g++ -c $cxx_flags native/edgejs/fx_edge.cc -o $P/lib/fx_edge.o" || { echo "shim compile failed"; echo "EDGE_DONE 1"; exit 1; }
 find "$BUILD" -name '*.a' -exec ln -sf {} "$P/lib/" \;
 echo "LIBS $(ls "$P/lib" | wc -l)"
