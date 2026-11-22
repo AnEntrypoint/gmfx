@@ -182,6 +182,7 @@ pub fn mergeNoFf(alloc: Allocator, cwd: []const u8, revision: []const u8, messag
 
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(alloc);
+    if (!try hasConfiguredIdentity(alloc, cwd)) try argv.appendSlice(alloc, &fallback_identity);
     try argv.appendSlice(alloc, &.{ "merge", "--no-ff" });
     if (message) |text| try argv.appendSlice(alloc, &.{ "-m", text });
     try argv.append(alloc, revision);
@@ -428,6 +429,34 @@ test "Tower commits and base snapshots use the identity git is configured with" 
     const snapshot_author = try run(alloc, cwd, &.{ "log", "-1", "--format=%an <%ae>", snapshot });
     defer alloc.free(snapshot_author);
     try std.testing.expectEqualStrings("Repo Author <author@example.com>", snapshot_author);
+}
+
+test "Tower merges with the fallback identity when git has none configured" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const cwd = try std.fmt.allocPrint(alloc, ".zig-cache/tmp/{s}", .{&tmp.sub_path});
+    defer alloc.free(cwd);
+    try initRepo(alloc, cwd);
+    try tmp.dir.writeFile(io_mod.getIo(), .{ .sub_path = "base.txt", .data = "base\n" });
+    try commitPaths(alloc, cwd, &.{"base.txt"}, "base");
+    const base_branch = try currentBranch(alloc, cwd);
+    defer alloc.free(base_branch);
+    const worktree = try std.fmt.allocPrint(alloc, "{s}/wt", .{cwd});
+    defer alloc.free(worktree);
+    try worktreeAddNewBranch(alloc, cwd, worktree, "tower/m1", base_branch);
+    try tmp.dir.writeFile(io_mod.getIo(), .{ .sub_path = "wt/feature.txt", .data = "feature\n" });
+    try commitPaths(alloc, worktree, &.{"feature.txt"}, "feature");
+
+    try expectSuccess(alloc, cwd, &.{ "config", "user.name", "" });
+    try expectSuccess(alloc, cwd, &.{ "config", "user.email", "" });
+    try std.testing.expect(!try hasConfiguredIdentity(alloc, cwd));
+
+    const merged = try mergeNoFf(alloc, cwd, "tower/m1", "merge m1");
+    defer alloc.free(merged);
+    const author = try run(alloc, cwd, &.{ "log", "-1", "--format=%an <%ae>" });
+    defer alloc.free(author);
+    try std.testing.expectEqualStrings("fx <fx@localhost>", author);
 }
 
 test "Tower fallback identity names no person" {
