@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runFx } from "../evals/eval-helpers";
+import { FX_BIN, runFx } from "../evals/eval-helpers";
 import {
   LEGACY_REMOTE_TOOL_RESULT,
   startLegacyStreamableHttpFixture,
@@ -26,7 +26,6 @@ import {
 
 const MODEL = "openai/gpt-5";
 const TOOL_NAME = "mcp__fixture__echo";
-const REPO_ROOT = realpathSync(join(import.meta.dirname, "..", ".."));
 const VERSIONS: LegacyStreamableVersion[] = [
   "2025-11-25",
   "2025-06-18",
@@ -482,13 +481,12 @@ describe("version-scoped legacy MCP remote transports", () => {
         ], {
           models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
         });
-        const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
         tui = await TmuxSession.create({
           isolated: true,
           cwd: root.workspace,
           width: 110,
           height: 34,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the legacy HTTP URL-required fixture.")}`,
+          cmd: `${JSON.stringify(FX_BIN)} ask --auto --no-save ${JSON.stringify("Call the legacy HTTP URL-required fixture.")}`,
           remainOnExit: true,
           env: {
             ...fixtureEnv(root, gateway),
