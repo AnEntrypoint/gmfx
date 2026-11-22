@@ -222,3 +222,48 @@ test "model-facing run_code call runs its body through the embedded runtime" {
     std.debug.print("MODEL_RUN_CODE {s}\n", .{text});
     try std.testing.expect(std.mem.indexOf(u8, text, "\"ok\":true") != null);
 }
+
+test "an esm body imports node built-ins by their Node names through the fx:host alias table" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    const host_module = @import("../../core/runcode/host_module.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = alloc,
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+    };
+    const body =
+        \\import fs from 'node:fs';
+        \\import { join } from 'path';
+        \\import host from 'fx:host';
+        \\const names = Object.keys(host.modules);
+        \\const missing = [];
+        \\for (const name of names) {
+        \\  const node = await import('node:' + name);
+        \\  if (node !== await import(name)) missing.push(name);
+        \\  for (const key of Object.keys(node)) if (node[key] === undefined) missing.push(name + '.' + key);
+        \\}
+        \\let gap = '';
+        \\try { await import('node:inspector'); } catch (error) { gap = error.message; }
+        \\return { joined: join('a', 'b'), read: typeof fs.readFileSync, names: names.length, missing, gap, verbs: typeof host.verbs.fs_read };
+    ;
+    const arguments_json = try std.json.Stringify.valueAlloc(alloc, .{ .body = body, .format = "esm" }, .{});
+    const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+        .id = "model-run-code-node-aliases",
+        .name = "run_code",
+        .arguments_json = arguments_json,
+    });
+    if (result.status != .success) return error.RunCodeDidNotSucceed;
+    const provided = comptime blk: {
+        var count: usize = 0;
+        for (host_module.table) |row| count += @intFromBool(row.target != null);
+        break :blk count;
+    };
+    const names = try std.fmt.allocPrint(alloc, "\"names\":{d},", .{provided});
+    for ([_][]const u8{ "\"joined\":\"a/b\"", "\"read\":\"function\"", names, "\"missing\":[]", "'node:inspector' is not provided by fx:host yet", "\"verbs\":\"function\"" }) |expected| {
+        try std.testing.expect(std.mem.indexOf(u8, result.body, expected) != null);
+    }
+}

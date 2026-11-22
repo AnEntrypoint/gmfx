@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const prefix = "freddie:";
+
 const files = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "package.json", .source = @embedFile("cordis/package.json") },
     .{ .name = "src/async-hooks.js", .source = @embedFile("cordis/async-hooks.js") },

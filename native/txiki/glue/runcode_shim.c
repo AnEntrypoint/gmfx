@@ -220,7 +220,7 @@ static char *resolve_relative(JSContext *ctx, FxRun *run, const char *base, cons
 
 static char *normalize_module(JSContext *ctx, const char *base, const char *name, void *opaque) {
     (void) opaque;
-    if (strncmp(name, "tjs:", 4) == 0 || strncmp(name, "node:", 5) == 0 || strncmp(name, "freddie:", 8) == 0) {
+    if (strncmp(name, "tjs:", 4) == 0 || strncmp(name, "freddie:", 8) == 0 || strncmp(name, "fx:host", 7) == 0) {
         return prefixed(ctx, "", name);
     }
     if (name[0] == '/' || strncmp(name, "./", 2) == 0 || strncmp(name, "../", 3) == 0) {
@@ -239,13 +239,9 @@ static JSModuleDef *load_module(JSContext *ctx, const char *name, void *opaque) 
     FxRun *run = current_run;
     (void) opaque;
     if (strncmp(name, "tjs:", 4) == 0) return gm_txiki_load_builtin(ctx, name);
-    if (strncmp(name, "node:", 5) == 0) {
-        JS_ThrowReferenceError(ctx, "'%s' is not available in run_code; use gm.read_file, gm.write_file, gm.fs_read or gm.run_shell", name);
-        return NULL;
-    }
-    if (strncmp(name, "freddie:", 8) == 0) {
+    if (strncmp(name, "freddie:", 8) == 0 || strncmp(name, "fx:host", 7) == 0) {
         size_t length = 0;
-        const char *text = run->host->embedded(run->host->context, name + 8, &length);
+        const char *text = run->host->embedded(run->host->context, name, &length);
         if (text == NULL) {
             JS_ThrowReferenceError(ctx, "could not load module '%s'", name);
             return NULL;
@@ -401,7 +397,8 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
         error = pending_error(ctx);
     } else {
         JS_FreeValue(ctx, boot);
-        if (is_module) {
+        drain_jobs(rt, ctx, &error);
+        if (error == NULL && is_module) {
             JSValue compiled = JS_Eval(ctx, source, source_length, source_name, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
             if (JS_IsException(compiled)) {
                 error = pending_error(ctx);
@@ -429,7 +426,7 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
                     }
                 }
             }
-        } else {
+        } else if (error == NULL) {
             fn = JS_Eval(ctx, source, source_length, source_name, JS_EVAL_TYPE_GLOBAL);
             if (JS_IsException(fn)) {
                 error = pending_error(ctx);

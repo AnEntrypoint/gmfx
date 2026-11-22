@@ -3,6 +3,7 @@ const io_mod = @import("../shared/io.zig");
 const imports = @import("imports.zig");
 const cordis = @import("cordis.zig");
 const resolve = @import("resolve.zig");
+const host_module = @import("host_module.zig");
 
 const bootstrap: []const u8 = @embedFile("runcode_bootstrap.js");
 
@@ -116,7 +117,9 @@ fn callHost(context: ?*anyopaque, name: [*:0]const u8, args: [*:0]const u8, rema
 
 fn embeddedSource(context: ?*anyopaque, name: [*:0]const u8, length: *usize) callconv(.c) ?[*]const u8 {
     _ = context;
-    const source = cordis.source(std.mem.span(name)) orelse return null;
+    const module_name = std.mem.span(name);
+    const embedded = if (std.mem.startsWith(u8, module_name, cordis.prefix)) cordis.source(module_name[cordis.prefix.len..]) else host_module.source(module_name);
+    const source = embedded orelse return null;
     length.* = source.len;
     return source.ptr;
 }

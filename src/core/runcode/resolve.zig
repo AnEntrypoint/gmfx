@@ -1,13 +1,14 @@
 const std = @import("std");
 const io_mod = @import("../shared/io.zig");
 const cordis = @import("cordis.zig");
+const host_module = @import("host_module.zig");
 
 pub const Mode = enum { import, require };
 
-pub const Failure = error{ ModuleNotFound, PackagePathNotExported, PackageInvalid };
+pub const Failure = error{ ModuleNotFound, PackagePathNotExported, PackageInvalid } || host_module.Error;
 
 const embedded_package = "@freddie/freddie-runtime";
-const embedded_prefix = "freddie:";
+const embedded_prefix = cordis.prefix;
 const max_package_bytes: usize = 4 * 1024 * 1024;
 
 const Root = union(enum) {
@@ -37,10 +38,12 @@ pub fn reply(alloc: std.mem.Allocator, request_text: []const u8) ![]u8 {
         error.ModuleNotFound => std.fmt.allocPrint(alloc, "!Cannot find module '{s}' imported from {s}", .{ specifier, base }),
         error.PackagePathNotExported => std.fmt.allocPrint(alloc, "!Package subpath for '{s}' is not exported by its package", .{specifier}),
         error.PackageInvalid => std.fmt.allocPrint(alloc, "!Invalid package.json for '{s}'", .{specifier}),
+        error.ModuleNotProvided => std.fmt.allocPrint(alloc, "!'{s}' is not provided by fx:host yet; it is on the gap list in docs/host-interface.md", .{specifier}),
     };
 }
 
 pub fn resolve(alloc: std.mem.Allocator, mode: Mode, base: []const u8, specifier: []const u8) (Failure || std.mem.Allocator.Error)![]u8 {
+    if (try host_module.target(specifier)) |found| return alloc.dupe(u8, found);
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();

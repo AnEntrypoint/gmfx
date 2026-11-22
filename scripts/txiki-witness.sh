@@ -112,6 +112,27 @@ else
     verdict fail "gate body restored byte for byte"
 fi
 
+cat >"$work/alias.mjs" <<'EOF'
+import fs from 'node:fs';
+import { join } from 'path';
+fs.writeFileSync('alias-note.txt', 'node-alias');
+return join('alias', fs.readFileSync('alias-note.txt', 'utf8'));
+EOF
+run_js "$work/alias.out" alias.mjs --permission-mode yolo
+if [ "$run_status" -eq 0 ] && expect_in '"value":"alias/node-alias"' "$work/alias.out"; then
+    verdict pass "node:fs and bare path resolve through the fx:host alias table"
+else
+    verdict fail "node:fs and bare path resolve through the fx:host alias table (status $run_status)"
+fi
+
+sed "s#'node:fs'#'node:inspector'#" "$work/alias.mjs" >"$work/alias-gap.mjs"
+run_js "$work/alias-gap.out" alias-gap.mjs --permission-mode yolo
+if [ "$run_status" -eq 1 ] && expect_in "'node:inspector' is not provided by fx:host yet" "$work/alias-gap.out"; then
+    verdict pass "red check: a name off the alias table fails with the named gap error"
+else
+    verdict fail "red check: a name off the alias table fails with the named gap error (status $run_status)"
+fi
+
 if [ "$failures" -eq 0 ]; then
     printf 'txiki witness: all checks passed\n'
     exit 0

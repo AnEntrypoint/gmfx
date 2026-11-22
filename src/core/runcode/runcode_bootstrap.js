@@ -23,6 +23,13 @@
   for (const [alias, name] of Object.entries(aliases)) if (gm[name]) gm[alias] = gm[name];
   gm.verbs = (args) => (args && args.name ? catalog.find((verb) => verb.name === args.name) : catalog);
   globalThis.gm = gm;
+  let host = null;
+  let hostFailure = null;
+  import('fx:host').then((loaded) => { host = loaded.default; }, (error) => { hostFailure = error; });
+  const loadedHost = () => {
+    if (host === null) throw hostFailure ?? new Error('fx:host did not load');
+    return host;
+  };
 
   const normalize = (path) => {
     const absolute = path.startsWith('/');
@@ -69,7 +76,8 @@
       if (verb === undefined) throw new Error("Cannot find verb '" + spec.slice(3) + "'");
       return verb;
     }
-    if (spec.startsWith('node:') || spec.startsWith('tjs:')) {
+    if (spec === 'fx:host') return loadedHost();
+    if (spec.startsWith('tjs:')) {
       throw new Error("'" + spec + "' is not available in run_code; use gm.read_file, gm.write_file, gm.fs_read or gm.run_shell");
     }
     if (spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/')) {
@@ -80,6 +88,7 @@
     }
     const resolved = callHost('fx.resolve', 'require\n' + dir + '/(require)\n' + spec);
     if (resolved.startsWith('!')) throw new Error(resolved.slice(1));
+    if (resolved.startsWith('fx:host/')) return loadedHost().modules[resolved.slice('fx:host/'.length)];
     if (resolved.startsWith('freddie:')) throw new Error("'" + spec + "' is an ES module; use import instead of require");
     return loadFile(resolved);
   };

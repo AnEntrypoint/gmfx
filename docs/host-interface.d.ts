@@ -412,25 +412,29 @@ export interface Host {
   }
 }
 
+export type HostVerb = (args?: { [key: string]: JsonValue }) => { ok: boolean; [key: string]: JsonValue | undefined }
+
+export interface BuiltHost {
+  version: { interface: 1; minor: number; host: 'fx' }
+  capabilities: readonly string[]
+  tools: Tools
+  verbs: { [name: string]: HostVerb }
+  modules: { [nodeName: string]: unknown }
+}
+
 declare module 'fx:host' {
-  const host: Host
+  const host: BuiltHost
   export default host
-  export const version: Host['version']
-  export const capabilities: Host['capabilities']
-  export const tools: Host['tools']
-  export const agent: Host['agent']
-  export const fetch: Host['fetch']
-  export const serve: Host['serve']
-  export const fs: Host['fs']
-  export const watch: Host['watch']
-  export const proc: Host['proc']
-  export const pty: Host['pty']
-  export const timers: Host['timers']
-  export const dns: Host['dns']
-  export const crypto: Host['crypto']
-  export const sqlite: Host['sqlite']
-  export const loader: Host['loader']
-  export const reload: Host['reload']
+  export const version: BuiltHost['version']
+  export const capabilities: BuiltHost['capabilities']
+  export const tools: BuiltHost['tools']
+  export const verbs: BuiltHost['verbs']
+  export const modules: BuiltHost['modules']
+}
+
+declare module 'fx:host/*' {
+  const node: unknown
+  export default node
 }
 
 interface ImportMeta {
