@@ -1,32 +1,260 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
+const model_tool_schema = @import("../tooling/model_tool_schema.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const names = [_][]const u8{
-    "process_info",
-    "fs_exists",
-    "fs_stat",
-    "fs_read",
-    "fs_write",
-    "fs_read_range",
-    "fs_write_at",
-    "fs_readdir",
-    "fs_mkdir",
-    "fs_mkdtemp",
-    "fs_remove",
-    "fs_rename",
-    "fs_copy",
-    "fs_realpath",
-    "fs_readlink",
-    "fs_symlink",
-    "fs_link",
-    "fs_chmod",
-    "fs_truncate",
-    "run_command",
-    "random_bytes",
-    "hash_digest",
+pub const Verb = struct {
+    name: []const u8,
+    description: []const u8,
+    input_schema: model_tool_schema.ObjectSchema = .{},
+};
+
+pub const verbs = [_]Verb{
+    .{
+        .name = "process_info",
+        .description = "Report cwd, pid, platform, homedir, tmpdir, parallelism and env.",
+    },
+    .{
+        .name = "fs_exists",
+        .description = "Report whether a path exists.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+            },
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "fs_stat",
+        .description = "Report type, size, mode and mtimeMs of a path.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+                .{ .name = "follow", .json_type = .boolean, .description = "Follow symlinks; default true." },
+            },
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "fs_read",
+        .description = "Read a whole file as base64.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+            },
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "fs_write",
+        .description = "Write base64 bytes to a file, replacing it or appending.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+                .{ .name = "base64", .json_type = .string },
+                .{ .name = "append", .json_type = .boolean },
+            },
+            .required = &.{ "path", "base64" },
+        },
+    },
+    .{
+        .name = "fs_read_range",
+        .description = "Read length bytes from position as base64.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+                .{ .name = "position", .json_type = .integer },
+                .{ .name = "length", .json_type = .integer },
+            },
+            .required = &.{ "path", "position", "length" },
+        },
+    },
+    .{
+        .name = "fs_write_at",
+        .description = "Write base64 bytes at position, or at the end when position is null.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+                .{ .name = "base64", .json_type = .string },
+                .{ .name = "position", .json_type = .integer },
+            },
+            .required = &.{ "path", "base64" },
+        },
+    },
+    .{
+        .name = "fs_readdir",
+        .description = "List the entries of a directory.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+            },
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "fs_mkdir",
+        .description = "Create a directory.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+                .{ .name = "recursive", .json_type = .boolean },
+            },
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "fs_mkdtemp",
+        .description = "Create a unique directory from a path prefix.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "prefix", .json_type = .string },
+            },
+            .required = &.{"prefix"},
+        },
+    },
+    .{
+        .name = "fs_remove",
+        .description = "Remove a file or directory.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+                .{ .name = "recursive", .json_type = .boolean },
+                .{ .name = "force", .json_type = .boolean },
+            },
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "fs_rename",
+        .description = "Rename a path.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "from", .json_type = .string },
+                .{ .name = "to", .json_type = .string },
+            },
+            .required = &.{ "from", "to" },
+        },
+    },
+    .{
+        .name = "fs_copy",
+        .description = "Copy a file, or a tree when recursive.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "from", .json_type = .string },
+                .{ .name = "to", .json_type = .string },
+                .{ .name = "recursive", .json_type = .boolean },
+            },
+            .required = &.{ "from", "to" },
+        },
+    },
+    .{
+        .name = "fs_realpath",
+        .description = "Resolve a path to its canonical absolute form.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+            },
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "fs_readlink",
+        .description = "Read the target of a symlink.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+            },
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "fs_symlink",
+        .description = "Create a symlink at path pointing to target.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "target", .json_type = .string },
+                .{ .name = "path", .json_type = .string },
+            },
+            .required = &.{ "target", "path" },
+        },
+    },
+    .{
+        .name = "fs_link",
+        .description = "Create a hard link at path to existing.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "existing", .json_type = .string },
+                .{ .name = "path", .json_type = .string },
+            },
+            .required = &.{ "existing", "path" },
+        },
+    },
+    .{
+        .name = "fs_chmod",
+        .description = "Set the mode bits of a path.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+                .{ .name = "mode", .json_type = .integer },
+            },
+            .required = &.{ "path", "mode" },
+        },
+    },
+    .{
+        .name = "fs_truncate",
+        .description = "Truncate a file to length bytes.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "path", .json_type = .string },
+                .{ .name = "length", .json_type = .integer },
+            },
+            .required = &.{ "path", "length" },
+        },
+    },
+    .{
+        .name = "run_command",
+        .description = "Run a program without a shell; stdout and stderr come back as base64.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "file", .json_type = .string },
+                .{ .name = "args", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } } },
+                .{ .name = "cwd", .json_type = .string },
+                .{ .name = "env", .json_type = .object },
+                .{ .name = "timeout_ms", .json_type = .integer },
+            },
+            .required = &.{"file"},
+        },
+    },
+    .{
+        .name = "random_bytes",
+        .description = "Return n random bytes as base64.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "n", .json_type = .integer },
+            },
+            .required = &.{"n"},
+        },
+    },
+    .{
+        .name = "hash_digest",
+        .description = "Hash base64 bytes with sha1, sha256, sha512 or md5.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "algorithm", .json_type = .string },
+                .{ .name = "base64", .json_type = .string },
+            },
+            .required = &.{ "algorithm", "base64" },
+        },
+    },
+};
+
+pub const names = blk: {
+    var list: [verbs.len][]const u8 = undefined;
+    for (verbs, &list) |verb, *name| name.* = verb.name;
+    const final = list;
+    break :blk final;
 };
 
 const max_file_bytes: usize = 256 * 1024 * 1024;

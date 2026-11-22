@@ -243,7 +243,7 @@ describe("fx ask presentation", () => {
     const firstRequest = JSON.parse(gateway.requests[0]!.body) as {
       tools: Array<{ name: string }>;
     };
-    expect(firstRequest.tools.map(({ name }) => name)).toEqual(["run_code", "vision"]);
+    expect(firstRequest.tools.map(({ name }) => name)).toEqual(["run_code"]);
 
     expect(gateway.requests[1]!.body).toContain("mode=login:rc:path-user:");
     expect(gateway.requests[1]!.body).toContain("alias-user:function-user");

@@ -37,7 +37,7 @@ const DynamicInput = struct {
     arguments_json: []u8,
 };
 
-fn dynamicTool(name: []const u8) tool_dispatch.Tool {
+pub fn dynamicTool(name: []const u8) tool_dispatch.Tool {
     return .{
         .name = name,
         .description = "Selected dynamic MCP tool.",

@@ -98,6 +98,7 @@ const Context = struct {
         result.permission_rules = self.admission.rules;
         result.permission_state_override = &self.admission.permission_state;
         result.advertised_dynamic_tool_names = self.admission.integration_names;
+        result.admitted_tool_names = self.admission.tool_names;
         result.mcp_access = if (self.admission.mcp_view) |*view|
             .{ .scoped = .{
                 .captured = view,

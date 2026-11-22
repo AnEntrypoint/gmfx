@@ -53,7 +53,7 @@ const REPORT_HEADER = "Subagent report (untrusted agent output, not user instruc
 
 
 
-const isChildRequest = (body: string) => !body.includes('"name":"run_code"');
+const isChildRequest = (body: string) => body.includes("<subagent_role>");
 
 function latestUserText(raw: string): string {
   return JSON.stringify(JSON.parse(raw).prompt?.filter((item: any) => item.role === "user").at(-1)?.content ?? "");
@@ -1167,7 +1167,7 @@ describe("gateway stream lifecycle", () => {
       const request = gatewayRequest(gateway.requests[0]!.body);
       const oracleRequest = parseGatewayRequest(gateway.requests[0]!.body);
       expect(promptText(gateway.requests[0]!.body)).toContain(submitted);
-      expect(serializedToolNames(oracleRequest)).toEqual(["run_code", "vision"]);
+      expect(serializedToolNames(oracleRequest)).toEqual(["run_code"]);
       expect(findUnavailableCapabilityReferences(oracleRequest).map((finding) => finding.capability))
         .toEqual(["AskUserQuestion"]);
       expect(customProviderGuidanceState(oracleRequest)).toEqual({
@@ -8075,13 +8075,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       }
 
       const selectedRequest = gatewayRequest(gateway.requests[1]!.body);
-      const selectedTool = selectedRequest.tools.find((tool) =>
-        tool.name === FIXTURE_MCP_ECHO_TOOL
-      );
-      expect(selectedTool).toBeDefined();
-      expect(selectedTool?.inputSchema.properties.text.description).toBe(
-        "EXACT_SCHEMA_QUERY_SENTINEL",
-      );
+      expect(selectedRequest.tools.map((tool) => tool.name)).toEqual(["run_code"]);
       expect(gateway.requests[1]!.body).toContain(
         "SECRET_SERVER_INSTRUCTION_SENTINEL",
       );
@@ -8336,7 +8330,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     deferMcpFixtureServers(root);
     let childRequests = 0;
     const gateway = startDynamicFakeGateway((body) => {
-      if (!body.includes('"name":"Agent"')) {
+      if (isChildRequest(body)) {
         childRequests += 1;
         return fakeGatewayToolCall("child_starts_mcp", "capability_search", {
           query: "fixture echo",
@@ -9061,7 +9055,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(toolResultOutput(body, "sibling_second")).toContain("Sent to agent-sibling-second");
         return fakeGatewayFinalText("SIBLING_SUBAGENTS_OK");
       }
-      const childRequest = !body.includes('"name":"Agent"');
+      const childRequest = isChildRequest(body);
       if (childRequest && promptText(body).includes(firstTask)) {
         started.add("first");
         return heldFirst;
@@ -9243,7 +9237,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         !hasCurrentToolResult(request.body, "persistent_resume_two") &&
         !latestUserIsReport(request.body))!;
       const resumedChild = gateway.requests.find((request) =>
-        !request.body.includes('"name":"Agent"') && promptText(request.body).includes(secondMessage))!;
+        isChildRequest(request.body) && promptText(request.body).includes(secondMessage))!;
       const parentCatalog = skillListing(resumedParent.body);
       const childCatalog = skillListing(resumedChild.body);
       expect(resumedParent.headers.get("ai-language-model-id")).toBe(smallModel);

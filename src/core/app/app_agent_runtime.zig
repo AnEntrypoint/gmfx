@@ -207,6 +207,7 @@ pub fn Runtime(comptime App: type) type {
             ctx.session_grants = run.admission.grants;
             ctx.permission_state_override = &run.admission.permission_state;
             ctx.advertised_dynamic_tool_names = run.admission.integration_names;
+            ctx.admitted_tool_names = run.admission.tool_names;
             ctx.mcp_access = if (run.admission.mcp_view) |*view|
                 .{ .scoped = .{
                     .captured = view,
@@ -460,6 +461,7 @@ pub fn Runtime(comptime App: type) type {
                 .mcp_search_tools = if (comptime runtime_profile.allows(App, .mcp)) searchMcpTools else null,
                 .mcp_read_resource = if (comptime runtime_profile.allows(App, .mcp)) readMcpResource else null,
                 .mcp_tool_schema = if (comptime runtime_profile.allows(App, .mcp)) mcpToolSchemaJson else null,
+                .mcp_list_tools = if (comptime runtime_profile.allows(App, .mcp)) listMcpTools else null,
                 .mcp_snapshot_tool = if (comptime runtime_profile.allows(App, .mcp)) mcpSnapshotTool else null,
                 .mcp_progress_ctx = @ptrCast(agent),
                 .on_mcp_progress = app_callbacks.Bindings(App).onMcpProgress,
@@ -517,6 +519,7 @@ pub fn Runtime(comptime App: type) type {
                     ctx.mcp_access = .{ .servers = .{ .context = @ptrCast(&agent.profile.profile), .allows_fn = profileAllowsMcpServer } };
                 }
             }
+            if (comptime agents.hasAgentField(App, "profile_tool_names")) ctx.admitted_tool_names = agent.profile_tool_names;
             if (childRun(agent)) |run| applyChildToolContext(app, &ctx, run);
             return ctx;
         }
@@ -656,6 +659,14 @@ pub fn Runtime(comptime App: type) type {
                 return app.searchMcpTools(arena, request, permission_rules, access, cancel_flag);
             }
             return .{ .model_output = try arena.dupe(u8, "{\"tools\":[],\"count\":0}") };
+        }
+
+        fn listMcpTools(raw_ctx: *anyopaque, arena: Allocator, permission_rules: types.PermissionRuleSet, access: tool_mcp_runtime.Access, cancel_flag: ?*std.atomic.Value(bool)) anyerror![]const tool_mcp_runtime.ListedTool {
+            const app: *App = @ptrCast(@alignCast(raw_ctx));
+            if (comptime @hasField(App, "mcp")) {
+                return app.mcp.listTools(arena, permission_rules, access, cancel_flag);
+            }
+            return &.{};
         }
 
         fn mcpSnapshotTool(raw_ctx: *anyopaque, arena: Allocator, name: []const u8, known: tool_mcp_runtime.Binding, permission_rules: types.PermissionRuleSet, limits: @import("../config/context_limits.zig").Values, access: tool_mcp_runtime.Access) anyerror!tool_mcp_runtime.DefinitionSnapshot {

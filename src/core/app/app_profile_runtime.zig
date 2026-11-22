@@ -16,6 +16,12 @@ pub const ProfileTools = struct {
     }
 };
 
+fn toolNames(arena: std.mem.Allocator, tools: []const @import("../tooling/tool_dispatch.zig").Tool) ![]const []const u8 {
+    const names = try arena.alloc([]const u8, tools.len);
+    for (tools, names) |tool, *name| name.* = tool.name;
+    return names;
+}
+
 pub fn launchFailure(alloc: std.mem.Allocator, name: []const u8) !?[]u8 {
     const reason = try failureReason(alloc, name) orelse return null;
     defer alloc.free(reason);
@@ -85,6 +91,7 @@ pub fn Runtime(comptime App: type) type {
                 .profile = &held.profile,
                 .role = .main,
             });
+            agent.profile_tool_names = if (agent.profile_tools) |set| try toolNames(held.arena.?.allocator(), set.registry.tools) else null;
         }
 
         pub fn applyLaunchMode(app: *App) !void {

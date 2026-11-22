@@ -1638,7 +1638,7 @@ describe("filesystem path handling", () => {
           const request = JSON.parse(body) as {
             tools: Array<{ name: string }>;
           };
-          expect(request.tools.map((tool) => tool.name)).toEqual(["run_code", "vision"]);
+          expect(request.tools.map((tool) => tool.name)).toEqual(["run_code"]);
           return toolCall("terminal_fallback_1", "Bash", {
             command,
             description: "Exercise the filesystem fallback commands",

@@ -470,7 +470,7 @@ pub fn project_image_references(
         try image_attachments.writeImagePlaceholder(&out.writer, attachment.id);
     }
     if (catalog.len > 0) try out.writer.writeByte('\n');
-    try out.writer.writeAll("</available_images>");
+    try out.writer.writeAll("</available_images>\nLook at them with gm.vision({image_ids, focus}) inside run_code.");
     return try out.toOwnedSlice();
 }
 
@@ -1471,6 +1471,7 @@ test "Vision references and result JSON expose ids without attachment paths" {
 
     try std.testing.expect(std.mem.find(u8, references, "[Image #2]") != null);
     try std.testing.expect(std.mem.find(u8, references, "[Image #7]") != null);
+    try std.testing.expect(std.mem.find(u8, references, "gm.vision({image_ids, focus}) inside run_code") != null);
     try std.testing.expect(std.mem.find(u8, references, "/tmp/private-two.png") == null);
     try std.testing.expect(std.mem.find(u8, references, "/Users/private/seven.jpg") == null);
 

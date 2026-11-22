@@ -346,6 +346,8 @@ pub const DispatchContext = struct {
     mcp_search_tools: ?tool_mcp_runtime.SearchToolsFn = null,
     mcp_read_resource: ?tool_mcp_runtime.ReadResourceFn = null,
     mcp_tool_schema: ?tool_mcp_runtime.ToolSchemaFn = null,
+    mcp_list_tools: ?tool_mcp_runtime.ListToolsFn = null,
+    admitted_tool_names: ?[]const []const u8 = null,
     mcp_access: tool_mcp_runtime.Access = .unrestricted,
     mcp_input_responder: ?tool_mcp_runtime.InputResponder = null,
     mcp_call_options: tool_mcp_runtime.CallOptions = .{},
@@ -485,6 +487,7 @@ pub const RuntimeProviderKind = enum {
     subagent,
     vision,
     browser,
+    verb_host,
 };
 
 pub const CapturedCommandFn = *const fn (ToolInput) bool;

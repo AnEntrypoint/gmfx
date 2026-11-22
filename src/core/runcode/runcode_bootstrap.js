@@ -21,7 +21,15 @@
   }
   const aliases = { run_shell: 'Bash', grep: 'grep_files', find: 'glob_files', fetch: 'FetchURL' };
   for (const [alias, name] of Object.entries(aliases)) if (gm[name]) gm[alias] = gm[name];
-  gm.verbs = (args) => (args && args.name ? catalog.find((verb) => verb.name === args.name) : catalog);
+  gm.verbs = (args) => {
+    if (args && args.names) return catalog.map((verb) => verb.name);
+    if (args && args.name !== undefined) {
+      const found = catalog.find((verb) => verb.name === args.name);
+      if (found === undefined) throw new Error('unknown verb: ' + args.name);
+      return found;
+    }
+    return catalog;
+  };
   globalThis.gm = gm;
   let host = null;
   let hostFailure = null;

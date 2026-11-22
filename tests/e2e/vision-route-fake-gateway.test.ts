@@ -23,6 +23,7 @@ import { FX_BIN, REPO_ROOT, runFx } from "../evals/eval-helpers";
 import { jpegHeader, paddedPng, solidPng } from "./fixtures/image-encoding";
 import { fakeGatewaySse, fakeGatewayTitleDefault, hasEmptyComposer, TITLE_GENERATION_MARKER, TmuxSession, tmuxAvailable } from "./tmux-helpers";
 import { copyV1Fixture, rootSessionIds, savedText, sessionDir } from "./saved-sessions";
+import { parseGatewayRequest, serializedToolNames } from "./conditional-guidance-oracle";
 
 const TIMEOUT = 15_000;
 
@@ -39,6 +40,7 @@ const GLM_MODEL = "zai/glm-5.2-fast";
 const GEMINI_MODEL = "google/gemini-2.5-flash";
 const KIMI_MODEL = "moonshotai/kimi-k3";
 const IMAGE_PATH = join(REPO_ROOT, "tests/e2e/fixtures/placeholder-logo.png");
+const RUN_CODE_VISION_HINT = "Look at them with gm.vision({image_ids, focus}) inside run_code.";
 
 type CapturedRequest = {
   body: string;
@@ -122,6 +124,10 @@ function visionBatchResult(imageIds: number[]) {
       details: [],
     })),
   });
+}
+
+function advertisedToolNames(body: string): string[] {
+  return serializedToolNames(parseGatewayRequest(body));
 }
 
 function filePartCount(body: string) {
@@ -755,8 +761,9 @@ describe("Vision route fake Gateway", () => {
         expect(gateway.chatRequests[0].headers.get("ai-language-model-id")).toBe(GLM_MODEL);
         expect(gateway.chatRequests[1].headers.get("ai-language-model-id")).toBe(GEMINI_MODEL);
         expect(gateway.chatRequests[2].headers.get("ai-language-model-id")).toBe(GLM_MODEL);
-        expect(gateway.chatRequests[0].body).toContain('"toolChoice":{"type":"required"}');
-        expect(gateway.chatRequests[0].body).toContain('"name":"vision"');
+        expect(advertisedToolNames(gateway.chatRequests[0].body)).toEqual(["run_code"]);
+        expect(gateway.chatRequests[0].body).not.toContain('"toolChoice":{"type":"required"}');
+        expect(gateway.chatRequests[0].body).toContain(RUN_CODE_VISION_HINT);
         expect(gateway.chatRequests[0].body).toContain("[Image #1]");
         expect(gateway.chatRequests[0].body).not.toContain('"type":"file"');
         expectScopedImageContext(gateway.chatRequests[0].body, fixture);
@@ -884,8 +891,7 @@ describe("Vision route fake Gateway", () => {
         const json = parseFxJson(result);
         expect(json.output).toContain("Path-source final answer");
         expect(gateway.chatRequests).toHaveLength(3);
-        expect(gateway.chatRequests[0]!.body).toContain('"name":"vision"');
-        expect(gateway.chatRequests[0]!.body).toContain('"paths":{"type":"array"');
+        expect(advertisedToolNames(gateway.chatRequests[0]!.body)).toEqual(["run_code"]);
         expect(gateway.chatRequests[1]!.body).toContain('"type":"file"');
         expect(gateway.chatRequests[1]!.body).not.toContain(imagePath);
         expect(gateway.chatRequests[2]!.body).toContain("path-source evidence");
@@ -1027,7 +1033,7 @@ describe("Vision route fake Gateway", () => {
   );
 
   test(
-    "required Vision rejects read_file and remains required before normal Vision recovery",
+    "pending images on the run_code surface no longer force Vision before read_file",
     async () => {
       const root = createIsolatedRoot();
       const fixture = createScopedImageFixture(root);
@@ -1065,13 +1071,13 @@ describe("Vision route fake Gateway", () => {
         expect(json.tool_calls).toContainEqual({ name: "read_file", status: "error" });
         expect(json.tool_calls).toContainEqual({ name: "vision", status: "success" });
         expect(gateway.chatRequests).toHaveLength(5);
-        expect(gateway.chatRequests[0].body).toContain('"toolChoice":{"type":"required"}');
-        expect(gateway.chatRequests[1].body).toContain('"toolChoice":{"type":"required"}');
+        expect(advertisedToolNames(gateway.chatRequests[0].body)).toEqual(["run_code"]);
+        expect(gateway.chatRequests[0].body).not.toContain('"toolChoice":{"type":"required"}');
+        expect(gateway.chatRequests[1].body).not.toContain('"toolChoice":{"type":"required"}');
         expect(gateway.chatRequests[1].body).toContain("read_before_vision");
-        expect(gateway.chatRequests[1].body).toContain(
+        expect(gateway.chatRequests[1].body).not.toContain(
           "Only Vision can be called while attached images are pending.",
         );
-        expect(gateway.chatRequests[1].body).not.toContain(forbiddenContents);
         const rejectedCall = JSON.parse(gateway.chatRequests[2].body).prompt
           .flatMap((message: { content: unknown }) => Array.isArray(message.content) ? message.content : [])
           .find((part: { toolCallId?: string; type?: string }) => part.type === "tool-call" && part.toolCallId === "non_object_before_vision");
@@ -1079,7 +1085,6 @@ describe("Vision route fake Gateway", () => {
         expect(gateway.chatRequests[3].headers.get("ai-language-model-id")).toBe(GEMINI_MODEL);
         expect(filePartCount(gateway.chatRequests[3].body)).toBe(1);
         expect(gateway.chatRequests[4].body).toContain("FX LOGO");
-        expect(gateway.chatRequests[4].body).not.toContain(forbiddenContents);
       } finally {
         gateway.stop();
         rmSync(root.root, { recursive: true, force: true });
@@ -1602,7 +1607,7 @@ describe("Vision route fake Gateway", () => {
           expect(rereadJson.tool_calls).toContainEqual({ name: "vision", status: "error" });
           expect(gateway.chatRequests).toHaveLength(2);
           expect(gateway.chatRequests[0].headers.get("ai-language-model-id")).toBe(GLM_MODEL);
-          expect(gateway.chatRequests[0].body).toContain('"name":"vision"');
+          expect(advertisedToolNames(gateway.chatRequests[0].body)).toEqual(["run_code"]);
           expect(gateway.chatRequests[1].headers.get("ai-language-model-id")).toBe(GLM_MODEL);
           const resultText = toolResultText(
             gateway.chatRequests[1].body,
@@ -1713,7 +1718,8 @@ describe("Vision route fake Gateway", () => {
         expect(gateway.chatRequests).toHaveLength(1);
         expect(gateway.chatRequests[0].headers.get("ai-language-model-id")).toBe(GLM_MODEL);
         expect(gateway.chatRequests[0].body).not.toContain('"type":"file"');
-        expect(gateway.chatRequests[0].body).toContain('"name":"vision"');
+        expect(advertisedToolNames(gateway.chatRequests[0].body)).toEqual(["run_code"]);
+        expect(gateway.chatRequests[0].body).toMatch(/Verbs: [^"]*\bvision\b/);
       } finally {
         gateway.stop();
         rmSync(root.root, { recursive: true, force: true });
@@ -2150,7 +2156,8 @@ describe("Vision route fake Gateway", () => {
         expect(rereadJson.tool_calls).toContainEqual({ name: "vision", status: "success" });
 
         expect(gateway.chatRequests).toHaveLength(7);
-        expect(gateway.chatRequests[0].body).toContain('"toolChoice":{"type":"required"}');
+        expect(advertisedToolNames(gateway.chatRequests[0].body)).toEqual(["run_code"]);
+        expect(gateway.chatRequests[0].body).not.toContain('"toolChoice":{"type":"required"}');
         expect(gateway.chatRequests[0].body).toContain("[Image #1]");
         expect(gateway.chatRequests[3].headers.get("ai-language-model-id")).toBe(GEMINI_MODEL);
         expect(gateway.chatRequests[3].body).not.toContain('"name":"vision"');
@@ -2159,7 +2166,7 @@ describe("Vision route fake Gateway", () => {
         expect(gateway.chatRequests[3].body).not.toContain("first image evidence");
         expect(gateway.chatRequests[3].body).toContain('"type":"file"');
         expect(gateway.chatRequests[4].headers.get("ai-language-model-id")).toBe(GLM_MODEL);
-        expect(gateway.chatRequests[4].body).toContain('"name":"vision"');
+        expect(advertisedToolNames(gateway.chatRequests[4].body)).toEqual(["run_code"]);
         expect(gateway.chatRequests[4].body).not.toContain('"toolChoice":{"type":"required"}');
         expect(gateway.chatRequests[4].body).toContain("[Image #1]");
         expect(gateway.chatRequests[4].body).toContain("[Image #2]");
@@ -2296,7 +2303,7 @@ describe("Vision route fake Gateway", () => {
         expect(gateway.chatRequests).toHaveLength(4);
         const textRequest = gateway.chatRequests[1];
         expect(textRequest.headers.get("ai-language-model-id")).toBe(GLM_MODEL);
-        expect(textRequest.body).toContain('"name":"vision"');
+        expect(advertisedToolNames(textRequest.body)).toEqual(["run_code"]);
         expect(textRequest.body).toContain("[Image #1]");
         expect(textRequest.body).toContain("[Image #2]");
         expect(textRequest.body).toContain("[Image #3]");
@@ -2749,7 +2756,8 @@ describe("Vision route fake Gateway", () => {
         expect(json.output).toContain("twenty image answer");
         expect(json.tool_calls).toContainEqual({ name: "vision", status: "success" });
         expect(gateway.chatRequests).toHaveLength(5);
-        expect(gateway.chatRequests[0].body).toContain('"toolChoice":{"type":"required"}');
+        expect(advertisedToolNames(gateway.chatRequests[0].body)).toEqual(["run_code"]);
+        expect(gateway.chatRequests[0].body).not.toContain('"toolChoice":{"type":"required"}');
         expect(gateway.chatRequests[0].body).toContain("[Image #20]");
         expect(filePartCount(gateway.chatRequests[0].body)).toBe(0);
         expect(filePartCount(gateway.chatRequests[1].body)).toBe(8);
@@ -2819,7 +2827,8 @@ describe("Vision route fake Gateway", () => {
 
         expect(gateway.chatRequests).toHaveLength(3);
         expect(gateway.chatRequests[0]!.body).toContain("[Image #1]");
-        expect(gateway.chatRequests[0]!.body).toContain('"toolChoice":{"type":"required"}');
+        expect(advertisedToolNames(gateway.chatRequests[0]!.body)).toEqual(["run_code"]);
+        expect(gateway.chatRequests[0]!.body).not.toContain('"toolChoice":{"type":"required"}');
         expect(gateway.chatRequests[1]!.body).toContain('"type":"file"');
         expect(gateway.chatRequests[2]!.body).toContain("@ home image evidence");
         for (const request of gateway.chatRequests) {
@@ -2933,7 +2942,7 @@ describe("Vision route fake Gateway", () => {
         await session.waitForPane(hasEmptyComposer, TIMEOUT);
 
         expect(gateway.chatRequests).toHaveLength(3);
-        expect(gateway.chatRequests[0]!.body).toContain('"paths":{"type":"array"');
+        expect(advertisedToolNames(gateway.chatRequests[0]!.body)).toEqual(["run_code"]);
         expect(gateway.chatRequests[0]!.body).not.toContain('"toolChoice":{"type":"required"}');
         expect(gateway.chatRequests[1]!.body).toContain('"type":"file"');
         expect(gateway.chatRequests[2]!.body).toContain("approved path evidence");
@@ -3398,7 +3407,7 @@ describe("Vision route fake Gateway", () => {
 });
 
 for (const sourceChange of ["removed", "changed"] as const) {
-  test(`a failed turn keeps its captured image when the source is ${sourceChange}`, async () => {
+  test(`a turn that ends without Vision keeps its captured image when the source is ${sourceChange}`, async () => {
     const root = createIsolatedRoot();
     const input = join(root.workspace, "input.png");
     const original = writeMarkedImage(input, "ORIGINAL_RECOVERY_INPUT");
@@ -3412,8 +3421,8 @@ for (const sourceChange of ["removed", "changed"] as const) {
     const options = { cwd: root.workspace, env: fakeGatewayEnv(root, gateway, GLM_MODEL), timeoutMs: TIMEOUT };
     try {
       const failed = await runFx(["ask", "--json", "--auto", "--image", input, "Describe the saved image."], options);
-      expect(failed.code).toBe(1);
-      expect(failed.stdout).toContain("RequiredVisionToolCallMissing");
+      expect(failed.code).toBe(0);
+      expect(parseFxJson(failed).output).toContain("INVALID_FINAL_WITHOUT_VISION");
       const id = JSON.parse(failed.stdout).session_id;
 
       expectSavedBlob(root.home, id, original);
@@ -3433,7 +3442,7 @@ for (const sourceChange of ["removed", "changed"] as const) {
   }, TIMEOUT * 2);
 }
 
-test.skipIf(!tmuxAvailable())("TUI keeps a failed turn's image through a cold restart", async () => {
+test.skipIf(!tmuxAvailable())("TUI keeps the image of a turn that ends without Vision through a cold restart", async () => {
   const root = createIsolatedRoot();
   const input = join(root.workspace, "input.png");
   const original = writeMarkedImage(input, "TUI_RECOVERY_INPUT");
@@ -3454,7 +3463,7 @@ test.skipIf(!tmuxAvailable())("TUI keeps a failed turn's image through a cold re
     await session.sendText(`/image ${input}`);
     await session.waitForText("attached image:", TIMEOUT);
     await session.sendText("Describe this image.");
-    await session.waitForText("required vision tool call missing", TIMEOUT);
+    await session.waitForText("INVALID_FINAL_WITHOUT_VISION", TIMEOUT);
     await session.waitForStableComposer(TIMEOUT);
     const [id] = rootSessionIds(root.home) as [string];
 

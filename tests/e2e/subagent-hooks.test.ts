@@ -3,13 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
-import { fakeGatewayFinalText, fakeGatewayToolCall, serveFakeGateway } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayToolCall, LIST_VERBS_BODY, runCodeVerbNames, serveFakeGateway } from "./tmux-helpers";
 
 const TIMEOUT = 60_000;
 const MODEL = "openai/gpt-5";
 const MAIN_PROMPT = "Hand the CHILD-TASK to a subagent and report what it says.";
 const CHILD_TASK = "CHILD-TASK: reply with the word child-done";
 const advertisedTools: string[][] = [];
+const listedVerbs: string[][] = [];
 
 const roots: string[] = [];
 const gateways: Array<{ stop(): void }> = [];
@@ -84,6 +85,10 @@ function route(body: string): Response {
   if (user.includes(MAIN_PROMPT)) {
     if (results.length === 0) {
       advertisedTools.push(advertisedToolNames(body));
+      return fakeGatewayToolCall("list-verbs", "run_code", LIST_VERBS_BODY);
+    }
+    if (results.length === 1) {
+      listedVerbs.push(runCodeVerbNames(results[0]));
       return fakeGatewayToolCall("agent-child", "Agent", {
         prompt: CHILD_TASK,
         description: "child task",
@@ -118,8 +123,9 @@ describe("subagent lifecycle hooks in headless ask", () => {
       const events = readFileSync(layout.marker, "utf8").split("\n").filter((line) => line.length > 0);
       expect(events).toEqual(["SubagentStart", "SubagentStop"]);
       expect(advertisedTools.length, "the main request was seen").toBeGreaterThan(0);
-      expect(advertisedTools[0], "Agent is offered to the model").toContain("Agent");
-      expect(advertisedTools[0], "AgentSwarm is not offered: it is not available in this runtime").not.toContain("AgentSwarm");
+      expect(advertisedTools[0], "run_code alone is offered to the model").toEqual(["run_code"]);
+      expect(listedVerbs[0], "Agent is reachable as a verb").toContain("Agent");
+      expect(listedVerbs[0], "AgentSwarm is not a verb: it is not available in this runtime").not.toContain("AgentSwarm");
     },
     TIMEOUT,
   );

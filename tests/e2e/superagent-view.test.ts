@@ -6,6 +6,8 @@ import { FX_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
   fakeGatewayToolCall,
+  LIST_VERBS_BODY,
+  runCodeVerbNames,
   serveFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -133,6 +135,7 @@ describe.skipIf(SKIP)("superagent sees a root through its final response and sta
       const superagentBodies: string[] = [];
       let peerToolResults = 0;
       let advertised: string[] = [];
+      let verbs: string[] = [];
       let eventBody = "";
       let eventText = "";
       const route = (body: string): Response => {
@@ -155,6 +158,10 @@ describe.skipIf(SKIP)("superagent sees a root through its final response and sta
           const last = resultsSinceLastUser(body).at(-1);
           if (!last) {
             advertised = advertisedToolNames(body);
+            return fakeGatewayToolCall("view-verbs", "run_code", LIST_VERBS_BODY);
+          }
+          if (String(last.toolCallId) === "view-verbs") {
+            verbs = runCodeVerbNames(last);
             return fakeGatewayToolCall("view-start", "superagent", { action: "start", agent: PROJECT });
           }
           if (String(last.toolCallId) === "view-start") {
@@ -174,7 +181,8 @@ describe.skipIf(SKIP)("superagent sees a root through its final response and sta
         throw new Error(`${String(error)}\nPANE:\n${await session!.capturePane()}\nSTDERR: ${readFileSync(layout.stderrPath, "utf8")}\nTRACE: ${traceTail(layout.tracePath)}`);
       });
 
-      expect(advertised, "the owner's first request offers the superagent tool with no skill loaded").toContain("superagent");
+      expect(advertised, "the owner's first request offers run_code alone").toEqual(["run_code"]);
+      expect(verbs, "the superagent tool is a verb with no skill loaded").toContain("superagent");
       expect(peerToolResults, "the root made one read_file call per file").toBe(FILES);
       expect(superagentBodies.length, "the superagent was asked more than once").toBeGreaterThan(2);
       for (const body of superagentBodies) {

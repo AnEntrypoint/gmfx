@@ -30,7 +30,7 @@ function cutToolCall(model: string, command: string) {
 
 
 function isChildRequest(body: any): boolean {
-  return !body.tools?.some((tool: any) => tool.function?.name === "Agent");
+  return JSON.stringify(body.messages ?? []).includes("<subagent_role>");
 }
 
 

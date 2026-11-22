@@ -879,7 +879,7 @@ describe("ultrafast fake Gateway", () => {
     async () => {
       const root = createIsolatedRoot();
       const gateway = startDynamicFakeGateway((body) => {
-        if (!body.includes('"name":"Agent"')) return finishWithServiceTier("child completed", "ultrafast");
+        if (body.includes("<subagent_role>")) return finishWithServiceTier("child completed", "ultrafast");
         if (body.includes("agent_call_1")) return finishWithServiceTier("parent observed the child", "ultrafast");
         return fakeGatewayToolCall(
           "agent_call_1",
@@ -895,7 +895,10 @@ describe("ultrafast fake Gateway", () => {
         expect(result.code, result.stderr).toBe(0);
         expect(JSON.parse(result.stdout).output).toBe("parent observed the child");
 
-        expect(gateway.requests.map(({ body }) => body.includes('"name":"Agent"'))).toEqual([true, false, true]);
+        expect(gateway.requests.map(({ body }) => body.includes("<subagent_role>"))).toEqual([false, true, false]);
+        for (const { body } of gateway.requests) {
+          expect((JSON.parse(body) as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name)).toEqual(["run_code"]);
+        }
         expect(gateway.requests[1]!.body).toContain("ultrafast-child-marker");
         expect(agentToolResult(gateway.requests[2]!.body)).toMatchObject({ ok: true });
         expect(agentToolResult(gateway.requests[2]!.body).result).toContain("child completed");
@@ -916,7 +919,7 @@ describe("ultrafast fake Gateway", () => {
       let parentRequests = 0;
       let round = 1;
       const gateway = startDynamicFakeGateway((body) => {
-        if (!body.includes('"name":"Agent"')) {
+        if (body.includes("<subagent_role>")) {
           childBodies.push(body);
           return finishWithServiceTier(
             `ULTRA_CHILD_${childBodies.length}`,

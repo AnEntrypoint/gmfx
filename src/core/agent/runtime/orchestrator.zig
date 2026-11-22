@@ -7726,7 +7726,7 @@ fn processQueuedPromptLoop(
             try stream_ctx.beginRecoveryAttempt();
         }
 
-        var advertised_dynamic_tools = try runtime_gateway_step.snapshotDynamicTools(arena, deps, &selected_dynamic_tools);
+        var advertised_dynamic_tools = runtime_gateway_step.modelDynamicTools(config.advertised_tool_names, try runtime_gateway_step.snapshotDynamicTools(arena, deps, &selected_dynamic_tools));
         var advertised_dynamic_tool_names = try arena.alloc([]const u8, advertised_dynamic_tools.len);
         for (advertised_dynamic_tools, 0..) |tool, index| advertised_dynamic_tool_names[index] = tool.name;
         var stream_result: runtime_gateway_step.StreamResult = undefined;
@@ -7896,7 +7896,7 @@ fn processQueuedPromptLoop(
                 .text_only
             else
                 .native_images;
-            const vision_mode = visionToolMode(image_choice.mode);
+            const vision_mode = agent_stream_provider.surfaceVisionMode(config.advertised_tool_names, visionToolMode(image_choice.mode));
             debug_trace.eventf(
                 "agent",
                 "vision_policy",

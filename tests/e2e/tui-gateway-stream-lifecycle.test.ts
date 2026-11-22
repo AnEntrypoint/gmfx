@@ -6549,7 +6549,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   );
 
   test(
-    "a subagent keeps an MCP tool it selected on its next request",
+    "a subagent calls an MCP tool it selected while its next request still offers run_code alone",
     async () => {
       root = realpathSync(mkdtempSync(join(tmpdir(), "fx-subagent-mcp-selected-")));
       const home = join(root, "home");
@@ -6562,7 +6562,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const toolName = "mcp__fixture__echo";
       const rootPrompt = "SUBAGENT_SELECTED_MCP_FIXTURE";
       const childTask = "Select and call the fixture echo tool.";
-      let offeredAfterSelect: boolean | null = null;
+      let toolsAfterSelect: string[] | null = null;
       let delegatedResult: { ok: boolean; result: string } | null = null;
       const childGateway = startDynamicFakeGateway((body) => {
         const request = JSON.parse(body) as {
@@ -6588,8 +6588,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         }
         if (has("child_call")) return fakeGatewayFinalText("SUBAGENT_SELECTED_CHILD_DONE");
         if (has("child_select")) {
-
-          offeredAfterSelect = (request.tools ?? []).some((tool) => tool.name === toolName);
+          toolsAfterSelect = (request.tools ?? []).map((tool) => tool.name);
           return fakeGatewayToolCall("child_call", toolName, { text: "selected" });
         }
         return fakeGatewayToolCall("child_select", "select_tools", { names: [toolName] });
@@ -6616,7 +6615,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await session.waitForComposer(TIMEOUT);
       await session.sendText(rootPrompt);
       await session.waitForText("SUBAGENT_SELECTED_PARENT_DONE", TIMEOUT);
-      expect(offeredAfterSelect).toBe(true);
+      expect(toolsAfterSelect).toEqual(["run_code"]);
       expect(readFileSync(fixture.callStartedPath, "utf8")).toContain("selected");
       expect(delegatedResult).toMatchObject({ ok: true });
       expect(delegatedResult!.result).toContain("agent_id: agent-parent-delegate");

@@ -53,4 +53,5 @@ pub const Agent = struct {
     child_run: ?child_run_mod.ChildRun = null,
     profile: profiles.Held = .{},
     profile_tools: ?tool_set.ToolSet = null,
+    profile_tool_names: ?[]const []const u8 = null,
 };

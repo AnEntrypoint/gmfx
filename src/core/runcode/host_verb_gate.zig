@@ -60,6 +60,15 @@ pub fn rowFor(verb: []const u8) ?Row {
     return null;
 }
 
+pub fn toolNameFor(class: Class) ?[]const u8 {
+    return switch (class) {
+        .read => "read_file",
+        .write => "write_file",
+        .execute => "Bash",
+        .none => null,
+    };
+}
+
 pub fn refusal(
     ctx: tool_dispatch.DispatchContext,
     registry: tool_dispatch.Registry,
@@ -76,9 +85,9 @@ pub fn refusal(
     if (row.class == .execute) {
         const command = try shellCommand(ctx.allocator, args);
         const call_json = try encodeJson(ctx.allocator, .{ .command = command });
-        return try admit(ctx, registry, reply_alloc, verb, "Bash", call_json);
+        return try admit(ctx, registry, reply_alloc, verb, toolNameFor(row.class).?, call_json);
     }
-    const tool_name = if (row.class == .read) "read_file" else "write_file";
+    const tool_name = toolNameFor(row.class).?;
     for (row.path_keys) |key| {
         const path = switch (args.get(key) orelse continue) {
             .string => |text| text,

@@ -1862,7 +1862,7 @@ describe("acp: model-independent", () => {
           .join("\n");
         expect(prompt).toContain(submitted);
         const toolNames = serializedToolNames(oracleRequest);
-        expect(toolNames).toEqual(["run_code", "vision"]);
+        expect(toolNames).toEqual(["run_code"]);
         expect(toolNames).not.toContain("shell");
         expect(findUnavailableCapabilityReferences(oracleRequest).map((finding) => finding.capability))
           .toEqual(["AskUserQuestion"]);
@@ -3281,7 +3281,7 @@ describe("acp: model-independent", () => {
         finalText("ACP MCP lazy"),
       ]);
       const offered = (index: number) =>
-        acpGatewayRequest(gateway.requests[index]!.body).tools.some((tool) => tool.name === MCP_TOOL_NAME);
+        acpGatewayRequest(gateway.requests[index]!.body).tools.map((tool) => tool.name);
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -3298,7 +3298,7 @@ describe("acp: model-independent", () => {
         expect(loaded.promptResult.result.stopReason).toBe("end_turn");
 
         expect(gateway.requests).toHaveLength(start + 2);
-        expect(offered(start)).toBe(true);
+        expect(offered(start)).toEqual(["run_code"]);
         expect(acpToolResultText(gateway.requests[start + 1]!.body, "call_loaded")).toContain(MODERN_HTTP_TOOL_RESULT + ":acp");
 
 
@@ -3306,7 +3306,7 @@ describe("acp: model-independent", () => {
         const again = await runPrompt(client, "Call it again.", TIMEOUT);
         expect(again.promptResult.result.stopReason).toBe("end_turn");
         expect(gateway.requests).toHaveLength(start + 2);
-        expect(offered(start)).toBe(true);
+        expect(offered(start)).toEqual(["run_code"]);
         expect(acpToolResultText(gateway.requests[start + 1]!.body, "call_loaded_again")).toContain(MODERN_HTTP_TOOL_RESULT + ":again");
         expect(httpFixture.requests.filter((entry) => entry.message.method === "tools/call")).toHaveLength(2);
 
@@ -3320,7 +3320,7 @@ describe("acp: model-independent", () => {
         start = gateway.requests.length;
         const quiet = await runPrompt(client, "Say hello.", TIMEOUT);
         expect(quiet.promptResult.result.stopReason).toBe("end_turn");
-        expect(offered(start)).toBe(false);
+        expect(offered(start)).toEqual(["run_code"]);
         expect(client.stderr).toBe("");
       } finally {
         await client?.close();
@@ -6906,7 +6906,7 @@ describe("acp: model-independent", () => {
     TIMEOUT,
   );
 
-  test("ACP keeps a failed turn's image through reload and a new image prompt goes on", async () => {
+  test("ACP keeps a turn's image through reload on the run_code surface and a new image prompt goes on", async () => {
     const root = createIsolatedRoot("fx-acp-checkpoint-image-");
     const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
     const gateway = startFakeGateway([
@@ -6918,11 +6918,13 @@ describe("acp: model-independent", () => {
     try {
       client = await AcpClient.create({ cwd: root.workspace, env: fakeGatewayEnv(root, gateway) });
       const sessionId = await startAutoSession(client);
-      const failed = await runPromptBlocks(client, [
+      const first = await runPromptBlocks(client, [
         { type: "text", text: "Describe the image." },
         { type: "image", data: imageData, mimeType: "image/png" },
       ], TIMEOUT);
-      expect(JSON.stringify(failed)).toContain("RequiredVisionToolCallMissing");
+      expect(first.promptResult.result.stopReason).toBe("end_turn");
+      expect(acpGatewayRequest(gateway.requests[0]!.body).tools.map((tool) => tool.name)).toEqual(["run_code"]);
+      expect(gateway.requests[0]!.body).toContain("gm.vision({image_ids, focus}) inside run_code");
 
 
       const imageBytes = Buffer.from(imageData, "base64");
@@ -9222,7 +9224,7 @@ describe("acp: model-independent", () => {
         expect(available).not.toContain("acp-malformed-neighbor");
         expect(available).not.toContain(malformedBody);
 
-        expect(request.tools.map((tool) => tool.name)).toEqual(["run_code", "vision"]);
+        expect(request.tools.map((tool) => tool.name)).toEqual(["run_code"]);
 
         const diagnosticNotices = result.messages.filter((message: any) =>
           message.method === "session/update" &&
@@ -9598,7 +9600,8 @@ describe("acp: model-independent", () => {
       const route = (body: string) => {
         if (acpLatestPromptText(body).includes(childPrompt)) {
           expect(acpPromptText(body)).toContain(childPrompt);
-          expect(acpGatewayRequest(body).tools.map((tool) => tool.name)).toContain("read_file");
+          expect(acpGatewayRequest(body).tools.map((tool) => tool.name)).toEqual(["run_code"]);
+          expect(body).toMatch(/Verbs: [^"]*\bread_file\b/);
           return finalText("child inspection complete");
         }
 
@@ -9623,7 +9626,7 @@ describe("acp: model-independent", () => {
         expect(result.promptResult.result.stopReason).toBe("end_turn");
 
         expect(gateway.requests).toHaveLength(3);
-        expect(acpGatewayRequest(gateway.requests[0]!.body).tools.map((tool) => tool.name)).toEqual(["run_code", "vision"]);
+        expect(acpGatewayRequest(gateway.requests[0]!.body).tools.map((tool) => tool.name)).toEqual(["run_code"]);
         const dispatched = client.hookEvents.find(event => event.type === "delegation" && event.data.phase === "dispatched");
         expect(dispatched.data.callId).toBe(createId);
         const child = client.hookEvents.find(event => event.type === "turn.start" && event.sessionId === dispatched.data.childSessionId);
@@ -9800,7 +9803,7 @@ describe("acp: model-independent", () => {
         sendPrompt(client, 196, "Hold the code-mode prompt.");
         await waitForCondition("the code-mode Gateway request", () => gateway.requests.length === 1);
         const codeRequest = parseGatewayRequest(gateway.requests[0]!.body);
-        expect(serializedToolNames(codeRequest)).toEqual(["run_code", "vision"]);
+        expect(serializedToolNames(codeRequest)).toEqual(["run_code"]);
         expect(serializedToolNames(codeRequest)).not.toContain("shell");
         expect(findUnavailableCapabilityReferences(codeRequest).map((finding) => finding.capability))
           .toEqual(["AskUserQuestion"]);

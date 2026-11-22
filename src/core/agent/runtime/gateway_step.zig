@@ -371,6 +371,16 @@ pub fn snapshotDynamicTools(alloc: Allocator, deps: *const @import("deps.zig").A
     return offered.toOwnedSlice(alloc);
 }
 
+pub fn modelDynamicTools(advertised_names: []const []const u8, offered: []const agent_stream_provider.DynamicFunctionTool) []const agent_stream_provider.DynamicFunctionTool {
+    return if (agent_stream_provider.advertisesRunCode(advertised_names)) &.{} else offered;
+}
+
+test "MCP schemas are not offered to the model beside run_code" {
+    const offered = [_]agent_stream_provider.DynamicFunctionTool{.{ .name = "mcp__fake__echo", .description = "Echo", .input_schema = .null }};
+    try std.testing.expectEqual(@as(usize, 0), modelDynamicTools(&.{"run_code"}, &offered).len);
+    try std.testing.expectEqual(@as(usize, 1), modelDynamicTools(&.{"read_file"}, &offered).len);
+}
+
 pub fn recordSelectedDynamicTools(alloc: Allocator, tools: *std.ArrayList(agent_stream_provider.DynamicFunctionTool), execution: ToolExecutionResult) !void {
     for (execution.retired_dynamic_tool_names) |name| {
         for (tools.items, 0..) |tool, index| {

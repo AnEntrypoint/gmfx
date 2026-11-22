@@ -156,6 +156,24 @@ export function fakeGatewaySse(events: object[]) {
   );
 }
 
+export const LIST_VERBS_BODY = { body: "return gm.verbs({ names: true });" };
+
+export function runCodeVerbNames(node: unknown): string[] {
+  if (typeof node === "string") {
+    try {
+      return runCodeVerbNames(JSON.parse(node));
+    } catch {
+      return [];
+    }
+  }
+  if (Array.isArray(node)) {
+    if (node.length > 0 && node.every((item) => typeof item === "string")) return node;
+    return node.flatMap(runCodeVerbNames);
+  }
+  if (node && typeof node === "object") return Object.values(node).flatMap(runCodeVerbNames);
+  return [];
+}
+
 export function fakeGatewayToolCall(
   id: string,
   name: string,

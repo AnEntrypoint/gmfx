@@ -879,7 +879,7 @@ describe("MCP login", () => {
       fakeGatewayFinalText("Signed in and called."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     const offered = (index: number) =>
-      (JSON.parse(gateway!.requests[index]?.body ?? "{}") as { tools?: Array<{ name: string; description?: string }> }).tools ?? [];
+      (JSON.parse(gateway!.requests[index]?.body ?? "{}") as { tools?: Array<{ name: string }> }).tools ?? [];
     const result = await runFx(["ask", "--json", "--auto", "--no-save", "Sign in to the fixture, then call it."], {
       cwd: root.workspace,
       env: { ...env, FX_GATEWAY_BASE_URL: gateway.baseUrl, FX_GATEWAY_CHAT_URL: gateway.chatUrl },
@@ -887,9 +887,7 @@ describe("MCP login", () => {
     });
     expectExit0(result);
 
-    const authenticate = offered(0).find((tool) => tool.name === "mcp__fixture__authenticate");
-    expect(authenticate?.description).toContain("The tool blocks (up to 15 minutes) until the browser redirects back to");
-    expect(offered(0).map((tool) => tool.name)).not.toContain(TOOL_NAME);
+    expect(offered(0).map((tool) => tool.name)).toEqual(["run_code"]);
 
     const signedIn = toolResultText(gateway.requests[1]?.body ?? "", "call_auth");
     expect(signedIn).toContain("authenticated successfully. The real MCP tools have replaced this synthetic authenticate tool.");
@@ -898,8 +896,7 @@ describe("MCP login", () => {
     expect(auth.tokenExchanges).toBe(1);
     expect(signedIn).not.toContain(ACCESS_INITIAL);
 
-    expect(offered(1).map((tool) => tool.name)).toContain(TOOL_NAME);
-    expect(offered(1).map((tool) => tool.name)).not.toContain("mcp__fixture__authenticate");
+    expect(offered(1).map((tool) => tool.name)).toEqual(["run_code"]);
     const called = toolResultText(gateway.requests[2]?.body ?? "", "call_mcp");
     expect(called).toContain("after authenticate");
     expect(await statusOf(root)).toBe("signed_in");

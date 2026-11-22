@@ -1265,7 +1265,6 @@ pub fn runSubagentChild(
             .permission_mode = admission.permission_mode,
             .permission_rules = admission.rules,
             .subagent_available = true,
-            .run_code_surface = false,
         },
     ) catch return error.OutOfMemory;
     defer child_projection.deinit(alloc);
@@ -5578,16 +5577,16 @@ test "ACP admits default-safe FetchURL before execution" {
     try std.testing.expectEqual(ToolPermissionDecision.once, decision);
 }
 
-test "ACP full advertisement includes direct provider search with explicit permission" {
+test "ACP full advertisement is run_code alone and keeps the provider search guidance with explicit permission" {
     var rules = [_]types.PermissionRule{
         .{ .permission = @constCast("WebSearch"), .pattern = @constCast("*"), .action = .allow },
     };
     var projection = try tool_projection_mod.buildModelToolProjectionForSet(std.testing.allocator, builtin_tools.advertisement_set, .{
         .permission_rules = .{ .rules = &rules },
-        .run_code_surface = false,
     });
     defer projection.deinit(std.testing.allocator);
-    try std.testing.expect(tool_projection_mod.containsName(projection.advertised_names, "WebSearch"));
+    try std.testing.expectEqual(@as(usize, 1), projection.advertised_names.len);
+    try std.testing.expectEqualStrings("run_code", projection.advertised_names[0]);
     try std.testing.expectEqualStrings(builtin_tools.web_search.description, projection.custom_guidance);
 }
 

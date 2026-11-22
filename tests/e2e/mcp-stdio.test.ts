@@ -2134,9 +2134,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"`,
     expect(result.code, result.stderr || result.stdout).toBe(0);
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(JSON.parse(result.stdout).output).toContain("Started server works.");
-    const offered = advertisedToolNames(gateway.requests[0]!.body);
-    expect(offered).toContain(TOOL_NAME);
-    expect(offered.filter((name) => name.startsWith("mcp__unrelated__"))).toEqual([]);
+    expect(advertisedToolNames(gateway.requests[0]!.body)).toEqual(["run_code"]);
     expect(existsSync(unrelatedWire)).toBe(true);
     expect(toolResultText(gateway.requests[1]!.body, "target_call")).toContain(`${MODERN_RESULT}:hello`);
     await expectFixtureProcessesExited([...readWire(root.wireLogPath), ...readWire(unrelatedWire)]);
@@ -2176,7 +2174,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"`,
         expect(readAttemptedPids(root.launchLogPath)).toHaveLength(0);
         expect(existsSync(root.wireLogPath)).toBe(false);
       } else {
-        expect(offered).toContain(TOOL_NAME);
+        expect(offered).toEqual(["run_code"]);
         expect(readAttemptedPids(root.launchLogPath)).toHaveLength(1);
         expect(readWire(root.wireLogPath).filter((entry) => entry.message.method === "tools/call")).toHaveLength(0);
         await expectProcessesExited(readAttemptedPids(root.launchLogPath));

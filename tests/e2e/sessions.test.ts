@@ -2274,7 +2274,7 @@ test.skipIf(!tmuxAvailable())("ACP load after a compaction shows every earlier t
 }, TIMEOUT * 4);
 
 
-const isChildRequest = (body: string) => !body.includes('"name":"run_code"');
+const isChildRequest = (body: string) => body.includes("<subagent_role>");
 
 function agentCall(id: string, prompt: string, extra: Record<string, unknown> = {}) {
   return fakeGatewayToolCall(id, "Agent", { prompt, description: "Delegated work", ...extra });

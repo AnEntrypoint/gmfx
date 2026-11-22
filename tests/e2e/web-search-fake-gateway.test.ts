@@ -29,7 +29,7 @@ const TIMEOUT = 15_000;
 const SOURCE_URL = "https://ziglang.org/download/";
 const OUTER_MODEL = "openai/gpt-5";
 const PARALLEL_OUTER_MODEL = "xai/grok-4";
-const RUN_CODE_SURFACE = ["run_code", "vision"];
+const RUN_CODE_SURFACE = ["run_code"];
 
 type GatewayRequest = {
   body: string;

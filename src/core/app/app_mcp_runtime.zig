@@ -1187,6 +1187,20 @@ pub const State = struct {
         return null;
     }
 
+    pub fn listTools(
+        self: *State,
+        arena: Allocator,
+        permission_rules: types.PermissionRuleSet,
+        access: tool_mcp_runtime.Access,
+        cancel_flag: ?*std.atomic.Value(bool),
+    ) ![]const tool_mcp_runtime.ListedTool {
+        if (self.leaseHost()) |l| {
+            defer l.deinit();
+            return l.host.catalog.listTools(arena, permission_rules, access, cancel_flag);
+        }
+        return &.{};
+    }
+
     pub fn snapshotToolDefinition(self: *State, alloc: Allocator, name: []const u8, known: tool_mcp_runtime.Binding, permission_rules: types.PermissionRuleSet, limits: context_limits.Values, access: tool_mcp_runtime.Access) !tool_mcp_runtime.DefinitionSnapshot {
         if (self.leaseHost()) |l| {
             defer l.deinit();

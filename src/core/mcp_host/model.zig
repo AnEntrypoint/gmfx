@@ -143,6 +143,7 @@ pub const Catalog = struct {
         tc.mcp_call_tool = callToolFn;
         tc.mcp_search_tools = searchToolsFn;
         tc.mcp_tool_schema = toolSchemaFn;
+        tc.mcp_list_tools = listToolsFn;
         tc.mcp_snapshot_tool = snapshotToolFn;
         tc.mcp_read_resource = readResourceFn;
     }
@@ -374,6 +375,36 @@ pub const Catalog = struct {
         if (projection.selected.notice) |notice| alloc.free(notice);
         errdefer alloc.free(projection.selected.model_output);
         return .{ .updated = .{ .name = try alloc.dupe(u8, name), .schema_json = projection.selected.model_output, .mcp_binding = current } };
+    }
+
+    pub fn listTools(
+        c: *Catalog,
+        alloc: Allocator,
+        permission_rules: types.PermissionRuleSet,
+        access: Access,
+        cancel: Cancel,
+    ) ![]const tool_mcp_runtime.ListedTool {
+        if (!c.mayAllow(access)) return &.{};
+        const servers = c.currentServers();
+        for (servers) |s| c.runtime.prepare(s.name) catch {};
+        for (servers) |s| try c.refresh(s.name, cancel);
+        var listed: std.ArrayList(tool_mcp_runtime.ListedTool) = .empty;
+        errdefer listed.deinit(alloc);
+        c.mutex.lockUncancelable(c.io);
+        defer c.mutex.unlock(c.io);
+        for (c.lists, 0..) |l, i| {
+            if (!l.offersTools()) continue;
+            for (l.tools) |tool| {
+                if (permissions.rulesDenyAllTargetsForPermission(permission_rules, tool.prefixed_name)) continue;
+                if (!c.allowsLocked(access, i, tool.prefixed_name)) continue;
+                try listed.append(alloc, .{
+                    .name = try alloc.dupe(u8, tool.prefixed_name),
+                    .description = try alloc.dupe(u8, tool.description),
+                    .input_schema_json = try alloc.dupe(u8, tool.input_schema_json),
+                });
+            }
+        }
+        return listed.toOwnedSlice(alloc);
     }
 
     pub fn snapshotToolNames(c: *Catalog, alloc: Allocator, permission_rules: types.PermissionRuleSet) ![][]u8 {
@@ -1061,6 +1092,10 @@ fn callToolFn(raw: *anyopaque, arena: Allocator, name: []const u8, arguments_jso
     return catalog(raw).callTool(arena, name, arguments_json, max_bytes, options);
 }
 
+fn listToolsFn(raw: *anyopaque, alloc: Allocator, rules: types.PermissionRuleSet, access: Access, cancel: Cancel) anyerror![]const tool_mcp_runtime.ListedTool {
+    return catalog(raw).listTools(alloc, rules, access, cancel);
+}
+
 fn readResourceFn(raw: *anyopaque, alloc: Allocator, server: []const u8, op: mcp_resources.Op, access: Access, cancel: Cancel) anyerror!tool_mcp_runtime.ResourceResult {
     return catalog(raw).readResource(alloc, server, op, access, cancel);
 }
@@ -1154,6 +1189,29 @@ test "an instance's server filter allows the tools of its servers and refuses th
     const query = try lexical_relevance.prepare("echo");
     const found = try c.searchTools(a, .{ .query = &query, .kind = .mcp }, .{}, .{}, refused, null);
     try testing.expectEqual(@as(usize, 0), found.selected_tools.len);
+}
+
+test "listTools names every allowed MCP tool with its input schema and lists none when access is disabled" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const configs = [_]mcp_contract.McpServerConfig{.{ .name = "fake", .command = f.server }};
+    var r: Runtime = undefined;
+    try r.start(testing.allocator, testing.io, &configs, &f.inherited, f.options());
+    defer r.deinit();
+    var c: Catalog = undefined;
+    try c.init(testing.allocator, testing.io, &r, .{});
+    defer c.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const listed = try c.listTools(a, .{}, .unrestricted, null);
+    const echo = for (listed) |tool| {
+        if (std.mem.eql(u8, tool.name, "mcp__fake__echo")) break tool;
+    } else return error.TestExpectedEqual;
+    try testing.expect(std.mem.find(u8, echo.input_schema_json, "\"type\"") != null);
+    try testing.expectEqual(@as(usize, 0), (try c.listTools(a, .{}, .disabled, null)).len);
 }
 
 test "a tool with an output schema that returns no structured content fails naming the tool" {

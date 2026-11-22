@@ -425,7 +425,10 @@ fn toolsWithout(arena: Allocator, allowed: ?[]const []const u8, refused: []const
     return out;
 }
 
+pub const verb_carrier_tool = "run_code";
+
 pub fn allowsTool(profile: *const Profile, tool: []const u8) bool {
+    if (std.mem.eql(u8, tool, verb_carrier_tool)) return true;
     const tools = profile.tools orelse return true;
     if (toolListAllows(tools, tool)) return true;
     return isMcpLoaderTool(tool) and admitsMcpTools(tools) and !toolListRefuses(tools, tool);
@@ -1014,6 +1017,7 @@ test "a profile's settings, tools, and prompt parse from profile.json and prompt
     try testing.expectEqual(PromptMode.replace, profile.prompt_mode);
     try testing.expect(allowsTool(&profile, "read_file"));
     try testing.expect(!allowsTool(&profile, "write_file"));
+    try testing.expect(allowsTool(&profile, verb_carrier_tool));
     try testing.expect(allowsMcpServer(&profile, "github"));
     try testing.expect(!allowsMcpServer(&profile, "slack"));
     try testing.expectEqual(@as(usize, 0), profile.ignored.len);

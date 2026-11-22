@@ -350,7 +350,8 @@ fn buildAgentToolsJson(
         try writeDynamicFunctionTool(&out.writer, tool);
     }
     if (request.vision_mode == .optional and
-        !toolNameSelected(request.tools.advertised_names, "vision"))
+        !toolNameSelected(request.tools.advertised_names, "vision") and
+        !agent_stream_provider_contract.advertisesRunCode(request.tools.advertised_names))
     {
         const vision = request.tools.registry.lookup("vision") orelse
             return error.VisionToolNotRegistered;
@@ -607,6 +608,59 @@ test "agent request builder overlays selected dynamic schemas" {
 
     try std.testing.expect(std.mem.find(u8, body, "\"name\":\"mcp_fs_read\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "\"maxOutputTokens\":64000") != null);
+}
+
+test "an image request on the run_code surface offers run_code alone, pending images included" {
+    const Callbacks = struct {
+        fn decode(_: tool_dispatch.DispatchContext, _: []const u8) tool_dispatch.DispatchError!tool_dispatch.DecodeResult {
+            return error.InvalidToolArguments;
+        }
+
+        fn call(_: tool_dispatch.DispatchContext, _: tool_dispatch.ToolInput) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
+            return error.InvalidToolArguments;
+        }
+
+        fn readsOnly(_: tool_dispatch.ToolInput) bool {
+            return true;
+        }
+
+        fn isIrreversible(_: tool_dispatch.ToolInput) bool {
+            return false;
+        }
+    };
+    const vision_tool = tool_dispatch.Tool{
+        .name = "vision",
+        .description = "vision",
+        .model_schema = .{ .name = "vision", .description = "vision" },
+        .executor_kind = .vision,
+        .decode = Callbacks.decode,
+        .call = Callbacks.call,
+        .reads_only_fn = Callbacks.readsOnly,
+        .irreversible_fn = Callbacks.isIrreversible,
+    };
+    const registered_tools = [_]tool_dispatch.Tool{vision_tool};
+    const run_code_schema = model_tool_schema.FunctionSchema{ .name = "run_code", .description = "Run code" };
+    const advertised_names = [_][]const u8{"run_code"};
+    inline for (.{ .optional, .required }) |route_mode| {
+        const tools_json = try buildAgentToolsJson(std.testing.allocator, .{
+            .model = "zai/glm-5.2",
+            .tools = .{
+                .registry = .{ .tools = registered_tools[0..] },
+                .advertised_names = &advertised_names,
+                .advertised_functions = &.{run_code_schema},
+            },
+            .messages = &.{},
+            .tool_choice = .none,
+            .vision_mode = agent_stream_provider_contract.surfaceVisionMode(&advertised_names, route_mode),
+            .provider_options = resolveGatewayProviderOptions("zai/glm-5.2", .auto, false),
+        });
+        defer std.testing.allocator.free(tools_json);
+        var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, tools_json, .{});
+        defer parsed.deinit();
+        try std.testing.expectEqual(@as(usize, 1), parsed.value.array.items.len);
+        try std.testing.expect(std.mem.find(u8, tools_json, "\"name\":\"run_code\"") != null);
+        try std.testing.expect(std.mem.find(u8, tools_json, "\"name\":\"vision\"") == null);
+    }
 }
 
 test "required vision request contains only the registered vision schema" {

@@ -179,7 +179,7 @@ function requestJson(request: GatewayRequest) {
 
 function expectRunCodeSurface(request: GatewayRequest) {
   const tools = requestJson(request).tools;
-  expect(tools.map((tool) => tool.name)).toEqual(["run_code", "vision"]);
+  expect(tools.map((tool) => tool.name)).toEqual(["run_code"]);
   const runCode = tools[0];
   expect(runCode.type).toBe("function");
   expect(runCode.inputSchema.type).toBe("object");

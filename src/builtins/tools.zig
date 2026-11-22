@@ -1180,12 +1180,14 @@ fn callRunCode(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInp
     return run_code_tool.call(ctx, erased, registry_with_tower);
 }
 
+const run_code_description = run_code_tool.describe(&(verb_tools ++ tower_tools.specs));
+
 pub const run_code = tool_dispatch.Tool{
     .name = run_code_tool.tool_name,
-    .description = run_code_tool.description,
+    .description = run_code_description,
     .model_schema = .{
         .name = run_code_tool.tool_name,
-        .description = run_code_tool.description,
+        .description = run_code_description,
         .input_schema = .{
             .properties = &run_code_tool.properties,
             .required = &.{"body"},
@@ -1197,12 +1199,12 @@ pub const run_code = tool_dispatch.Tool{
     .requires_approval = true,
     .decode = run_code_tool.decode,
     .call = callRunCode,
+    .runtime_provider = .verb_host,
     .reads_only_fn = run_code_tool.readsOnly,
     .irreversible_fn = run_code_tool.irreversible,
 };
 
-pub const all = [_]tool_dispatch.Tool{
-    run_code,
+const verb_tools = [_]tool_dispatch.Tool{
     glob_files,
     grep_files,
     read_file,
@@ -1239,6 +1241,8 @@ pub const all = [_]tool_dispatch.Tool{
     goal_tools.update_goal,
     superagent,
 };
+
+pub const all = [_]tool_dispatch.Tool{run_code} ++ verb_tools;
 
 pub const all_with_tower = all ++ tower_tools.specs;
 
@@ -1543,6 +1547,21 @@ fn nameInSet(names: []const []const u8, wanted: []const u8) bool {
         if (std.mem.eql(u8, name, wanted)) return true;
     }
     return false;
+}
+
+test "the run_code description names every other registered tool and host verb within the description cap" {
+    const host_verbs = @import("../core/runcode/host_verbs.zig");
+    const text = run_code.model_schema.description;
+    try std.testing.expect(text.len <= model_tool_schema.description_max_bytes);
+    const listed = text[std.mem.indexOf(u8, text, "Verbs: ").? + "Verbs: ".len .. text.len - 1];
+    var names = std.mem.splitScalar(u8, listed, ',');
+    var count: usize = 0;
+    while (names.next()) |name| {
+        try std.testing.expect(registry_with_tower.lookup(name) != null or host_verbs.isHostVerb(name));
+        try std.testing.expect(!std.mem.eql(u8, name, "run_code"));
+        count += 1;
+    }
+    try std.testing.expectEqual(all_with_tower.len - 1 + host_verbs.names.len, count);
 }
 
 test "built-in tools register exact active local order" {

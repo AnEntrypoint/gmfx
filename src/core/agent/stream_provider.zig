@@ -138,6 +138,15 @@ pub const VisionMode = enum {
     required,
 };
 
+pub fn advertisesRunCode(advertised_names: []const []const u8) bool {
+    for (advertised_names) |name| if (std.mem.eql(u8, name, "run_code")) return true;
+    return false;
+}
+
+pub fn surfaceVisionMode(advertised_names: []const []const u8, mode: VisionMode) VisionMode {
+    return if (mode == .required and advertisesRunCode(advertised_names)) .optional else mode;
+}
+
 pub const BuildBudget = struct {
     deadline: ?std.Io.Clock.Timestamp = null,
     cancel_flag: ?*std.atomic.Value(bool) = null,

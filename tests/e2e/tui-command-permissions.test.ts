@@ -2225,8 +2225,7 @@ describe("effect-aware command permissions", () => {
         }
         if (currentUserText(body).includes(childPrompt)) {
 
-
-          expect(body).toContain('"name":"Bash"');
+          expect((JSON.parse(body) as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name)).toEqual(["run_code"]);
           return toolCall(`/usr/bin/touch ${shellQuote(markerPath)}`, {}, commandId);
         }
         if (currentUserText(body).includes(rootPrompt)) {

@@ -10,11 +10,31 @@ const command_admission = @import("../../core/permissions/command_admission.zig"
 const host_verbs = @import("../../core/runcode/host_verbs.zig");
 const host_verb_gate = @import("../../core/runcode/host_verb_gate.zig");
 const managed_execution = @import("../../core/execution/managed_execution.zig");
+const tool_mcp_registry = @import("../../core/tooling/tool_mcp_registry.zig");
+const tool_mcp_runtime = @import("../../core/tooling/tool_mcp_runtime.zig");
 
 pub const tool_name = "run_code";
 
-pub const description =
-    "Run a JavaScript function body through the embedded txiki runtime. gm.<tool>(args) runs one fx tool, gm.verbs() lists them, and require loads relative files. The returned value is the result. One approval covers the whole body and every verb it calls.";
+pub const not_admitted_code = "EFX_TOOL_NOT_ADMITTED";
+
+const description_head = "Run a JavaScript function body and return its value. gm.<verb>(args) calls a verb, gm.verbs({names:true}) lists names, gm.verbs({name}) gives a description and input schema. MCP tools are verbs named mcp__<server>__<tool>. Verbs: ";
+
+pub fn describe(comptime tools: []const tool_dispatch.Tool) []const u8 {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        var text: []const u8 = description_head;
+        var first = true;
+        for (tools) |tool| {
+            if (std.mem.eql(u8, tool.name, tool_name)) continue;
+            text = text ++ (if (first) "" else ",") ++ tool.name;
+            first = false;
+        }
+        for (host_verbs.names) |name| text = text ++ "," ++ name;
+        const final = text ++ ".";
+        if (final.len > model_tool_schema.description_max_bytes) @compileError("the run_code description must fit the model description cap");
+        return final;
+    }
+}
 
 pub const properties = [_]model_tool_schema.Property{
     .{ .name = "body", .json_type = .string, .description = "Function body; the value it returns is the result." },
@@ -94,12 +114,50 @@ fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, a
     var ctx = bridge.ctx;
     ctx.allocator = verb_alloc;
     ctx.command_outcome = .{ .context = bridge, .outcome = commandOutcome };
+    ctx.tool_call_id = id;
+    ctx.tool_call_name = name;
     if (host_verbs.isHostVerb(name)) {
+        if (!hostVerbAdmitted(ctx, name)) return notAdmittedReply(alloc, name);
         if (try host_verb_gate.refusal(ctx, bridge.registry, alloc, name, args_json)) |denied| return denied;
         return host_verbs.call(alloc, name, args_json);
     }
-    const result = try tool_dispatch.dispatchToolCall(ctx, bridge.registry, .{ .id = id, .name = name, .arguments_json = args_json });
+    const tool_call: message.ToolCall = .{ .id = id, .name = name, .arguments_json = args_json };
+    if (bridge.registry.lookup(name) == null and ctx.mcp_ctx != null and ctx.mcp_call_tool != null) {
+        ctx.mcp_call_options.call_id = id;
+        ctx.mcp_call_options.expected_binding = null;
+        ctx.mcp_call_options.expected_runtime_generation = null;
+        ctx.mcp_execution_error_sink = null;
+        ctx.mcp_call_status_sink = null;
+        const mcp_tool = [_]tool_dispatch.Tool{tool_mcp_registry.dynamicTool(name)};
+        const result = try tool_dispatch.dispatchToolCall(ctx, .{ .tools = &mcp_tool }, tool_call);
+        return verbReply(alloc, result.status == .success, result.body);
+    }
+    if (!toolAdmitted(ctx, name)) return notAdmittedReply(alloc, name);
+    const result = try tool_dispatch.dispatchToolCall(ctx, bridge.registry, tool_call);
     return verbReply(alloc, result.status == .success, result.body);
+}
+
+fn toolAdmitted(ctx: tool_dispatch.DispatchContext, name: []const u8) bool {
+    const allowed = ctx.admitted_tool_names orelse return true;
+    for (allowed) |entry| if (std.mem.eql(u8, entry, name)) return true;
+    return false;
+}
+
+fn hostVerbAdmitted(ctx: tool_dispatch.DispatchContext, verb: []const u8) bool {
+    const row = host_verb_gate.rowFor(verb) orelse return false;
+    const gate_tool = host_verb_gate.toolNameFor(row.class) orelse return true;
+    return toolAdmitted(ctx, gate_tool);
+}
+
+fn notAdmittedReply(alloc: std.mem.Allocator, name: []const u8) ![]u8 {
+    const text = try std.fmt.allocPrint(alloc, "{s}: {s} is not in this agent's allowed tools", .{ not_admitted_code, name });
+    defer alloc.free(text);
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.writeAll("{\"ok\":false,\"code\":\"" ++ not_admitted_code ++ "\",\"error\":");
+    try std.json.Stringify.value(text, .{}, &out.writer);
+    try out.writer.writeByte('}');
+    return out.toOwnedSlice();
 }
 
 fn commandOutcome(
@@ -128,7 +186,7 @@ fn verbReply(alloc: std.mem.Allocator, ok: bool, text: []const u8) ![]u8 {
     return out.toOwnedSlice();
 }
 
-fn writeCatalogEntry(writer: *std.Io.Writer, first: *bool, name: []const u8, description_text: []const u8, kind: []const u8) !void {
+fn openCatalogEntry(writer: *std.Io.Writer, first: *bool, name: []const u8, description_text: []const u8, kind: []const u8) !void {
     if (!first.*) try writer.writeByte(',');
     first.* = false;
     try writer.writeAll("{\"name\":");
@@ -137,21 +195,44 @@ fn writeCatalogEntry(writer: *std.Io.Writer, first: *bool, name: []const u8, des
     try std.json.Stringify.value(description_text, .{}, writer);
     try writer.writeAll(",\"kind\":\"");
     try writer.writeAll(kind);
-    try writer.writeAll("\"}");
+    try writer.writeAll("\",\"input_schema\":");
 }
 
-fn buildCatalog(alloc: std.mem.Allocator, registry: tool_dispatch.Registry) ![]u8 {
+fn buildCatalog(alloc: std.mem.Allocator, ctx: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeByte('[');
     var first = true;
     for (registry.tools) |tool| {
-        if (std.mem.eql(u8, tool.name, tool_name)) continue;
-        try writeCatalogEntry(&out.writer, &first, tool.name, tool.description, "tool");
+        if (std.mem.eql(u8, tool.name, tool_name) or !toolAdmitted(ctx, tool.name)) continue;
+        try openCatalogEntry(&out.writer, &first, tool.name, tool.description, "tool");
+        try model_tool_schema.writeObjectSchema(alloc, &out.writer, tool.model_schema.input_schema);
+        try out.writer.writeByte('}');
     }
-    for (host_verbs.names) |name| try writeCatalogEntry(&out.writer, &first, name, "", "host");
+    for (host_verbs.verbs) |verb| {
+        if (!hostVerbAdmitted(ctx, verb.name)) continue;
+        try openCatalogEntry(&out.writer, &first, verb.name, verb.description, "host");
+        try model_tool_schema.writeObjectSchema(alloc, &out.writer, verb.input_schema);
+        try out.writer.writeByte('}');
+    }
+    var listing = std.heap.ArenaAllocator.init(alloc);
+    defer listing.deinit();
+    for (try mcpTools(listing.allocator(), ctx)) |tool| {
+        try openCatalogEntry(&out.writer, &first, tool.name, tool.description, "mcp");
+        try out.writer.writeAll(if (tool.input_schema_json.len == 0) "{}" else tool.input_schema_json);
+        try out.writer.writeByte('}');
+    }
     try out.writer.writeByte(']');
     return out.toOwnedSlice();
+}
+
+fn mcpTools(alloc: std.mem.Allocator, ctx: tool_dispatch.DispatchContext) ![]const tool_mcp_runtime.ListedTool {
+    const runtime_context = ctx.mcp_ctx orelse return &.{};
+    const list = ctx.mcp_list_tools orelse return &.{};
+    return list(runtime_context, alloc, ctx.mcp_permission_rules, ctx.mcp_access, ctx.cancel_flag) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return &.{},
+    };
 }
 
 pub fn isCliToken(token: []const u8) bool {
@@ -187,7 +268,7 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
     var managed = managed_execution.Runtime.init(alloc);
     defer managed.deinit();
     ctx.managed_executions = &managed;
-    const catalog = try buildCatalog(alloc, registry);
+    const catalog = try buildCatalog(alloc, ctx, registry);
     defer alloc.free(catalog);
     var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
     const verbs: runcode.Verbs = .{ .context = &bridge, .catalog = catalog, .invoke = invokeVerb };
@@ -200,7 +281,7 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
 
 pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput, registry: tool_dispatch.Registry) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const input = erased.as(Input);
-    const catalog = buildCatalog(ctx.allocator, registry) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not list its verbs") };
+    const catalog = buildCatalog(ctx.allocator, ctx, registry) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not list its verbs") };
     defer ctx.allocator.free(catalog);
     var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
     const outcome = runcode.execute(ctx.allocator, input.body, .{
@@ -279,4 +360,87 @@ test "an esm body imports node built-ins by their Node names through the fx:host
     for ([_][]const u8{ "\"joined\":\"a/b\"", "\"read\":\"function\"", names, "\"missing\":[]", "'node:inspector' is not provided by fx:host yet", "\"verbs\":\"function\"" }) |expected| {
         try std.testing.expect(std.mem.indexOf(u8, result.body, expected) != null);
     }
+}
+
+test "a verb outside the agent's allowed tools is refused by name before dispatch and left out of the catalog" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const allowed = [_][]const u8{ "run_code", "glob_files" };
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = alloc,
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+        .admitted_tool_names = &allowed,
+    };
+    var bridge: Bridge = .{ .ctx = ctx, .registry = builtin_tools.registry_with_tower };
+    for ([_][]const u8{ "read_file", "fs_read" }) |verb| {
+        const reply = try invokeVerb(&bridge, alloc, verb, "{\"path\":\"build.zig\"}");
+        try std.testing.expect(std.mem.indexOf(u8, reply, not_admitted_code) != null);
+    }
+    const catalog = try buildCatalog(alloc, ctx, builtin_tools.registry_with_tower);
+    try std.testing.expect(std.mem.indexOf(u8, catalog, "\"name\":\"glob_files\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog, "\"name\":\"process_info\"") != null);
+    for ([_][]const u8{ "\"name\":\"read_file\"", "\"name\":\"fs_read\"", "\"name\":\"Bash\"", "\"name\":\"run_command\"" }) |absent| {
+        try std.testing.expect(std.mem.indexOf(u8, catalog, absent) == null);
+    }
+}
+
+const FakeMcpListing = struct {
+    const types = @import("../../core/shared/types.zig");
+
+    fn list(_: *anyopaque, alloc: std.mem.Allocator, _: types.PermissionRuleSet, _: tool_mcp_runtime.Access, _: ?*std.atomic.Value(bool)) anyerror![]const tool_mcp_runtime.ListedTool {
+        const tools = try alloc.alloc(tool_mcp_runtime.ListedTool, 1);
+        tools[0] = .{ .name = "mcp__fake__echo", .description = "Echo text.", .input_schema_json = "{\"type\":\"object\"}" };
+        return tools;
+    }
+};
+
+test "the verb catalog lists each MCP tool of the session with its input schema" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var runtime_marker: u8 = 0;
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = arena.allocator(),
+        .mcp_ctx = &runtime_marker,
+        .mcp_list_tools = FakeMcpListing.list,
+    };
+    const catalog = try buildCatalog(arena.allocator(), ctx, .{ .tools = &.{} });
+    try std.testing.expect(std.mem.indexOf(u8, catalog, "{\"name\":\"mcp__fake__echo\",\"description\":\"Echo text.\",\"kind\":\"mcp\",\"input_schema\":{\"type\":\"object\"}}") != null);
+    const without_mcp = try buildCatalog(arena.allocator(), .{ .allocator = arena.allocator() }, .{ .tools = &.{} });
+    try std.testing.expect(std.mem.indexOf(u8, without_mcp, "mcp__fake__echo") == null);
+}
+
+test "verbs gives names alone, one verb's description and input schema, and refuses an unknown name" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = arena.allocator(),
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+    };
+    const body =
+        \\const names = gm.verbs({ names: true });
+        \\let unknown = '';
+        \\try { gm.verbs({ name: 'no_such_verb' }); } catch (error) { unknown = error.message; }
+        \\return [
+        \\  gm.verbs({ name: 'read_file' }).input_schema.required.join('|'),
+        \\  gm.verbs({ name: 'fs_read' }).description,
+        \\  gm.verbs({ name: 'fs_read' }).input_schema.required.join('|'),
+        \\  names.every((name) => typeof name === 'string') && names.includes('read_file') && names.includes('fs_read') && !names.includes('run_code'),
+        \\  unknown,
+        \\].join(';');
+    ;
+    const arguments_json = try std.json.Stringify.valueAlloc(arena.allocator(), .{ .body = body }, .{});
+    const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+        .id = "model-run-code-verbs",
+        .name = "run_code",
+        .arguments_json = arguments_json,
+    });
+    if (result.status != .success) return error.RunCodeDidNotSucceed;
+    try std.testing.expect(std.mem.indexOf(u8, result.body, "path;Read a whole file as base64.;path;true;unknown verb: no_such_verb") != null);
 }

@@ -215,6 +215,8 @@ pub const Context = struct {
     mcp_search_tools: ?tool_mcp_runtime.SearchToolsFn = null,
     mcp_read_resource: ?tool_mcp_runtime.ReadResourceFn = null,
     mcp_tool_schema: ?tool_mcp_runtime.ToolSchemaFn = null,
+    mcp_list_tools: ?tool_mcp_runtime.ListToolsFn = null,
+    admitted_tool_names: ?[]const []const u8 = null,
     mcp_snapshot_tool: ?tool_mcp_runtime.SnapshotToolFn = null,
     expected_mcp_runtime_generation: ?u64 = null,
     expected_mcp_binding: ?types.McpToolBinding = null,
@@ -935,7 +937,7 @@ fn executeRegisteredTool(
             .ctx = &command_backend,
             .execute_fn = executeRunCommandBackend,
         },
-        .vision => dispatch_ctx.vision_provider = .{
+        .vision, .verb_host => dispatch_ctx.vision_provider = .{
             .ctx = &vision_provider,
             .execute_fn = executeVisionProvider,
         },
@@ -959,9 +961,9 @@ fn executeRegisteredTool(
         dispatched.deinit(arena);
         return err;
     }
-    if (vision_provider.execution_error) |err| {
+    if (runtime_provider == .vision and vision_provider.execution_error != null) {
         dispatched.deinit(arena);
-        return err;
+        return vision_provider.execution_error.?;
     }
     if (mcp_execution_error) |err| {
         dispatched.deinit(arena);
@@ -971,8 +973,8 @@ fn executeRegisteredTool(
 
     var execution = if (command_backend.completion) |completion|
         completion
-    else if (vision_provider.completion) |completion|
-        completion
+    else if (runtime_provider == .vision and vision_provider.completion != null)
+        vision_provider.completion.?
     else
         toolExecutionResultFromDispatch(dispatched, dispatch_metadata);
     execution.model_output = dispatched.body;
@@ -1579,6 +1581,8 @@ fn typedDispatchContext(ctx: Context, arena: Allocator) tool_dispatch.DispatchCo
         .mcp_search_tools = ctx.mcp_search_tools,
         .mcp_read_resource = ctx.mcp_read_resource,
         .mcp_tool_schema = ctx.mcp_tool_schema,
+        .mcp_list_tools = ctx.mcp_list_tools,
+        .admitted_tool_names = ctx.admitted_tool_names,
         .mcp_access = ctx.mcp_access,
         .mcp_input_responder = ctx.mcp_input_responder,
         .mcp_permission_rules = if (ctx.permission_mode == .yolo)
@@ -2900,6 +2904,7 @@ const TestRuntime = struct {
     mcp_search_tools: ?tool_mcp_runtime.SearchToolsFn = null,
     mcp_read_resource: ?tool_mcp_runtime.ReadResourceFn = null,
     mcp_tool_schema: ?tool_mcp_runtime.ToolSchemaFn = null,
+    mcp_list_tools: ?tool_mcp_runtime.ListToolsFn = null,
     mcp_snapshot_tool: ?tool_mcp_runtime.SnapshotToolFn = null,
     mcp_input_responder: ?tool_mcp_runtime.InputResponder = null,
     advertised_dynamic_tool_names: []const []const u8 = &.{},
@@ -2974,6 +2979,7 @@ const TestRuntime = struct {
             .mcp_search_tools = self.mcp_search_tools,
             .mcp_read_resource = self.mcp_read_resource,
             .mcp_tool_schema = self.mcp_tool_schema,
+            .mcp_list_tools = self.mcp_list_tools,
             .mcp_snapshot_tool = self.mcp_snapshot_tool,
             .mcp_input_responder = self.mcp_input_responder,
             .advertised_dynamic_tool_names = self.advertised_dynamic_tool_names,

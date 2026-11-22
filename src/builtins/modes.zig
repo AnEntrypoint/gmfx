@@ -60,17 +60,18 @@ test "built-in modes register the CLI permission modes in ACP order" {
     try std.testing.expect(lookup("unknown") == null);
 }
 
-test "built-in mode projections carry included custom provider guidance" {
+test "built-in mode projections advertise run_code alone and carry included custom provider guidance" {
     inline for (&.{ "auto", "ask", "full-access" }) |mode_id| {
         var projection = try registry.buildModelToolProjection(
             std.testing.allocator,
             builtin_tools.advertisement_set,
             mode_id,
-            .{ .run_code_surface = false },
+            .{},
         );
         defer projection.deinit(std.testing.allocator);
 
-        try std.testing.expect(tool_projection.containsName(projection.advertised_names, "WebSearch"));
+        try std.testing.expectEqual(@as(usize, 1), projection.advertised_names.len);
+        try std.testing.expect(tool_projection.containsName(projection.advertised_names, "run_code"));
         try std.testing.expectEqualStrings(builtin_tools.web_search.description, projection.custom_guidance);
     }
 }

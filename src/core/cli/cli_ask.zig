@@ -303,7 +303,6 @@ fn runAskChild(
             .permission_mode = admission.permission_mode,
             .permission_rules = admission.rules,
             .subagent_available = true,
-            .run_code_surface = false,
         },
     ) catch return error.OutOfMemory;
     defer child_projection.deinit(ctx.alloc);

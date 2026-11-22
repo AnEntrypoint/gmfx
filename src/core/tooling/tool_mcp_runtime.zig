@@ -22,6 +22,8 @@ pub const ResourceResult = union(enum) {
 };
 pub const ReadResourceFn = *const fn (*anyopaque, Allocator, []const u8, mcp_resources.Op, Access, ?*std.atomic.Value(bool)) anyerror!ResourceResult;
 pub const SearchToolsFn = *const fn (*anyopaque, Allocator, SearchRequest, types.PermissionRuleSet, context_limits.Values, Access, ?*std.atomic.Value(bool)) anyerror!SearchResult;
+pub const ListedTool = struct { name: []const u8, description: []const u8, input_schema_json: []const u8 };
+pub const ListToolsFn = *const fn (*anyopaque, Allocator, types.PermissionRuleSet, Access, ?*std.atomic.Value(bool)) anyerror![]const ListedTool;
 pub const ToolSchemaFn = *const fn (*anyopaque, Allocator, []const u8, types.PermissionRuleSet, context_limits.Values, Access, ?*std.atomic.Value(bool)) anyerror!?ToolSchemaResult;
 
 pub const Progress = mcp_contract.Progress;

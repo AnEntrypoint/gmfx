@@ -6,6 +6,8 @@ import { cleanupIsolatedTestHome, createIsolatedTestHome, FX_BIN } from "../eval
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewaySse,
+  LIST_VERBS_BODY,
+  runCodeVerbNames,
   startDynamicFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -75,6 +77,15 @@ function rejected(): Response {
 function answerByLetter(body: string): Response {
   const letter = letterOf(body);
   return text(`answer_${letter}`, `HOST_ANSWER_${letter}`);
+}
+
+function answerAfterVerbs(body: string): Response {
+  return answered(body) ? answerByLetter(body) : call(`verbs_${letterOf(body)}`, "run_code", LIST_VERBS_BODY);
+}
+
+function lettersVerbs(bodies: string[], letter: string): string[] {
+  expect(toolNames(bodies.find((body) => letterOf(body) === letter)!)).toEqual(["run_code"]);
+  return verbNames(bodies.find((body) => letterOf(body) === letter && answered(body))!);
 }
 
 interface Host {
@@ -150,6 +161,12 @@ const ANSWERS = ["A", "B", "C", "D"].map((letter) => `HOST_ANSWER_${letter}`);
 function toolNames(body: string): string[] {
   const request = JSON.parse(body) as { tools?: Array<{ name?: string }> };
   return (request.tools ?? []).map((tool) => tool.name ?? "");
+}
+
+const CALL_FIXTURE_ECHO = { body: "return await gm.mcp__fixture__echo({ text: \"hello\" });" };
+
+function verbNames(body: string): string[] {
+  return runCodeVerbNames((JSON.parse(body) as { prompt?: unknown[] }).prompt?.at(-1));
 }
 
 
@@ -819,7 +836,7 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
       });
       const child = bodies.filter((body) => userTexts(body).join("\n").includes("TREE_TASK"));
       expect(child.length).toBeGreaterThan(0);
-      expect(toolNames(child[0])).toContain("Bash");
+      expect(toolNames(child[0])).toEqual(["run_code"]);
       const parent = bodies.filter((body) => userTexts(body).join("\n").includes("TREE_USER"));
       expect(parent.at(-1) ?? "").toContain("agent_id: agent-tree-sub");
       expect(parent.at(-1) ?? "").toContain("status: completed");
@@ -953,12 +970,13 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
     async () => {
       const bodies = await withHost((body) => {
         const texts = userTexts(body).join("\n");
-        if (texts.includes("TREE_PLAIN_TASK")) return text("plain_done", "TREE_PLAIN_DONE");
-        if (texts.includes("TREE_BUILDER_TASK")) return text("builder_done", "TREE_BUILDER_DONE");
+        if (texts.includes("TREE_PLAIN_TASK")) return answered(body) ? text("plain_done", "TREE_PLAIN_DONE") : call("plain_verbs", "run_code", LIST_VERBS_BODY);
+        if (texts.includes("TREE_BUILDER_TASK")) return answered(body) ? text("builder_done", "TREE_BUILDER_DONE") : call("builder_verbs", "run_code", LIST_VERBS_BODY);
         const last = userTexts(body).at(-1) ?? "";
         if (last.includes("TREE_USER_PLAIN")) {
-          if (answered(body)) return text("plain_final", "TREE_PLAIN_FINAL");
-          return call("plain_sub", "Agent", { description: "Plain helper", prompt: "TREE_PLAIN_TASK" });
+          if (answered(body) && body.includes("plain_sub")) return text("plain_final", "TREE_PLAIN_FINAL");
+          if (answered(body)) return call("plain_sub", "Agent", { description: "Plain helper", prompt: "TREE_PLAIN_TASK" });
+          return call("instance_verbs", "run_code", LIST_VERBS_BODY);
         }
         if (last.includes("TREE_USER_BUILDER")) {
           if (answered(body)) return text("builder_final", "TREE_BUILDER_FINAL");
@@ -981,19 +999,27 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
 
       const instance = holding("TREE_USER_PLAIN");
       expect(instance.length).toBeGreaterThan(0);
-      expect(toolNames(instance[0])).not.toContain("Bash");
-      expect(toolNames(instance[0])).toContain("Agent");
+      expect(toolNames(instance[0])).toEqual(["run_code"]);
+      const instanceVerbs = verbNames(instance.find((body) => answered(body) && !body.includes("plain_sub")) ?? "{}");
+      expect(instanceVerbs).not.toContain("Bash");
+      expect(instanceVerbs).toContain("Agent");
       expect(instance.at(-1) ?? "").toContain("actual_subagent_type: coder");
 
       const plain = holding("TREE_PLAIN_TASK");
       expect(plain.length).toBeGreaterThan(0);
-      expect(toolNames(plain[0])).toContain("Bash");
-      expect(toolNames(plain[0])).toContain("read_file");
-      expect(toolNames(plain[0])).not.toContain("Agent");
+      expect(toolNames(plain[0])).toEqual(["run_code"]);
+      const plainVerbs = verbNames(plain.find(answered) ?? "{}");
+      expect(plainVerbs).toContain("Bash");
+      expect(plainVerbs).toContain("read_file");
+      expect(plainVerbs).not.toContain("Agent");
 
       const builder = holding("TREE_BUILDER_TASK");
       expect(builder.length).toBeGreaterThan(0);
-      expect(toolNames(builder[0])).toEqual(["read_file", "Bash"]);
+      expect(toolNames(builder[0])).toEqual(["run_code"]);
+      const builderVerbs = verbNames(builder.find(answered) ?? "{}");
+      expect(builderVerbs).toContain("read_file");
+      expect(builderVerbs).toContain("Bash");
+      expect(builderVerbs).not.toContain("write_file");
       expect(holding("TREE_USER_BUILDER").at(-1) ?? "").toContain("actual_subagent_type: builder");
     },
     TIMEOUT,
@@ -1415,8 +1441,8 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
           const request = JSON.parse(body) as { prompt?: Array<{ role?: string }> };
           const results = (request.prompt ?? []).filter((message) => message.role === "tool").length;
           if (userTexts(body).join("\n").includes("CHILD_MCP_TASK")) {
-            if (results === 0) return call("select_mcp", "select_tools", { names: ["mcp__fixture__echo"] });
-            if (results === 1) return call("call_mcp", "mcp__fixture__echo", { text: "hello" });
+            if (results === 0) return call("child_verbs", "run_code", LIST_VERBS_BODY);
+            if (results === 1) return call("call_mcp", "run_code", CALL_FIXTURE_ECHO);
             return text("child_mcp_done", "CHILD_MCP_DONE");
           }
 
@@ -1430,7 +1456,11 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
 
         expect(child.at(-1) ?? "").toContain("MODERN_MCP_TOOL_RESULT");
 
-        expect(toolNames(child[0])).toEqual(["read_file", "select_tools"]);
+        expect(toolNames(child[0])).toEqual(["run_code"]);
+        const childVerbs = verbNames(child[1] ?? "{}");
+        expect(childVerbs).toContain("read_file");
+        expect(childVerbs).toContain("mcp__fixture__echo");
+        expect(childVerbs).not.toContain("Bash");
       } finally {
         cleanupIsolatedTestHome(home);
         rmSync(workspace, { recursive: true, force: true });
@@ -1465,7 +1495,7 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
 
 
 
-        const bodies = await withHost(answerByLetter, { args: `--resume ${b}`, reuse: { home, workspace } }, async ({ session }) => {
+        const bodies = await withHost(answerAfterVerbs, { args: `--resume ${b}`, reuse: { home, workspace } }, async ({ session }) => {
           await session.waitForPane((pane) => pane.includes("fx 1/2") && pane.includes("HOST_ANSWER_B"), 30_000);
           await session.waitForComposer(15_000);
           await session.sendText("HOST_C on the limited one");
@@ -1477,11 +1507,11 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
           await session.sendText("HOST_D on the main one");
           await session.waitForText("HOST_ANSWER_D", 30_000);
         });
-        const limited = bodies.find((body) => letterOf(body) === "C")!;
-        const unlimited = bodies.find((body) => letterOf(body) === "D")!;
-        expect(toolNames(limited)).toContain("read_file");
-        expect(toolNames(limited)).not.toContain("Bash");
-        expect(toolNames(unlimited)).toContain("Bash");
+        const limited = lettersVerbs(bodies, "C");
+        const unlimited = lettersVerbs(bodies, "D");
+        expect(limited).toContain("read_file");
+        expect(limited).not.toContain("Bash");
+        expect(unlimited).toContain("Bash");
       } finally {
         cleanupIsolatedTestHome(home);
         rmSync(workspace, { recursive: true, force: true });
@@ -1506,13 +1536,13 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         expect(hostRecords(home)).toEqual([[a]]);
         expect(hostProfiles(home)).toEqual([["limited"]]);
         const resumed = async (args: string, letter: string) => {
-          const bodies = await withHost(answerByLetter, { args, reuse: { home, workspace } }, async ({ session }) => {
+          const bodies = await withHost(answerAfterVerbs, { args, reuse: { home, workspace } }, async ({ session }) => {
             await session.waitForPane((pane) => pane.includes("HOST_ANSWER_A"), 30_000);
             await session.waitForComposer(15_000);
             await session.sendText(`HOST_${letter} resumed`);
             await session.waitForText(`HOST_ANSWER_${letter}`, 30_000);
           });
-          return toolNames(bodies.find((body) => letterOf(body) === letter)!);
+          return lettersVerbs(bodies, letter);
         };
         expect(await resumed(`--resume ${a}`, "B")).not.toContain("Bash");
         expect(await resumed(`--profile main --resume ${a}`, "C")).toContain("Bash");

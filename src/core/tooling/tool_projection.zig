@@ -14,7 +14,6 @@ pub const Options = struct {
     permission_rules: types.PermissionRuleSet = .{},
     subagent_available: bool = false,
     subagent_profiles: []const profiles.Entry = &.{},
-    run_code_surface: bool = true,
 };
 
 const max_profile_description_bytes = 160;
@@ -563,7 +562,7 @@ fn appendBuiltinTool(
         if (tool.provider_executed and !providerExecutionIsAllowed(tool.name, options.permission_rules)) return;
         if (permissions.rulesDenyAllTargetsForTool(options.permission_rules, tool.name)) return;
     }
-    const reached_through_run_code = options.run_code_surface and kind == .full and tool_set.registry.lookup("run_code") != null and !std.mem.eql(u8, tool.name, "run_code");
+    const reached_through_run_code = kind == .full and tool_set.registry.lookup("run_code") != null and !std.mem.eql(u8, tool.name, "run_code");
     if (!reached_through_run_code) {
         try advertised_names.append(alloc, tool.name);
         if (!tool.provider_executed and tool.write_provider_advertisement_fn == null) {
@@ -818,22 +817,28 @@ test "subagent and shell selection follow host capability" {
     try expectContainsName(available.advertised_names, "Bash");
 }
 
-test "a full build advertises run_code alone unless it opts out, and a build without run_code keeps its own tools" {
+test "a full build advertises run_code alone, without vision, for the main agent and a child alike" {
     var run_code = test_read_file;
     run_code.name = "run_code";
     run_code.model_schema = .{ .name = "run_code", .description = "Test run_code." };
-    const with_run_code = [_]tool_dispatch.Tool{ run_code, test_read_file, test_write_file };
+    const with_run_code = [_]tool_dispatch.Tool{ run_code, test_read_file, test_write_file, test_vision, test_subagent, test_select_tools };
+    var rules = [_]types.PermissionRule{.{
+        .permission = @constCast("write_file"),
+        .pattern = @constCast("*"),
+        .action = .ask,
+    }};
 
-    var main_surface = try buildTestModelToolProjectionForRegistry(std.testing.allocator, &with_run_code, .{});
-    defer main_surface.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 1), main_surface.advertised_names.len);
-    try expectContainsName(main_surface.advertised_names, "run_code");
-
-    var subagent_surface = try buildTestModelToolProjectionForRegistry(std.testing.allocator, &with_run_code, .{ .run_code_surface = false });
-    defer subagent_surface.deinit(std.testing.allocator);
-    try expectContainsName(subagent_surface.advertised_names, "run_code");
-    try expectContainsName(subagent_surface.advertised_names, "read_file");
-    try expectContainsName(subagent_surface.advertised_names, "write_file");
+    for ([_]Options{
+        .{},
+        .{ .permission_mode = .ask, .permission_rules = .{ .rules = &rules }, .subagent_available = true },
+    }) |options| {
+        var projection = try buildTestModelToolProjectionForRegistry(std.testing.allocator, &with_run_code, options);
+        defer projection.deinit(std.testing.allocator);
+        try std.testing.expectEqual(@as(usize, 1), projection.advertised_names.len);
+        try std.testing.expectEqualStrings("run_code", projection.advertised_names[0]);
+        try std.testing.expectEqual(@as(usize, 1), projection.advertised_functions.len);
+        try std.testing.expectEqualStrings("run_code", projection.advertised_functions[0].name);
+    }
 
     const without_run_code = [_]tool_dispatch.Tool{ test_read_file, test_write_file };
     var plain = try buildTestModelToolProjectionForRegistry(std.testing.allocator, &without_run_code, .{});
