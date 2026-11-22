@@ -13,6 +13,23 @@ Status: specification, written against fx source at the checkout in /workspace/f
 - `fx:host` exists in its first form (section 1.0). Not present anywhere in the tree (grep for js-root, FX_JS_ROOT, import.meta.hot, rollback, .fx/js): JS root resolution, import map, hot reload, last-known-good. All planned.
 - txiki network, TLS, websocket, http server, hashing, miniz are stubs: native/txiki/glue/txiki_stubs.c defines empty tjs__mod_tls_init, tjs__mod_httpclient_init, tjs__mod_httpserver_init, tjs__mod_ws_init, tjs__mod_hashing_init, tjs__mod_miniz_init. exists (as stubs).
 
+## 0.1 On edgejs (specs/edgejs-swap.md, pending the go decision)
+
+edgejs is Node's own library code over N-API, so on that route fx:host shrinks to what Node does not provide. Until the go decision the txiki route below stays the contract; the sections marked "txiki route" are removed on edgejs.
+
+What stays in fx:host on edgejs:
+- `version` and `capabilities` (section 1), so a host can omit what it lacks.
+- `tools.<name>(args)` (section 2): every native fx tool as a verb behind the Zig permission gate. On edgejs it reaches JavaScript as the N-API host function `fxHost.call(name, argsJson)`, installed by native/edgejs/fx_edge.cc and dispatched by src/core/runcode/edge.zig to the same Verbs.invoke run_code uses. exists, unbuilt.
+- The agent core (section 3) in the shape libfx exposes, with custom providers over `openai-chat-completions` or `anthropic-messages` (the Anthropic-compatible endpoint exists: src/core/config/configured_provider.zig).
+- The loader's JS root and the reload protocol (sections 5.1 to 5.3 and 6): edgejs has no module-resolution or hot-reload hook of its own, so fx keeps them, through module.registerHooks.
+
+What Node provides instead, and so leaves fx:host: the system services of section 4 (fs, net, http, https, tls, dns, crypto, child_process, worker_threads, zlib, sqlite, fetch, timers, fs.watch); pty is the one service Node lacks and stays a gap. The alias table of section 4.2 becomes the identity: every node: name resolves to edgejs's own module.
+
+Open question: one permission gate when Node networking and spawn run inside the runtime. Each option has a check in scripts/edgejs-witness.sh, unrun until gm's edgejs build lands:
+- A. Verbs only: permission-bearing Node modules (child_process, net, http, https, tls, dgram, dns, fs, worker_threads, inspector, cluster, http2) are refused at resolve time unless the mode is yolo, and the work goes through `fxHost.call`. One gate, but freddie's node: imports of those modules fail outside yolo.
+- B. Routing: the same Node APIs are kept and each permission-bearing call is forwarded to the matching gated verb. Node names and behaviour stay, at the cost of one wrapper per API; this is the option that meets the Node-compatibility goal if its wrappers cover freddie's calls.
+- C. Safe mode under Wasmer: edgejs's own sandbox. Not testable on the native quickjs build (EDGE_QUICKJS_WEBASSEMBLY off).
+
 ## 1. Module shape and versioning
 
 ```js
@@ -217,7 +234,7 @@ libfx hooks: `hooks: { onEvent(FxHookEvent), onError?, captureContent?, parent? 
 
 libfx `Persistence` interface: `load() => {checkpoint?, journal?, head?}`, `append({expected, idempotencyKey, data, barrier, marks?}) => {cursor}`, `saveCheckpoint?`, plus `createMemoryPersistence()`, `FxFencedError` (code FX_FENCED), `FxJournalVersionError` (FX_JOURNAL_VERSION). exists in libfx. `checkpoint` option and `session.checkpoint()` carry opaque bytes. fx's own session store is a directory per session with events.jsonl (src/core/session/session_layout.zig, session_replay.zig) and ACP methods session/new, load, resume, close, list, fork, delete (src/acp/server.zig). exists. Resume through the native store from JS: planned (`host.agent.sessions.list|open|fork|delete`). The journal format of libfx is not the native events.jsonl and not freddie's event-sourced format (G4).
 
-## 4. System services
+## 4. System services (txiki route)
 
 Today every service marked planned is a txiki stub or absent. Each is generated from the table, gated, and implemented over Zig, not libuv or mbedtls, so one network stack and one permission model exist.
 
@@ -266,7 +283,7 @@ The seam is packages/util/runtime (freddie), whose `txikiRuntime` object has the
 | module (createRequire, stripTypeScriptTypes) | loader | planned; createRequire fails today |
 | inspector | none | named gap G14 (Session): drop or stub in freddie |
 
-### 4.2 Node alias table
+### 4.2 Node alias table (txiki route; the identity on edgejs)
 
 One table, src/core/runcode/host_module.zig. `node:<name>` and the bare `<name>` resolve to the same target, for `import` and `require` alike, before any node_modules lookup. A gap row, or a `node:` name with no row, fails with `'<specifier>' is not provided by fx:host yet; it is on the gap list in docs/host-interface.md`. A bare name with no row is a package name and goes to node_modules. Zig tests next to the table check that every row resolves in both forms, that `node:fs` and `fs` agree, that an unknown name is the named error, and that the table, the generated `fx:host` module list and fx_runtime.js agree; src/tools/runcode/run_code.zig imports every provided module in both forms and checks that no named export is undefined. Provided (exists):
 
@@ -338,7 +355,7 @@ interface ImportMetaHot {
 
 Present on every module loaded from the root, absent on `fx:host` itself. `data` is the hand-off bag: what `dispose` writes is what the next instance of the module reads. planned.
 
-### 5.4 Node names and refused specifiers
+### 5.4 Node names and refused specifiers (txiki route)
 
 `node:*` and bare Node built-in names resolve through the alias table (4.2); the gap rows fail with the named error. `tjs:*` loads txiki built-ins under `import` and is refused by `require`. exists. Planned: allowed specifiers limited to `fx:host`, relative and absolute file paths inside the root, import-map entries and package names under `<root>/node_modules`; a path outside the root (resolved through realpath) refused with `FxDenied` unless the gate allows reading it. Dynamic `import()` follows the same rules.
 
