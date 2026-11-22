@@ -457,8 +457,7 @@ test "tool arguments nested deeper than the copy limit still parse" {
 }
 
 test "parsed tool arguments take little more than their own size from the arena" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    for (0..200) |_| _ = try parseToolArgsObject(arena.allocator(), "{\"path\":\"evidence.txt\"}");
-    try std.testing.expect(arena.queryCapacity() < 200 * 512);
+    var buffer: [200 * 512]u8 = undefined;
+    var fixed = std.heap.FixedBufferAllocator.init(&buffer);
+    for (0..200) |_| _ = try parseToolArgsObject(fixed.allocator(), "{\"path\":\"evidence.txt\"}");
 }

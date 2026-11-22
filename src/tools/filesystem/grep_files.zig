@@ -1197,11 +1197,11 @@ test "grep_files keeps only its result in the turn's allocator" {
     const args = try grepArgsJson(alloc, "needle", null, null, null, null, null);
     defer alloc.free(args);
 
-    var turn_state = std.heap.ArenaAllocator.init(alloc);
-    defer turn_state.deinit();
+    var turn_buffer: [160 * 1024]u8 = undefined;
+    var turn_state = std.heap.FixedBufferAllocator.init(&turn_buffer);
     const registry = tool_dispatch.Registry{ .tools = &.{grep_files_dispatch_tool} };
     for (0..2) |_| {
-        const before = turn_state.queryCapacity();
+        const before = turn_state.end_index;
         const result = try tool_dispatch.dispatchToolCall(.{
             .allocator = turn_state.allocator(),
             .scratch_allocator = alloc,
@@ -1211,7 +1211,7 @@ test "grep_files keeps only its result in the turn's allocator" {
         try std.testing.expectEqual(.success, result.status);
         try std.testing.expect(std.mem.find(u8, result.body, "many/file-0001.txt") != null);
 
-        try std.testing.expect(turn_state.queryCapacity() - before < 64 * 1024);
+        try std.testing.expect(turn_state.end_index - before < 64 * 1024);
     }
 }
 
