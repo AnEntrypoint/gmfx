@@ -9560,7 +9560,7 @@ test "processQueuedPrompt trace records history shape returned tool calls and wa
         .assistant = @constCast("I was about to write it."),
         .tool_call = prior_call,
     } }};
-    const calls = [_]ToolCall{toolCall("call_1", "write_file", "{\"path\":\"secret.txt\",\"content\":\"super secret file contents\",\"metadata\":{\"token\":\"abc123\"}}")};
+    const calls = [_]ToolCall{toolCall("call_1", "write_file", "{\"path\":\"secret.txt\",\"content\":\"super secret file contents\",\"mode\":\"append\"}")};
     const completions = [_]FakeCompletion{
         .{ .tool_calls = &calls, .finish_reason = .tool_calls },
         .{ .content = "Done" },
@@ -9593,11 +9593,9 @@ test "processQueuedPrompt trace records history shape returned tool calls and wa
     try std.testing.expect(std.mem.find(u8, trace, "event=after_tool_execution") != null);
     try std.testing.expect(std.mem.find(u8, trace, "\"path\"") == null);
     try std.testing.expect(std.mem.find(u8, trace, "\"content\"") == null);
-    try std.testing.expect(std.mem.find(u8, trace, "\"metadata\"") == null);
-    try std.testing.expect(std.mem.find(u8, trace, "\"token\"") == null);
+    try std.testing.expect(std.mem.find(u8, trace, "\"mode\"") == null);
     try std.testing.expect(std.mem.find(u8, trace, "super secret file contents") == null);
     try std.testing.expect(std.mem.find(u8, trace, "secret.txt") == null);
-    try std.testing.expect(std.mem.find(u8, trace, "abc123") == null);
 }
 
 test "processQueuedPrompt assigns trace lineage to subagent runs" {

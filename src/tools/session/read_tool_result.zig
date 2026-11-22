@@ -626,7 +626,7 @@ test "large web_search result is previewed and available through read_tool_resul
     defer alloc.free(@constCast(prepared.memory.output_handle.?));
     defer alloc.free(@constCast(prepared.memory.preview.?));
     try std.testing.expect(std.mem.find(u8, prepared.model_output, "<tool_result_preview") != null);
-    try std.testing.expect(std.mem.find(u8, prepared.model_output, "Use read_tool_result") != null);
+    try std.testing.expect(std.mem.find(u8, prepared.model_output, "gm.read_tool_result({handle,start_byte,byte_count})") != null);
 
     const args_json = try alloc.print("{{\"handle\":\"{s}\",\"query\":\"needle\"}}", .{prepared.memory.output_handle.?});
     defer alloc.free(args_json);
