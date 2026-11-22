@@ -66,6 +66,7 @@ const test_builtin_tools = if (@import("builtin").is_test)
 else
     struct {};
 const tool_presentation = @import("../tooling/tool_presentation.zig");
+const run_code_presentation = @import("../tooling/run_code_presentation.zig");
 const tool_runtime = @import("../tooling/tool_runtime.zig");
 const skill_invocation = @import("../skills/skill_invocation.zig");
 const web_fetch_runtime = @import("../tooling/web_fetch_runtime.zig");
@@ -1718,6 +1719,10 @@ fn formatToolAction(
         }
         return formatMissingSpecToolAction(arena, state, denied_label, call.name);
     };
+    if (run_code_presentation.isRunCode(call.name)) {
+        const label = if (state == .denied) denied_label.? else run_code_presentation.tool_name;
+        return formatToolActionValue(arena, label, display_target orelse try run_code_presentation.firstBodyLine(arena, call));
+    }
     if (try tool_presentation.formatRunCommandActivity(arena, ctx.tool_registry, ctx.workspace_root, call)) |activity| {
         defer arena.free(activity.detail);
         const label = if (activity.compatibility_tool) |compatibility_tool|

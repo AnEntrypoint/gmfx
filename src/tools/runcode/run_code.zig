@@ -13,6 +13,7 @@ const managed_execution = @import("../../core/execution/managed_execution.zig");
 const tool_mcp_registry = @import("../../core/tooling/tool_mcp_registry.zig");
 const tool_mcp_runtime = @import("../../core/tooling/tool_mcp_runtime.zig");
 const tool_args = @import("../../core/tooling/tool_args.zig");
+const call_ledger = @import("call_ledger.zig");
 
 pub const tool_name = "run_code";
 
@@ -330,14 +331,17 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     const catalog = buildCatalog(ctx.allocator, ctx, registry) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not list its verbs") };
     defer ctx.allocator.free(catalog);
     var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
+    var ledger = call_ledger.Ledger.init(ctx.allocator, &bridge, invokeVerb);
+    defer ledger.deinit();
     const outcome = runcode.execute(ctx.allocator, input.body, .{
         .format = input.format,
         .deadline_ms = input.deadline_ms,
         .root = ctx.workspace_root,
-        .verbs = .{ .context = &bridge, .catalog = catalog, .invoke = invokeVerb },
+        .verbs = .{ .context = &ledger, .catalog = catalog, .invoke = call_ledger.Ledger.invoke },
     }) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not start the txiki runtime") };
     defer outcome.deinit(ctx.allocator);
-    const report = runcode.reportJson(ctx.allocator, outcome, batchingNotice(ctx.single_verb_bodies, bridge.calls)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
+    const base = runcode.reportJson(ctx.allocator, outcome, batchingNotice(ctx.single_verb_bodies, bridge.calls)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
+    const report = ledger.report(ctx.allocator, base) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     if (outcome.ok) return .{ .success = report };
     return .{ .failure = report };
 }

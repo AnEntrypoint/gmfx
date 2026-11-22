@@ -1804,6 +1804,7 @@ const ReplayToolCall = struct {
     kind: acp_types.ToolCallKind,
     status: acp_types.ToolCallStatus,
     raw_input: ?std.json.Value,
+    pending_content_text: ?[]const u8 = null,
     content_text: ?[]const u8,
 };
 
@@ -1884,9 +1885,9 @@ fn planToolCallFrame(
         .kind = tool_call_presentation.mapToolKind(name),
         .status = replayStatus(result),
         .raw_input = if (parsed) |p| p.value else null,
-
+        .pending_content_text = try tool_call_presentation.pendingContentText(arena, call),
         .content_text = if (result) |r| if (r.output.len > 0)
-            try tool_call_presentation.shellUpdateContentText(arena, call.name, r.output) orelse
+            try tool_call_presentation.resultContentText(arena, registry, call, r.output) orelse
                 tool_call_presentation.toolUpdateContentText(r.status == .failure, r.output)
         else
             null else null,
@@ -1970,7 +1971,7 @@ fn sendHistoryToolCall(
     try out.writer.writeAll("{\"sessionId\":");
     try writeJsonStr(session_id, &out.writer);
     try out.writer.writeAll(",\"update\":");
-    try acp_types.writeToolCall(&out.writer, call.id, call.name, call.title, call.kind, .pending, call.raw_input, call.meta);
+    try acp_types.writeToolCallWithContent(&out.writer, call.id, call.name, call.title, call.kind, .pending, call.raw_input, call.meta, call.pending_content_text);
     try out.writer.writeAll("}");
     try state.writer.writeNotification(alloc, "session/update", out.writer.buffered());
     if (call.status == .pending) return;

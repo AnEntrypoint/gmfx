@@ -364,7 +364,7 @@ const AcpContext = struct {
         errdefer self.alloc.free(owned_id);
         var out: std.Io.Writer.Allocating = .init(self.alloc);
         defer out.deinit();
-        try acp_types.writeToolCall(&out.writer, owned_id, name, presentation.title, kind, .pending, raw_input, presentation.meta);
+        try acp_types.writeToolCallWithContent(&out.writer, owned_id, name, presentation.title, kind, .pending, raw_input, presentation.meta, try tool_call_presentation.pendingContentText(arena, call));
         try self.sendUpdate(out.writer.buffered());
         self.published_tool_calls.putAssumeCapacity(
             owned_id,
@@ -2547,9 +2547,10 @@ fn completeToolCallTransport(
     result: ToolExecutionResult,
 ) ToolExecutionResult {
     recordJournalToolResult(ctx, call, result);
-    const shell_text = tool_call_presentation.shellUpdateContentText(
+    const shell_text = tool_call_presentation.resultContentText(
         ctx.alloc,
-        call.name,
+        ctx.toolRegistry(),
+        call,
         result.model_output,
     ) catch null;
     defer if (shell_text) |text| ctx.alloc.free(text);

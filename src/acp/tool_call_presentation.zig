@@ -3,6 +3,7 @@ const acp_types = @import("types.zig");
 const server = @import("server.zig");
 const tool_dispatch = @import("../core/tooling/tool_dispatch.zig");
 const tool_presentation = @import("../core/tooling/tool_presentation.zig");
+const run_code_presentation = @import("../core/tooling/run_code_presentation.zig");
 const tool_result_errors = @import("../core/tooling/tool_result_errors.zig");
 const tool_set_contract = @import("../core/tooling/tool_set.zig");
 const text_utils = @import("../core/shared/text_utils.zig");
@@ -22,6 +23,7 @@ pub fn acpToolName(tool_name: []const u8) []const u8 {
 
 pub fn mapToolKind(tool_name: []const u8) acp_types.ToolCallKind {
     if (tool_presentation.isProviderSearchAlias(tool_name)) return .search;
+    if (run_code_presentation.isRunCode(tool_name)) return .execute;
     if (std.mem.eql(u8, tool_name, "glob_files")) return .read;
     if (std.mem.eql(u8, tool_name, "grep_files")) return .search;
     if (std.mem.eql(u8, tool_name, "read_file")) return .read;
@@ -38,6 +40,7 @@ pub fn mapToolKind(tool_name: []const u8) acp_types.ToolCallKind {
 }
 
 pub fn describeToolTitle(registry: tool_dispatch.Registry, arena: Allocator, call: ToolCall) ![]const u8 {
+    if (run_code_presentation.isRunCode(call.name)) return run_code_presentation.title(arena, call);
     if (registry.lookup(call.name)) |tool| {
         if (try tool_presentation.formatSubagentPlainAction(arena, call, .identity)) |title| return title;
 
@@ -135,6 +138,20 @@ pub fn shellUpdateContentText(
     });
 }
 
+pub fn resultContentText(
+    alloc: Allocator,
+    registry: tool_dispatch.Registry,
+    call: ToolCall,
+    output: []const u8,
+) Allocator.Error!?[]u8 {
+    if (try run_code_presentation.detail(alloc, registry, call, output)) |text| return text;
+    return shellUpdateContentText(alloc, call.name, output);
+}
+
+pub fn pendingContentText(alloc: Allocator, call: ToolCall) Allocator.Error!?[]u8 {
+    return run_code_presentation.bodyBlock(alloc, call);
+}
+
 pub fn toolUpdateContentText(is_failure: bool, output: []const u8) []const u8 {
     if (!text_utils.isModelSafeText(output)) {
         debug_trace.logf(
@@ -215,6 +232,24 @@ test "toolUpdateContentText clips long output and guards unsafe bytes" {
     const denied_json = "{\"error\":{\"type\":\"tool_permission_denied\",\"tool_name\":\"run_command\",\"message\":\"Permission denied by user\",\"reason\":\"user_denied\"}}";
     const denied = toolUpdateContentText(true, denied_json);
     try std.testing.expectEqualStrings(denied_json, denied);
+}
+
+test "run_code tool_call carries its body as JavaScript and its update lists each inner verb call" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const call = run_code_presentation.test_call;
+    const presentation = describeToolCall(builtin_tools.registry, arena, call, null);
+    var out: std.Io.Writer.Allocating = .init(arena);
+    try acp_types.writeToolCallWithContent(&out.writer, call.id, acpToolName(call.name), presentation.title, mapToolKind(call.name), .pending, null, presentation.meta, try pendingContentText(arena, call));
+    const pending = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.writer.buffered(), .{});
+    try std.testing.expectEqualStrings("execute", pending.object.get("kind").?.string);
+    try std.testing.expectEqualStrings("run_code const a = await gm.read_file({path:'a.txt'});", pending.object.get("title").?.string);
+    const content = pending.object.get("content").?.array.items[0].object.get("content").?.object;
+    try std.testing.expectEqualStrings("```js\n  const a = await gm.read_file({path:'a.txt'});\nreturn 3;\n```", content.get("text").?.string);
+    const update_text = try resultContentText(arena, builtin_tools.registry, call, run_code_presentation.test_output);
+    try std.testing.expectEqualStrings(run_code_presentation.test_detail, update_text orelse return error.TestExpectedRunCodeContent);
+    try std.testing.expect(try pendingContentText(arena, .{ .id = "r", .name = "read_file", .arguments_json = "{}" }) == null);
 }
 
 fn expectShellUpdateContent(expected: ?[]const u8, tool_name: []const u8, output: []const u8) !void {

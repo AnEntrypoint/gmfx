@@ -202,6 +202,20 @@ pub fn writeToolCall(
     raw_input: ?std.json.Value,
     meta: ToolCallMeta,
 ) !void {
+    try writeToolCallWithContent(w, tool_call_id, name, title, kind, status, raw_input, meta, null);
+}
+
+pub fn writeToolCallWithContent(
+    w: *std.Io.Writer,
+    tool_call_id: []const u8,
+    name: []const u8,
+    title: []const u8,
+    kind: ToolCallKind,
+    status: ToolCallStatus,
+    raw_input: ?std.json.Value,
+    meta: ToolCallMeta,
+    content_text: ?[]const u8,
+) !void {
     try w.writeAll("{\"sessionUpdate\":\"tool_call\",\"toolCallId\":");
     try writeJsonStr(tool_call_id, w);
     try w.writeAll(",\"name\":");
@@ -216,8 +230,15 @@ pub fn writeToolCall(
         try w.writeAll(",\"rawInput\":");
         try std.json.Stringify.value(value, .{}, w);
     }
+    if (content_text) |text| try writeContentText(w, text);
     try writeToolCallMeta(w, meta);
     try w.writeAll("}");
+}
+
+fn writeContentText(w: *std.Io.Writer, text: []const u8) !void {
+    try w.writeAll(",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":");
+    try writeJsonStr(text, w);
+    try w.writeAll("}}]");
 }
 
 pub fn writeToolCallUpdate(w: *std.Io.Writer, tool_call_id: []const u8, status: ToolCallStatus, content_text: ?[]const u8) !void {
@@ -235,11 +256,7 @@ pub fn writeToolCallUpdateWithCommandResult(
     try writeJsonStr(tool_call_id, w);
     try w.writeAll(",\"status\":");
     try writeJsonStr(status.jsonString(), w);
-    if (content_text) |text| {
-        try w.writeAll(",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":");
-        try writeJsonStr(text, w);
-        try w.writeAll("}}]");
-    }
+    if (content_text) |text| try writeContentText(w, text);
     if (command_result_json) |json| {
         try w.writeAll(",\"command_result\":");
         try w.writeAll(json);

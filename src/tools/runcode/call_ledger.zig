@@ -1,0 +1,90 @@
+const std = @import("std");
+const text_utils = @import("../../core/shared/text_utils.zig");
+
+pub const max_entries = 50;
+const max_args_bytes = 120;
+
+const Entry = struct {
+    verb: []const u8,
+    args: []const u8,
+    ok: bool,
+};
+
+const Reply = struct {
+    ok: bool = false,
+};
+
+pub const InvokeFn = *const fn (context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror![]u8;
+
+pub const Ledger = struct {
+    arena: std.heap.ArenaAllocator,
+    context: *anyopaque,
+    inner: InvokeFn,
+    entries: std.ArrayList(Entry) = .empty,
+    dropped: usize = 0,
+
+    pub fn init(alloc: std.mem.Allocator, context: *anyopaque, inner: InvokeFn) Ledger {
+        return .{ .arena = .init(alloc), .context = context, .inner = inner };
+    }
+
+    pub fn deinit(self: *Ledger) void {
+        self.arena.deinit();
+    }
+
+    pub fn invoke(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror![]u8 {
+        const self: *Ledger = @ptrCast(@alignCast(context));
+        const reply = try self.inner(self.context, alloc, name, args_json);
+        errdefer alloc.free(reply);
+        try self.record(alloc, name, args_json, reply);
+        return reply;
+    }
+
+    fn record(self: *Ledger, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8, reply: []const u8) !void {
+        if (self.entries.items.len == max_entries) {
+            self.dropped += 1;
+            return;
+        }
+        const arena = self.arena.allocator();
+        try self.entries.append(arena, .{
+            .verb = try arena.dupe(u8, name),
+            .args = try arena.dupe(u8, text_utils.utf8PrefixByBytes(args_json, max_args_bytes)),
+            .ok = replyOk(alloc, reply),
+        });
+    }
+
+    pub fn report(self: *const Ledger, alloc: std.mem.Allocator, base: []u8) ![]u8 {
+        defer alloc.free(base);
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.writeAll(base[0 .. base.len - 1]);
+        try out.writer.writeAll(",\"calls\":");
+        try std.json.Stringify.value(self.entries.items, .{}, &out.writer);
+        try out.writer.print(",\"calls_dropped\":{d}}}", .{self.dropped});
+        return out.toOwnedSlice();
+    }
+};
+
+fn replyOk(alloc: std.mem.Allocator, reply: []const u8) bool {
+    const parsed = std.json.parseFromSlice(Reply, alloc, reply, .{ .ignore_unknown_fields = true }) catch return false;
+    defer parsed.deinit();
+    return parsed.value.ok;
+}
+
+fn testInvoke(_: *anyopaque, alloc: std.mem.Allocator, name: []const u8, _: []const u8) anyerror![]u8 {
+    return alloc.dupe(u8, if (std.mem.eql(u8, name, "bad")) "{\"ok\":false,\"error\":\"no\"}" else "{\"ok\":true,\"text\":\"x\"}");
+}
+
+test "the ledger records each verb call with a bounded args summary and appends it to the report" {
+    const alloc = std.testing.allocator;
+    var unused: u8 = 0;
+    var ledger = Ledger.init(alloc, &unused, testInvoke);
+    defer ledger.deinit();
+    alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{\"path\":\"a\"}"));
+    alloc.free(try Ledger.invoke(&ledger, alloc, "bad", "{\"q\":\"" ++ text_utils.repeat("y", 200) ++ "\"}"));
+    try std.testing.expectEqual(@as(usize, max_args_bytes), ledger.entries.items[1].args.len);
+    for (0..max_entries) |_| alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{}"));
+    const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true,\"value\":1}"));
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.startsWith(u8, text, "{\"ok\":true,\"value\":1,\"calls\":[{\"verb\":\"read_file\",\"args\":\"{\\\"path\\\":\\\"a\\\"}\",\"ok\":true},{\"verb\":\"bad\","));
+    try std.testing.expect(std.mem.endsWith(u8, text, "],\"calls_dropped\":2}"));
+}

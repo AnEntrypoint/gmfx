@@ -10,6 +10,7 @@ const tool_dispatch = @import("../../tooling/tool_dispatch.zig");
 const tool_args = @import("../../tooling/tool_args.zig");
 const tool_specs = @import("../../tooling/tool_specs.zig");
 const tooling_presentation = @import("../../tooling/tool_presentation.zig");
+const run_code_presentation = @import("../../tooling/run_code_presentation.zig");
 const debug_trace = @import("../../shared/debug_trace.zig");
 const diff = @import("../../output/diff.zig");
 const file_mutation_contract = @import("../../tooling/file_mutation_contract.zig");
@@ -1189,6 +1190,7 @@ pub fn finishExecutedToolStatus(
     advertised_dynamic_tool_names: []const []const u8,
 ) !void {
     if (!status_started) return;
+    const shown_target = try run_code_presentation.calledVerbs(arena, call, result.model_output) orelse display_target;
     const activity_kind = activityKindForCall(arena, hooks.tool_registry, call);
     const command_decision = if (activity_kind == .command)
         try commandOutcomeDecision(arena, result_memory.command_process_presentation)
@@ -1206,7 +1208,7 @@ pub fn finishExecutedToolStatus(
             hooks.ctx,
             arena,
             call,
-            display_target,
+            shown_target,
             decision.label,
             advertised_dynamic_tool_names,
         );
@@ -1222,7 +1224,7 @@ pub fn finishExecutedToolStatus(
                 hooks.ctx,
                 arena,
                 call,
-                display_target,
+                shown_target,
                 advertised_dynamic_tool_names,
             ),
         .failure => blk: {
@@ -1230,7 +1232,7 @@ pub fn finishExecutedToolStatus(
                 hooks.ctx,
                 arena,
                 call,
-                display_target,
+                shown_target,
                 try tooling_presentation.subagentFailureLabel(arena, call, safe_result),
                 advertised_dynamic_tool_names,
             );
@@ -1276,7 +1278,7 @@ pub fn finishExecutedToolStatus(
     } else summary_line;
     const shell_command = activity_kind == .command and
         std.mem.eql(u8, call.name, "Bash");
-    const presentation_result = try presentedToolResult(
+    const presentation_result = try run_code_presentation.detail(arena, hooks.tool_registry, call, result.model_output) orelse try presentedToolResult(
         arena,
         call,
         activity_kind,
