@@ -127,6 +127,34 @@ class PgsoRunnerTests(unittest.TestCase):
 
             self.assertEqual("pipes_open", json.loads(log_path.read_text(encoding="utf-8"))["status"])
 
+    def test_a_timed_out_command_reports_the_last_lines_it_printed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fx-pgso-runner-") as tmp:
+            root = pathlib.Path(tmp)
+            script = root / "hangs.py"
+            script.write_text(
+                "import sys, time\n"
+                "for i in range(100):\n"
+                "    print(f'test number {i}', file=sys.stderr, flush=True)\n"
+                "print('the test that hangs', file=sys.stderr, flush=True)\n"
+                "time.sleep(300)\n",
+                encoding="utf-8",
+            )
+            progress = io.StringIO()
+            with contextlib.redirect_stdout(progress), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaisesRegex(PgsoError, "timed out after 2 seconds"):
+                    run_checked(
+                        [sys.executable, str(script)],
+                        cwd=root,
+                        env=os.environ.copy(),
+                        timeout_s=2,
+                        log_path=root / "hangs.json",
+                    )
+
+            report = progress.getvalue()
+            self.assertIn("last stderr before the timeout:", report)
+            self.assertIn("the test that hangs", report)
+            self.assertNotIn("test number 10\n", report)
+
     def test_cancellation_guard_converts_sigterm_and_restores_handlers(self) -> None:
         installed: dict[object, object] = {}
 

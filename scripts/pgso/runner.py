@@ -20,6 +20,7 @@ from scripts.pgso.model import PgsoError, require_empty_stderr as ensure_empty_s
 
 COMMAND_HEARTBEAT_SECONDS = 30.0
 PIPE_DRAIN_GRACE_S = 30.0
+TIMEOUT_TAIL_LINES = 40
 MAX_CAPTURED_OUTPUT_CHARS = 1024 * 1024
 INHERITED_ENVIRONMENT_KEYS = (
     "LANG",
@@ -87,6 +88,10 @@ class _BoundedCapture:
 
 def emit_progress(message: str) -> None:
     print(f"[pgso] {message}", flush=True)
+
+
+def _tail_lines(text: str) -> str:
+    return "\n".join(text.splitlines()[-TIMEOUT_TAIL_LINES:])
 
 
 def hermetic_environment(home: pathlib.Path) -> dict[str, str]:
@@ -373,6 +378,9 @@ def run_checked(
         emit_progress(
             f"command timed out in {elapsed_seconds:.3f}s: {command_display}"
         )
+        for label, text in (("stdout", stdout), ("stderr", stderr)):
+            if text:
+                emit_progress(f"last {label} before the timeout:\n{_tail_lines(text)}")
         raise PgsoError(
             f"command timed out after {timeout_s:g} seconds: {argv_tuple[0]}"
         )
