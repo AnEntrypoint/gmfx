@@ -177,23 +177,16 @@ function requestJson(request: GatewayRequest) {
   };
 }
 
-function toolSchema(body: ReturnType<typeof requestJson>, name: string) {
-  return body.tools.find((tool) => tool.name === name);
-}
-
-function expectWebFetchSchema(request: GatewayRequest) {
-  const schema = toolSchema(requestJson(request), "FetchURL");
-  expect(schema).toBeDefined();
-  expect(schema?.type).toBe("function");
-  expect(schema?.inputSchema.type).toBe("object");
-  expect(schema?.inputSchema.properties.url.type).toBe("string");
-  expect(schema?.inputSchema.properties.prompt).toBeUndefined();
-  expect(schema?.inputSchema.properties.timeout.type).toBe("integer");
-  expect(schema?.inputSchema.properties.timeout.description).toContain("default 30, max 120");
-  expect(schema?.inputSchema.properties.query.type).toBe("string");
-  expect(schema?.inputSchema.properties.regex.type).toBe("boolean");
-  expect(schema?.inputSchema.required).toEqual(["url"]);
-  expect(schema?.inputSchema.additionalProperties).toBe(false);
+function expectRunCodeSurface(request: GatewayRequest) {
+  const tools = requestJson(request).tools;
+  expect(tools.map((tool) => tool.name)).toEqual(["run_code", "vision"]);
+  const runCode = tools[0];
+  expect(runCode.type).toBe("function");
+  expect(runCode.inputSchema.type).toBe("object");
+  expect(runCode.inputSchema.properties.body.type).toBe("string");
+  expect(runCode.inputSchema.required).toEqual(["body"]);
+  expect(runCode.inputSchema.additionalProperties).toBe(false);
+  return tools;
 }
 
 function expectNoFetchProgress(text: string) {
@@ -325,8 +318,9 @@ async function runAcpPrompt(client: AcpClient, text: string) {
 
 describe("FetchURL Gateway fixture", () => {
   test(
-    "representative providers receive the same strict public FetchURL schema",
+    "representative providers receive the same strict public run_code surface",
     async () => {
+      const surfaces: ReturnType<typeof expectRunCodeSurface>[] = [];
       for (const model of PROVIDER_MODELS) {
         const root = createIsolatedRoot();
         const gateway = startFakeGateway([outerText(`schema ok for ${model}`)], model);
@@ -343,13 +337,13 @@ describe("FetchURL Gateway fixture", () => {
           parseFxJson(result);
           expect(gateway.requests).toHaveLength(1);
           expect(gateway.requests[0].headers.get("ai-language-model-id")).toBe(model);
-          expectWebFetchSchema(gateway.requests[0]);
-          expect(gateway.requests[0].body).toContain("gateway.exa_search");
+          surfaces.push(expectRunCodeSurface(gateway.requests[0]));
         } finally {
           gateway.stop();
           rmSync(root.root, { recursive: true, force: true });
         }
       }
+      for (const surface of surfaces) expect(surface).toEqual(surfaces[0]);
     },
     TIMEOUT,
   );
