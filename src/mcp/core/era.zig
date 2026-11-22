@@ -193,8 +193,10 @@ pub const Detector = struct {
                     d.becomeReady(d.version, out);
                 }
             },
-            .http_refused => {
-                if (d.pending == .discover) d.fail(.refused, out) else ignored = true;
+            .http_refused => switch (d.pending) {
+                .discover => d.legacyAnswer(out),
+                .initialize => d.fail(.refused, out),
+                .none => ignored = true,
             },
             .probe_timer_fired => |probe| {
                 if (probe != d.probe or d.pending != .discover) return;
@@ -506,6 +508,7 @@ fn apply(d: *Detector, w: *World, event: Event) !bool {
         .discover_result, .unsupported_version, .modern_rejection, .legacy_answer, .discover_not_implemented => if (w.pending != .discover) return false,
         .probe_timer_fired => |n| if (n >= 64 or w.timers & (@as(u64, 1) << @intCast(n)) == 0) return false,
         .initialize_result, .initialize_error, .initialize_timed_out => if (w.pending != .initialize) return false,
+        .http_refused => if (w.pending == .none) return false,
         else => {},
     }
     const before = d.*;
@@ -534,7 +537,7 @@ fn apply(d: *Detector, w: *World, event: Event) !bool {
             w.modern_answer = true;
             w.pending = .none;
         },
-        .legacy_answer, .initialize_result, .initialize_error, .initialize_timed_out => w.pending = .none,
+        .legacy_answer, .http_refused, .initialize_result, .initialize_error, .initialize_timed_out => w.pending = .none,
         .probe_timer_fired => |n| {
             w.timers &= ~(@as(u64, 1) << @intCast(n));
 
@@ -603,6 +606,9 @@ fn apply(d: *Detector, w: *World, event: Event) !bool {
         },
         .initialize_result => |v| if (v == .legacy) try testing.expectEqual(State.legacy, d.state),
         .initialize_timed_out => try testing.expectEqual(State.failed, d.state),
+        .http_refused => if (before.pending == .initialize) {
+            try testing.expectEqual(Failure.refused, d.failure.?);
+        } else if (before.pending == .discover) try testing.expect(d.state == .initializing or d.failure.? == .went_quiet),
         else => {},
     }
     if (out.transition) |t| {
@@ -621,7 +627,7 @@ fn candidateMoves(buffer: []Event) []Event {
         .{ .probe_timer_fired = 1 },   .{ .probe_timer_fired = 2 },                .{ .probe_timer_fired = 3 },                   .{ .probe_timer_fired = 4 },
         .{ .probe_timer_fired = 5 },   .{ .initialize_result = .{ .legacy = 0 } }, .{ .initialize_result = .{ .preferred = 0 } }, .{ .initialize_result = .other },
         .{ .initialize_error = true }, .{ .initialize_error = false },             .initialize_timed_out,                         .operation_sent,
-        .discover_not_implemented,
+        .discover_not_implemented,     .http_refused,
     };
     for (fixed) |m| {
         buffer[n] = m;
@@ -822,6 +828,32 @@ test "over HTTP, 404 with -32601 to the probe is a modern server without discove
 
     try d.step(.{ .operation_version_rejected = .{ .preferred = 0b10 } }, &out);
     try testing.expectEqualSlices(Effect, &.{.{ .ready = .{ .preferred = 1 } }}, out.effects());
+}
+
+test "over HTTP, a refused probe falls back to initialize, and only a refused initialize fails as refused" {
+    var d: Detector = .init(test_config);
+    var out: Output = .{};
+    try d.step(.process_started, &out);
+    try d.step(.detect_requested, &out);
+    try d.step(.http_refused, &out);
+    try testing.expectEqualSlices(Effect, &.{.send_initialize}, out.effects());
+    try d.step(.{ .initialize_result = .{ .legacy = 0 } }, &out);
+    try testing.expectEqualSlices(Effect, &.{ .send_initialized, .{ .ready = .{ .legacy = 0 } } }, out.effects());
+
+    var refused: Detector = .init(test_config);
+    try refused.step(.process_started, &out);
+    try refused.step(.detect_requested, &out);
+    try refused.step(.http_refused, &out);
+    try refused.step(.http_refused, &out);
+    try testing.expectEqualSlices(Effect, &.{.{ .failed = .refused }}, out.effects());
+    try refused.step(.http_refused, &out);
+    try testing.expect(out.transition.?.ignored);
+
+    var legacy: Detector = .init(test_config);
+    try legacy.step(.process_started, &out);
+    try legacy.step(.detect_requested, &out);
+    try legacy.step(classifyDiscoverHttp(test_config, 400, null), &out);
+    try testing.expectEqualSlices(Effect, &.{.send_initialize}, out.effects());
 }
 
 test "writes the detection messages" {

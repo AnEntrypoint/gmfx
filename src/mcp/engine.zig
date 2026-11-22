@@ -45,6 +45,10 @@ pub const Options = struct {
 
 const permanent_spawn_errors = [_][]const u8{ "FileNotFound", "AccessDenied", "PermissionDenied", "InvalidExe", "NotDir", "IsDir" };
 
+fn fallsBackToSse(failure: server_mod.Failure, transport: std.meta.Tag(Transport)) bool {
+    return failure == .era and failure.era == .refused and transport == .http;
+}
+
 pub fn spawnNeverRecovers(spawn_error: anyerror) bool {
     const name = @errorName(spawn_error);
     for (permanent_spawn_errors) |permanent| if (std.mem.eql(u8, permanent, name)) return true;
@@ -407,7 +411,7 @@ pub const Engine = struct {
         switch (event) {
             .ready => try e.step(slot, .up),
             .failed => |f| {
-                if (f == .era and f.era == .refused and slot.config.transport == .http) {
+                if (fallsBackToSse(f, slot.config.transport)) {
                     const http = slot.config.transport.http;
                     slot.config.transport = .{ .sse = try dupeHttp(slot.arena.allocator(), http) };
                     slot.rebuild = true;
@@ -754,6 +758,13 @@ test "a command that is missing or cannot run never recovers by itself, and any 
     try std.testing.expect(spawnNeverRecovers(error.InvalidExe));
     try std.testing.expect(!spawnNeverRecovers(error.SystemResources));
     try std.testing.expect(!spawnNeverRecovers(error.ConcurrencyUnavailable));
+}
+
+test "only a refused initialize over streamable HTTP falls back to HTTP+SSE" {
+    try std.testing.expect(fallsBackToSse(.{ .era = .refused }, .http));
+    try std.testing.expect(!fallsBackToSse(.{ .era = .refused }, .sse));
+    try std.testing.expect(!fallsBackToSse(.{ .era = .initialize_failed }, .http));
+    try std.testing.expect(!fallsBackToSse(.session, .http));
 }
 
 test "wake from another thread ends a waiting next early" {

@@ -1035,13 +1035,13 @@ pub const Server = struct {
     }
 
     fn onEndedDomain(r: *Server, key: u64, status: u16, how: http.Ending) Error!void {
-        if (how == .refused and !r.refusesDiscover(key)) return r.onEndedDomain(key, status, .http_failure);
+        if (how == .refused and !r.refusable(key)) return r.onEndedDomain(key, status, .http_failure);
         if (r.sse_link) return r.onSseEnded(key, status, how);
         if (r.legacy != null) {
             if (key == r.initialized_key) return r.releaseHeldSends();
             if (key == r.listen_key) return r.onListenEnded(status, how);
             const l = r.logicalFor(key) orelse return;
-            if (l.what == .initialize) return r.onInitializeEnded(l, key);
+            if (l.what == .initialize) return r.onInitializeEnded(l, key, how);
             if (l.what != .discover) return r.onLegacyEnded(l, key, status, how);
         }
         const l = r.logicalFor(key) orelse return;
@@ -1049,10 +1049,10 @@ pub const Server = struct {
         try r.endAttempt(l, key, how, status);
     }
 
-    fn refusesDiscover(r: *Server, key: u64) bool {
-        if (r.sse_link or r.legacy != null) return false;
+    fn refusable(r: *Server, key: u64) bool {
+        if (r.sse_link) return false;
         const l = r.logicalFor(key) orelse return false;
-        return l.what == .discover;
+        return l.what == .initialize or (l.what == .discover and r.legacy == null);
     }
 
     fn onSseMessage(r: *Server, key: u64, message: wire.Message) Error!void {
@@ -1478,10 +1478,10 @@ pub const Server = struct {
         if (first) try r.stepEra(if (r.bad_session) .{ .initialize_error = false } else event);
     }
 
-    fn onInitializeEnded(r: *Server, l: *Logical, key: u64) Error!void {
+    fn onInitializeEnded(r: *Server, l: *Logical, key: u64, how: http.Ending) Error!void {
         l.used = false;
         try r.stepRequest(.{ .transport_lost = key });
-        try r.initializeFailed(l, .{ .initialize_error = false });
+        try r.initializeFailed(l, if (how == .refused) .http_refused else .{ .initialize_error = false });
     }
 
     fn onInitializeTimedOut(r: *Server, l: *Logical, id: request.Id) Error!void {
