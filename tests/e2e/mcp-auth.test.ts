@@ -1880,9 +1880,8 @@ describe("MCP login", () => {
     await tui.sendText("/mcp list");
     await tui.waitForText(/fixture +~\/\.fx\/mcp\.json +http +(connecting|ready)/, 15_000);
     await tui.sendText("/mcp show fixture");
-    const pane = await tui.waitForText(/status +ready/, 15_000);
-
-    expect(pane).toContain("Signed in to fixture.");
+    await tui.waitForText(/status +ready/, 15_000);
+    await tui.waitForText("Signed in to fixture.", 5_000);
     expect(auth.tokenExchanges).toBe(1);
   }, 60_000);
 
