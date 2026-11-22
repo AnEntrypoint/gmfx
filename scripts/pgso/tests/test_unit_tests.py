@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import pathlib
 import sys
@@ -204,8 +206,11 @@ class TransformedUnitTestsTests(unittest.TestCase):
             "sys.stderr.write('\\n'.join(lines) + '\\nAll 16000 tests passed.\\n')",
         )
 
-        summary = unit_tests.run_tests(binary, self.root, self.paths.logs / "unit-tests.json")
+        streamed = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(streamed):
+            summary = unit_tests.run_tests(binary, self.root, self.paths.logs / "unit-tests.json")
 
+        self.assertIn("16000/16000 test number 16000", streamed.getvalue())
         first = json.loads((self.paths.logs / "unit-tests.json").read_text())
         self.assertGreater(first["stderr_total_chars"], 1024 * 1024)
         self.assertFalse(first["stderr_truncated"])
