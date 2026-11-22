@@ -57,5 +57,5 @@ benchmarks/baseline.json
 .windsurf/
 .zencoder/
 
-# Vendored txiki.js sources (scripts/vendor-txiki.mjs)
+# Vendored txiki.js sources (scripts/txiki/vendor.mjs)
 /native/third_party/

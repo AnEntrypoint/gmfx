@@ -16,29 +16,32 @@ Stage 0 was an inventory; sections 1, 3 and 5 are updated to the current tree. S
 - Moves into txiki: nothing existing moves. The new txiki-hosted pieces are (a) the run_code body runner, and (b) the agent side of Cordis, which freddie hands to fx and which runs as JavaScript inside txiki. Cordis is not rebuilt in Zig.
 - LeafVerbs: the native tools above are exposed to a body as gm.<verb>(args), each call passing through the same gate as a model tool call.
 
-## 3. The shared vendor step and where fx diverges from gm
+## 3. The shared vendor step
 
-- fx: scripts/vendor-txiki.mjs (99 lines, sha256 324930c619a8199305b5a496ff1450835234f4859ea48be2d9c367573b80bdac) reads scripts/txiki/pin.json (txiki v26.11.0, libuv dd9f081c, quickjs-ng 7b5f588e, each with url and sha256) and takes `--pin <file>`.
-- gm: tools/vendor-txiki.mjs (149 lines, sha256 dd5ac6deb2f2017184e06d9ce9b4c5af0f632854cf971f5eb0b40684a575e432) hard-codes the same three pins and values.
-- thebird: scripts/vendor-txiki.mjs (208 lines, sha256 b9ccd3e955bbdab26075412472968d11a2639246fd89b8b7a086e21d64d598db) exports the pins as constants, adds a sqlite and wasm build, and pins the wasm variant in scripts/txiki/pin.json.
-- The three pinned archive sha256 values are identical in all three repos.
+fx runs gm's shared vendor step unchanged. gm replaced tools/vendor-txiki.mjs (sha256 dd5ac6de...) with tools/txiki/ in eb36a28, "one pin file and one vendor script for gm, thebird and fx". fx carries byte-identical copies taken from gm 2db01da:
 
-Differences between fx 324930c6 and gm dd5ac6de:
+| fx file | gm file | sha256 |
+| --- | --- | --- |
+| scripts/txiki/vendor.mjs | tools/txiki/vendor.mjs | 00316a7a1d7b8d7c5f35b4bb62a8de269086c5aefa7b2b08dfcc6bae59c6775e |
+| scripts/txiki/pins.json | tools/txiki/pins.json | 5c1eb77bcebdbd77f4a0313c7f3dfbf961283fed91d0c2ee9793ffa3ab9104eb |
+| scripts/txiki/patches/*.patch | tools/txiki/patches/*.patch | each pinned in pins.json |
 
-- Pins: fx loads JSON from --pin or scripts/txiki/pin.json; gm has an inline PINS array.
-- ASCII normalisation: gm has TEXT_SOURCE, ASCII_FOR, withoutComments and asciiCopy, which rewrite non-ASCII characters in comments and licence text and refuse non-ASCII in code. fx copies verbatim.
-- Browser port: gm has BROWSER_PORT (four thebird files with sha256 each), checks them in the target, and runs tools/browser-stubs.mjs to generate browser/stubs.c, whose sha256 it records. fx has no browser port and no generated stubs; its stubs are hand-written in native/txiki/glue/txiki_stubs.c.
-- Layout constants: fx lists TXIKI_BUNDLES over several lines and moves LIBUV_BUILD_FILES; the lists carry the same entries.
-- Run helper: timeout 900000 ms in fx against 600000 in gm; the error and the final log line are built by string concatenation in fx and by template literals in gm; gm also logs the count of normalised characters and prefixes the log with its TOOL name.
-- VERSION.txt: the wording and the list of left-out modules differ.
-- Neither pin file records a sha256 for the stubbed or patched files (gm: txiki_stubs.c, the overlay headers; fx: native/txiki/glue/*).
+- The archive pins are unchanged from fx's old scripts/txiki/pin.json: txiki.js v26.11.0 763025ac..., libuv dd9f081c f5185440..., quickjs-ng 7b5f588e f27b2e93.... pins.json also pins zstd v1.5.7 and brotli v1.1.0, the four patches (txiki-gm, txiki-worker-data, quickjs-async-frame, txiki-dns-flags), the host extras and the thebird browser port.
+- The script resolves its default target as its own directory/../../native/third_party/txiki, so the same file works at gm tools/txiki/ and fx scripts/txiki/. The browser port (--browser --glue) and the host extras (--extras) are opt-in. fx uses neither, so it does not carry browser-stubs.mjs or extras/.
+- What fx gains with the switch: the four patches, the zstd and brotli sources under native/third_party/txiki, ASCII normalisation, and MANIFEST.sha256 with --verify. The patches change only vendored txiki and quickjs-ng files and need no new host symbols. The first build after the switch confirms that.
+- The old fx scripts/vendor-txiki.mjs (324930c6...) and scripts/txiki/pin.json are deleted. CI runs `node scripts/txiki/vendor.mjs` in .github/actions/setup-pgso/action.yml and in release.yml (build-macos-x86_64).
+- scripts/check_vendor_txiki.py (python3 -I) records the two shared sha256 values and gm's commit. It fails when vendor.mjs or pins.json differs from them, or when a patch differs from its pin. It also takes directories as arguments, so `python3 -I scripts/check_vendor_txiki.py /workspace/gm/tools/txiki` checks gm against the same record. Tests: scripts/tests/test_vendor_txiki.py.
+- To take a new gm vendor step: copy tools/txiki/{vendor.mjs,pins.json,patches/} over scripts/txiki/, update SHARED and GM_COMMIT in the check script, and re-vendor.
 
-Needs from gm and thebird to adopt one script and one pin file:
+Needs from gm:
 
-- gm: replace the inline PINS array with the shared pin file; keep BROWSER_PORT and the stubs step as optional pin-file sections so fx can leave them out; move the ASCII normalisation behind a flag, or have fx adopt it.
-- thebird: replace the exported constants with the same pin file; keep the sqlite and wasm build outside the shared script; pin its stubs.tsv by sha256 in the pin file.
-- All three: add per-file sha256 entries for the stub and overlay files to the pin file, and agree on one stub list (gm: txiki_stubs.c, fx: native/txiki/glue/txiki_stubs.c, thebird: stubs.tsv).
-- Decide which repo owns the script and the pin, and have the others copy it with a sha256 check.
+- gm: keep tools/txiki/vendor.mjs and pins.json as the one source, and report each change to fx so fx can update its copy and the record in scripts/check_vendor_txiki.py.
+- gm: VERSION.txt names the paths tools/txiki/vendor.mjs and tools/txiki/patches/ even when the script runs from another repo. It could derive them from the script's own location. This is wording only; fx takes the file as it is.
+
+Needs from thebird:
+
+- thebird: replace scripts/vendor-txiki.mjs (208 lines, sha256 b9ccd3e955bbdab26075412472968d11a2639246fd89b8b7a086e21d64d598db, with inline TXIKI_VERSION and the LIBUV and QUICKJS_NG constants) with a byte-identical copy of gm tools/txiki/{vendor.mjs,pins.json,patches/,browser-stubs.mjs}, and run it with --browser --glue <its glue C file>. The browser-port files are already pinned in pins.json from thebird b5ec730.
+- thebird: keep the sqlite and wasm reactor build, and its tjsWasmSha256 pin in scripts/txiki/pin.json, outside the shared script. Check the copy with the same two sha256 values.
 
 ## 4. gm semantics to keep (gm native/components/quickjs/engine.cpp, runcode.cpp, run_entry.cpp, include/gm/runcode.hpp)
 
@@ -58,7 +61,7 @@ Needs from gm and thebird to adopt one script and one pin file:
 
 | Item | Present | Added now | Needs the gated build window |
 | --- | --- | --- | --- |
-| Shared pin file and vendor script | scripts/txiki/pin.json, scripts/vendor-txiki.mjs (--pin) | divergence from gm recorded in section 3 | gm and thebird adopting the pin and script |
+| Shared pin file and vendor script | scripts/txiki/{vendor.mjs,pins.json,patches/}, byte-identical to gm 2db01da tools/txiki | scripts/check_vendor_txiki.py and its tests | re-vendoring with the shared script and building; thebird adopting it |
 | txiki core as static libraries | native/txiki/CMakeLists.txt, build.zig step, glue | none | a build to confirm the archives link |
 | C shim and Zig runner | runcode_shim.c, src/core/runcode, src/tools/runcode | none | running the runner tests |
 | Deadline, node: refusal, console sink | in runcode_shim.c and runcode.zig | none | scripts/txiki-witness.sh deadline check |

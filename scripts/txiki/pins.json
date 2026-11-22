@@ -1,0 +1,249 @@
+{
+  "txikiVersion": {
+    "major": "26",
+    "minor": "11",
+    "patch": "0",
+    "suffix": ""
+  },
+  "archives": [
+    {
+      "name": "txiki",
+      "label": "txiki.js v26.11.0",
+      "url": "https://codeload.github.com/saghul/txiki.js/legacy.tar.gz/refs/tags/v26.11.0",
+      "sha256": "763025ac98e4d6629f9ebe8396c027ff22966a6322b0dc43e442d45c6d7f8059"
+    },
+    {
+      "name": "libuv",
+      "label": "libuv dd9f081cc55a4d83e2a976848d074f28ee5f34eb",
+      "url": "https://codeload.github.com/libuv/libuv/legacy.tar.gz/dd9f081cc55a4d83e2a976848d074f28ee5f34eb",
+      "sha256": "f5185440ee939936d6375755498b7f07915f747bd9bbfe6ea058a9ee173f88d0"
+    },
+    {
+      "name": "quickjs",
+      "label": "quickjs-ng 7b5f588e0f9b643e2996f291bfc861abeaceddc2",
+      "url": "https://codeload.github.com/quickjs-ng/quickjs/legacy.tar.gz/7b5f588e0f9b643e2996f291bfc861abeaceddc2",
+      "sha256": "f27b2e93647e73f91201e12c4f2ee0c0d07e2f6dc06b539422bf03269d601366"
+    },
+    {
+      "name": "zstd",
+      "label": "zstd v1.5.7",
+      "url": "https://codeload.github.com/facebook/zstd/legacy.tar.gz/refs/tags/v1.5.7",
+      "sha256": "9b70bbc1f5750dd895765e376e78811f3c47065cc1c782c09f4bcea5d137c7d0"
+    },
+    {
+      "name": "brotli",
+      "label": "brotli v1.1.0",
+      "url": "https://codeload.github.com/google/brotli/legacy.tar.gz/refs/tags/v1.1.0",
+      "sha256": "10973f4b4199eafa1d5735ef661ddb2ec2f97319ee9fd1824d4aabe08cff5265"
+    }
+  ],
+  "selections": {
+    "txikiSources": [
+      "vm.c",
+      "timers.c",
+      "utils.c",
+      "modules.c",
+      "error.c",
+      "mem.c",
+      "text-coding.c",
+      "tbuf.c",
+      "builtins.c",
+      "signals.c",
+      "mod_os.c",
+      "mod_sys.c",
+      "mod_fs.c",
+      "mod_streams.c",
+      "worker.c",
+      "eval.c",
+      "url.c",
+      "mod_engine.c",
+      "version.c",
+      "mod_channel.c",
+      "mod_dns.c",
+      "mod_fswatch.c",
+      "mod_process.c",
+      "mod_udp.c",
+      "mod_posix-socket.c"
+    ],
+    "txikiHeadersSkipped": [
+      "cacert.h",
+      "ed25519.h",
+      "mbedtls_config.h",
+      "wasm.h"
+    ],
+    "txikiBundles": [
+      "core/core.c",
+      "core/polyfills.c",
+      "core/run-main.c",
+      "core/worker-bootstrap.c",
+      "internal/home.c",
+      "internal/path.c",
+      "stdlib/assert.c",
+      "stdlib/getopts.c",
+      "stdlib/hashing.c",
+      "stdlib/ipaddr.c",
+      "stdlib/path.c",
+      "stdlib/posix-socket.c",
+      "stdlib/readline.c",
+      "stdlib/utils.c",
+      "stdlib/uuid.c"
+    ],
+    "adaFiles": [
+      "ada.cpp",
+      "ada.h",
+      "ada_c.h"
+    ],
+    "libuvBuildFiles": [
+      "CMakeLists.txt",
+      "configure.ac",
+      "libuv.pc.in",
+      "libuv-static.pc.in"
+    ],
+    "quickjsSources": [
+      "quickjs.c",
+      "dtoa.c",
+      "libregexp.c",
+      "libunicode.c"
+    ],
+    "quickjsHeadersSkipped": [
+      "quickjs-libc.h"
+    ]
+  },
+  "extras": [
+    {
+      "archive": "zstd",
+      "from": "lib/common",
+      "to": "zstd/lib/common",
+      "files": [
+        "debug.c",
+        "debug.h",
+        "entropy_common.c",
+        "error_private.c",
+        "error_private.h",
+        "fse_decompress.c",
+        "zstd_common.c",
+        "xxhash.c",
+        "xxhash.h",
+        "allocations.h",
+        "bits.h",
+        "bitstream.h",
+        "compiler.h",
+        "cpu.h",
+        "fse.h",
+        "huf.h",
+        "mem.h",
+        "portability_macros.h",
+        "zstd_deps.h",
+        "zstd_internal.h",
+        "zstd_trace.h",
+        "pool.h",
+        "threading.h"
+      ]
+    },
+    {
+      "archive": "zstd",
+      "from": "lib/decompress",
+      "to": "zstd/lib/decompress",
+      "match": "\\.(c|h)$"
+    },
+    {
+      "archive": "zstd",
+      "from": "lib",
+      "to": "zstd/lib",
+      "files": [
+        "zstd.h",
+        "zstd_errors.h"
+      ]
+    },
+    {
+      "archive": "zstd",
+      "from": ".",
+      "to": "zstd",
+      "files": [
+        "LICENSE",
+        "COPYING"
+      ]
+    },
+    {
+      "archive": "brotli",
+      "from": "c/common",
+      "to": "brotli/c/common",
+      "match": "\\.(c|h)$"
+    },
+    {
+      "archive": "brotli",
+      "from": "c/dec",
+      "to": "brotli/c/dec",
+      "match": "\\.(c|h)$"
+    },
+    {
+      "archive": "brotli",
+      "from": "c/include/brotli",
+      "to": "brotli/c/include/brotli",
+      "files": [
+        "decode.h",
+        "types.h",
+        "port.h",
+        "shared_dictionary.h"
+      ]
+    },
+    {
+      "archive": "brotli",
+      "from": ".",
+      "to": "brotli",
+      "files": [
+        "LICENSE"
+      ]
+    }
+  ],
+  "hostExtras": [
+    {
+      "file": "core_extras.cpp",
+      "sha256": "4654d2654b9b6d6b947cfd1211971d4284d3e7ed449c0ccec1474bfede19cf3a"
+    },
+    {
+      "file": "core_extras.hpp",
+      "sha256": "60a9b67e8b8364d8ffa993f13f5794ff2f363aecb0fb4bc441cae8327b14da01"
+    }
+  ],
+  "patches": [
+    {
+      "file": "txiki-gm.patch",
+      "sha256": "d1746723dfb1fa51bd130648f7d2b3d09e26b7fe78c0342d490acd3823f4b54e"
+    },
+    {
+      "file": "txiki-worker-data.patch",
+      "sha256": "259982c156eaeffc45a8af8681a4610c3a4a4f7527b0f48fa06823fdada307c7"
+    },
+    {
+      "file": "quickjs-async-frame.patch",
+      "sha256": "72ddac1b9a6d6ecfffd85921e89f8890f4ace026c29c784e7794ce5c82a52386"
+    },
+    {
+      "file": "txiki-dns-flags.patch",
+      "sha256": "491faccc88ae5b5f652608d3a6dfd2749ecfcc207dabf4793cdc79cb5870d503"
+    }
+  ],
+  "browserPort": [
+    {
+      "file": "uv-browser.c",
+      "origin": "thebird b5ec730 scripts/txiki/browser/uv-browser.c",
+      "sha256": "89d228c3fd5ede105029e6c586a903ecb7d8f3ac75841f9e8844ea6ddaa72a50"
+    },
+    {
+      "file": "uv/browser.h",
+      "origin": "thebird b5ec730 scripts/txiki/include/uv/browser.h",
+      "sha256": "feee1d8eee76d0518107be49bceb7d8e8901a7a82d621e00787212d67aba7ccd"
+    },
+    {
+      "file": "txiki-browser.h",
+      "origin": "thebird b5ec730 scripts/txiki/include/txiki-browser.h",
+      "sha256": "d20dec81f14fc2fd01c0a3414bb840bbe34a63f4986b4e944887300fe5fa8c17"
+    },
+    {
+      "file": "stubs.tsv",
+      "origin": "thebird scripts/txiki/stubs.tsv",
+      "sha256": "0531146a3c415fb4b64ff33fa2eede11cfd59e2a8d5d2ce3c653263ee09a8a3d"
+    }
+  ]
+}

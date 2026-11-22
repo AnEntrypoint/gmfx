@@ -166,7 +166,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Vendor txiki sources
-        run: node scripts/vendor-txiki.mjs
+        run: node scripts/txiki/vendor.mjs
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29

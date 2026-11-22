@@ -187,4 +187,4 @@ runs:
 
     - name: Vendor txiki sources
       shell: bash
-      run: node scripts/vendor-txiki.mjs
+      run: node scripts/txiki/vendor.mjs
