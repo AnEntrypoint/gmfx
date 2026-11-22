@@ -241,13 +241,9 @@ describe("fx ask presentation", () => {
     expect(gateway.requests).toHaveLength(4);
 
     const firstRequest = JSON.parse(gateway.requests[0]!.body) as {
-      tools: Array<any>;
+      tools: Array<{ name: string }>;
     };
-    const bashSchema = firstRequest.tools.find(({ name }) => name === "Bash")?.inputSchema;
-    expect(bashSchema?.required).toEqual(["command"]);
-    for (const removed of ["action", "profile", "tty", "timeout_ms", "session_id", "yield_time_ms"]) {
-      expect(Object.keys(bashSchema?.properties ?? {})).not.toContain(removed);
-    }
+    expect(firstRequest.tools.map(({ name }) => name)).toEqual(["run_code", "vision"]);
 
     expect(gateway.requests[1]!.body).toContain("mode=login:rc:path-user:");
     expect(gateway.requests[1]!.body).toContain("alias-user:function-user");

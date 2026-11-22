@@ -1638,18 +1638,7 @@ describe("filesystem path handling", () => {
           const request = JSON.parse(body) as {
             tools: Array<{ name: string }>;
           };
-          const names = request.tools.map((tool) => tool.name);
-          for (const removed of REMOVED_FILESYSTEM_TOOLS) {
-            expect(names).not.toContain(removed);
-          }
-          expect(names).toEqual(expect.arrayContaining([
-            "read_file",
-            "write_file",
-            "edit_file",
-            "glob_files",
-            "grep_files",
-            "Bash",
-          ]));
+          expect(request.tools.map((tool) => tool.name)).toEqual(["run_code", "vision"]);
           return toolCall("terminal_fallback_1", "Bash", {
             command,
             description: "Exercise the filesystem fallback commands",

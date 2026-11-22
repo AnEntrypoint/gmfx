@@ -441,6 +441,8 @@ Options:
   --permission-prompts MODE         none denies anything that would prompt, as --permission-mode dontAsk does; host keeps the default
   --bare                            Skip hooks, skills, plugins, MCP servers and project instructions for this request
   --allowed-tools <rules>           Allow these tools without asking, as comma-separated rules such as Read or Bash(npm test); repeatable
+  --tools <names>                   Restrict the built-in tools to these comma-separated names; an empty value gives none, and the last value wins
+  --disallowed-tools <names>        Remove these comma-separated tools from the tools the model sees; repeatable
   --name <name>                     Name the saved session instead of generating a title; -n is an alias
   --plan                            Rejected in prompt mode, which cannot start in plan mode
   --timeout <seconds>               Time limit for each shell command the agent runs
