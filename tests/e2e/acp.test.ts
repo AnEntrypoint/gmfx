@@ -1100,7 +1100,7 @@ test("ACP shell completed and replayed updates show the command output", async (
     await client.request("initialize", { protocolVersion: 1 }, 1);
     const created = await client.request("session/new", { cwd: fixture.workspace, mcpServers: [] }, 2) as any;
     if (created.error) throw new Error(JSON.stringify(created));
-    await client.request("session/set_mode", { modeId: "full-access" }, 3);
+    await client.request("session/set_mode", { modeId: "yolo" }, 3);
     const prompt = await runPrompt(client, "Run the command.", TIMEOUT);
     expect(prompt.promptResult.result.stopReason).toBe("end_turn");
     const expected = [{ type: "content", content: { type: "text", text: "hello-42\n" } }];
@@ -1137,7 +1137,7 @@ test("ACP finishes tool calls that a cancel stopped before they ran", async () =
     await client.request("initialize", { protocolVersion: 1 }, 1);
     const created = await client.request("session/new", { cwd: root.workspace, mcpServers: [] }, 2) as any;
     if (created.error) throw new Error(JSON.stringify(created));
-    await client.request("session/set_mode", { modeId: "full-access" }, 3);
+    await client.request("session/set_mode", { modeId: "yolo" }, 3);
     sendPrompt(client, 4, "Run both commands.");
     await waitForCondition(
       "slow command running",
@@ -2644,7 +2644,7 @@ describe("acp: model-independent", () => {
         });
         client.setPermissionOption("allow_once");
         await startAutoSession(client);
-        await client.request("session/set_mode", { modeId: "ask" }, 4);
+        await client.request("session/set_mode", { modeId: "default" }, 4);
         const result = await runPrompt(
           client,
           "Run the managed shell TTY fixture.",
@@ -9409,7 +9409,7 @@ describe("acp: model-independent", () => {
           env: fakeGatewayEnv(root, gateway),
         });
         await startAutoSession(client);
-        await client.request("session/set_mode", { modeId: "ask" }, 4);
+        await client.request("session/set_mode", { modeId: "default" }, 4);
         client.setPermissionOption("allow_once");
 
         const result = await runPrompt(
@@ -9490,7 +9490,7 @@ describe("acp: model-independent", () => {
           env: fakeGatewayEnv(root, gateway),
         });
         await startAutoSession(client);
-        await client.request("session/set_mode", { modeId: "ask" }, 4);
+        await client.request("session/set_mode", { modeId: "default" }, 4);
         client.setPermissionOption("allow_always");
 
         const first = await runPrompt(client, "Approve the first external write.", TIMEOUT);
@@ -9567,7 +9567,7 @@ describe("acp: model-independent", () => {
           env: fakeGatewayEnv(root, gateway),
         });
         await startAutoSession(client);
-        await client.request("session/set_mode", { modeId: "ask" }, 4);
+        await client.request("session/set_mode", { modeId: "default" }, 4);
         client.setPermissionOption("reject_once");
         const result = await runPrompt(client, "Attempt the rejected external write.", TIMEOUT);
         const permission = result.messages.find(
@@ -9754,7 +9754,7 @@ describe("acp: model-independent", () => {
           env: fakeGatewayEnv(root, gateway),
         });
         await startAutoSession(client, true);
-        await client.request("session/set_mode", { modeId: "ask" }, 4);
+        await client.request("session/set_mode", { modeId: "default" }, 4);
         client.setPermissionOption("allow_once");
         const result = await runPrompt(client, "Run the approved command.", TIMEOUT);
         const wait = client.hookEvents.find(event => event.type === "wait.start" && event.data.kind === "approval");
@@ -9810,7 +9810,7 @@ describe("acp: model-independent", () => {
           jsonrpc: "2.0",
           id: 197,
           method: "session/set_mode",
-          params: { modeId: "ask" },
+          params: { modeId: "default" },
         });
         const changed = await readResponse(client, 197);
         expect(changed.error).toBeUndefined();
@@ -9920,7 +9920,7 @@ describe("acp: model-independent", () => {
           env: fakeGatewayEnv(root, gateway),
         });
         await startAutoSession(client);
-        await client.request("session/set_mode", { modeId: "ask" }, 4);
+        await client.request("session/set_mode", { modeId: "default" }, 4);
         sendPrompt(client, 296, "Request permission and wait.");
         await waitForCondition("the permission fixture request", () => gateway.requests.length === 1);
         await Bun.sleep(50);
@@ -9938,9 +9938,9 @@ describe("acp: model-independent", () => {
   );
 
   test(
-    "session modes are the CLI permission modes and start in the saved mode",
+    "session modes are the ACP modes and start in the saved mode",
     async () => {
-      for (const [saved, expected] of [[undefined, "auto"], ["ask", "ask"], ["auto", "auto"], ["yolo", "full-access"], ["dontAsk", "dontAsk"]] as const) {
+      for (const [saved, expected] of [[undefined, "auto"], ["ask", "default"], ["auto", "auto"], ["yolo", "yolo"], ["dontAsk", "default"]] as const) {
         const root = createIsolatedRoot("fx-acp-permission-modes-");
         if (saved) writeFileSync(join(root.home, ".fx", "settings.json"), JSON.stringify({ permission_mode: saved }));
         const gateway = startFakeGateway([]);
@@ -9954,12 +9954,12 @@ describe("acp: model-independent", () => {
           expect(mode.currentValue).toBe(expected);
           expect(created.result.modes.currentModeId).toBe(expected);
           expect(mode.options).toEqual([
+            { value: "default", name: "Default", description: expect.any(String), _meta: { fx: { permissionMode: "ask" } } },
+            { value: "plan", name: "Plan", description: expect.any(String), _meta: { fx: { permissionMode: "ask" } } },
             { value: "auto", name: "Auto", description: expect.any(String), _meta: { fx: { permissionMode: "auto" } } },
-            { value: "ask", name: "Ask", description: expect.any(String), _meta: { fx: { permissionMode: "ask" } } },
-            { value: "full-access", name: "Full access", description: expect.any(String), _meta: { fx: { permissionMode: "yolo" } } },
-            { value: "dontAsk", name: "Don't ask", description: expect.any(String), _meta: { fx: { permissionMode: "dontAsk" } } },
+            { value: "yolo", name: "YOLO", description: expect.any(String), _meta: { fx: { permissionMode: "yolo" } } },
           ]);
-          expect(created.result.modes.availableModes.map((entry: any) => entry.id)).toEqual(["auto", "ask", "full-access", "dontAsk"]);
+          expect(created.result.modes.availableModes.map((entry: any) => entry.id)).toEqual(["default", "plan", "auto", "yolo"]);
         } finally {
           await client?.close();
           gateway.stop();
@@ -9979,8 +9979,8 @@ describe("acp: model-independent", () => {
       const gateway = startFakeGateway([]);
       try {
         for (const [args, expected] of [
-          [["acp", "--permission-mode", "ask"], "ask"],
-          [["acp", "--full-access"], "full-access"],
+          [["acp", "--permission-mode", "ask"], "default"],
+          [["acp", "--full-access"], "yolo"],
         ] as const) {
           client = await AcpClient.create({ cwd: root.workspace, env: fakeGatewayEnv(root, gateway), args: [...args] });
           try {
@@ -10003,7 +10003,7 @@ describe("acp: model-independent", () => {
   test(
     "fx status --json lists the modes and the one a new ACP session starts in",
     async () => {
-      for (const [saved, expected] of [[undefined, "auto"], ["ask", "ask"], ["yolo", "full-access"]] as const) {
+      for (const [saved, expected, acpMode] of [[undefined, "auto", "auto"], ["ask", "ask", "default"], ["yolo", "full-access", "yolo"]] as const) {
         const root = createIsolatedRoot("fx-acp-status-modes-");
         if (saved) writeFileSync(join(root.home, ".fx", "settings.json"), JSON.stringify({ permission_mode: saved }));
         const gateway = startFakeGateway([]);
@@ -10019,12 +10019,9 @@ describe("acp: model-independent", () => {
           const created = await client.request("session/new", { mcpServers: [] }, 2) as any;
           expect(created.error).toBeUndefined();
           const mode = created.result.configOptions.find((option: any) => option.id === "mode");
-          expect(mode.currentValue).toBe(reported.mode);
-          expect(reported.modes).toEqual(mode.options.map((option: any) => ({
-            id: option.value,
-            name: option.name,
-            description: option.description,
-          })));
+          expect(reported.modes.map((entry: any) => entry.id)).toEqual(["auto", "ask", "full-access", "dontAsk"]);
+          expect(mode.currentValue).toBe(acpMode);
+          expect(mode.options.find((option: any) => option.value === acpMode)._meta.fx.permissionMode).toBe(saved ?? "auto");
         } finally {
           await client?.close();
           gateway.stop();
@@ -10048,32 +10045,32 @@ describe("acp: model-independent", () => {
         await client.request("session/new", { mcpServers: [] }, 2);
         await client.readLine();
 
-        const asked = await client.request("session/set_config_option", { configId: "mode", value: "ask" }, 3) as any;
-        expect(asked.result.configOptions.find((option: any) => option.id === "mode").currentValue).toBe("ask");
+        const asked = await client.request("session/set_config_option", { configId: "mode", value: "default" }, 3) as any;
+        expect(asked.result.configOptions.find((option: any) => option.id === "mode").currentValue).toBe("default");
         expect(savedMode()).toBe("manual");
 
         for (const [id, method, params] of [
           [4, "session/set_config_option", { configId: "mode", value: "code" }],
           [5, "session/set_mode", { modeId: "code" }],
-          [6, "session/set_mode", { modeId: "yolo" }],
+          [6, "session/set_mode", { modeId: "full-access" }],
         ] as const) {
           const response = await client.request(method, params, id) as any;
           expect(response.error).toMatchObject({ code: -32602, message: "Unknown mode" });
         }
         expect(savedMode()).toBe("manual");
 
-        const legacy = await client.request("session/set_mode", { modeId: "full-access" }, 7) as any;
-        expect(legacy.error).toBeUndefined();
+        const yolo = await client.request("session/set_mode", { modeId: "yolo" }, 7) as any;
+        expect(yolo.error).toBeUndefined();
         expect(savedMode()).toBe("yolo");
         const next = await client.request("session/new", { mcpServers: [] }, 8) as any;
         await client.readLine();
-        expect(next.result.modes.currentModeId).toBe("full-access");
+        expect(next.result.modes.currentModeId).toBe("yolo");
 
 
         writeFileSync(settingsPath, JSON.stringify({ ...JSON.parse(readFileSync(settingsPath, "utf8")), permission_mode: "ask" }));
         const afterOther = await client.request("session/new", { mcpServers: [] }, 9) as any;
         await client.readLine();
-        expect(afterOther.result.configOptions.find((option: any) => option.id === "mode").currentValue).toBe("ask");
+        expect(afterOther.result.configOptions.find((option: any) => option.id === "mode").currentValue).toBe("default");
         expect(client.stderr).toBe("");
       } finally {
         await client?.close();
@@ -10520,7 +10517,7 @@ describe("acp: model-backed protocol", () => {
         const modeOpt = resp.result.configOptions.find((o: any) => o.id === "mode");
         expect(modeOpt).toBeDefined();
         expect(Array.isArray(modeOpt.options)).toBe(true);
-        expect(modeOpt.options.map((option: any) => option.value)).toEqual(["auto", "ask", "full-access", "dontAsk"]);
+        expect(modeOpt.options.map((option: any) => option.value)).toEqual(["default", "plan", "auto", "yolo"]);
 
         const notification = await client.readLine() as any;
         expect(notification.method).toBe("session/update");
@@ -10638,7 +10635,7 @@ describe("acp: model-backed protocol", () => {
         await client.request("initialize", { protocolVersion: 1 }, 1);
         await client.request("session/new", { mcpServers: [] }, 2);
         await client.readLine();
-        await client.request("session/set_mode", { modeId: "full-access" }, 3);
+        await client.request("session/set_mode", { modeId: "yolo" }, 3);
 
         const { promptResult, messages } = await runPrompt(client, "Write the marker.", TIMEOUT);
         expect(promptResult.result.stopReason).toBe("end_turn");
@@ -10992,7 +10989,7 @@ test("ACP runs SubagentStart and SubagentStop user hooks around a subagent run",
     await client.request("initialize", { protocolVersion: 1 }, 1);
     const created = await client.request("session/new", { cwd: root.workspace, mcpServers: [] }, 2) as any;
     if (created.error) throw new Error(JSON.stringify(created));
-    await client.request("session/set_mode", { modeId: "full-access" }, 3);
+    await client.request("session/set_mode", { modeId: "yolo" }, 3);
     sendPrompt(client, 4, "Hand the task to a subagent.");
     const { responses } = await readUntilResponses(client, [4]);
     expect(responses.get(4)!.result.stopReason).toBe("end_turn");
@@ -11047,7 +11044,7 @@ test("ACP runs SessionStart, TaskStarted and SessionEnd user hooks and a plugin'
     await client.request("initialize", { protocolVersion: 1 }, 1);
     const created = await client.request("session/new", { cwd: root.workspace, mcpServers: [] }, 2) as any;
     if (created.error) throw new Error(JSON.stringify(created));
-    await client.request("session/set_mode", { modeId: "full-access" }, 3);
+    await client.request("session/set_mode", { modeId: "yolo" }, 3);
     sendPrompt(client, 4, "Hand the task to a subagent.");
     const { responses } = await readUntilResponses(client, [4]);
     expect(responses.get(4)!.result.stopReason).toBe("end_turn");
