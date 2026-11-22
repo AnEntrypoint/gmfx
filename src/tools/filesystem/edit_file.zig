@@ -5,6 +5,7 @@ const tool_args = @import("../../core/tooling/tool_args.zig");
 
 const Allocator = std.mem.Allocator;
 const max_content_bytes: usize = 4 * 1024 * 1024;
+const accepted_fields = [_][]const u8{ "path", "old_string", "new_string", "replace_all" };
 
 pub const Input = struct {
     path: []u8,
@@ -27,6 +28,7 @@ pub fn decode(
     var args: tool_args.ArgsDecoder = .{ .alloc = ctx.allocator, .tool = "edit_file" };
     var parsed = args.parse(args_json) catch |err| return .{ .failure = try args.takeFailure(err) };
     defer parsed.deinit();
+    args.rejectUnknown(parsed.value.object, &accepted_fields) catch |err| return .{ .failure = try args.takeFailure(err) };
     const path = args.requiredString(parsed.value.object, "path") catch |err| return .{ .failure = try args.takeFailure(err) };
     const old = args.requiredString(parsed.value.object, "old_string") catch |err| return .{ .failure = try args.takeFailure(err) };
     const new = args.requiredString(parsed.value.object, "new_string") catch |err| return .{ .failure = try args.takeFailure(err) };
@@ -134,6 +136,7 @@ test "edit_file decodes invalid argument shapes as failures" {
         .{ .json = "{\"path\":\"/tmp/x\",\"old_string\":\"a\"}", .reason = "edit_file requires string field \"new_string\"" },
         .{ .json = "{\"path\":\"/tmp/x\",\"old_string\":\"a\",\"new_string\":1}", .reason = "edit_file field \"new_string\" must be a string" },
         .{ .json = "{\"path\":\"/tmp/x\",\"old_string\":\"a\",\"new_string\":\"b\",\"replace_all\":\"yes\"}", .reason = "edit_file field \"replace_all\" must be a boolean" },
+        .{ .json = "{\"path\":\"/tmp/x\",\"old_string\":\"a\",\"new_string\":\"b\",\"old\":\"a\"}", .reason = "edit_file does not take argument \"old\"; accepted fields: path, old_string, new_string, replace_all" },
     };
 
     for (cases) |case| {

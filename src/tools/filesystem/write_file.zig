@@ -5,6 +5,7 @@ const tool_args = @import("../../core/tooling/tool_args.zig");
 
 const Allocator = std.mem.Allocator;
 const max_content_bytes: usize = 4 * 1024 * 1024;
+const accepted_fields = [_][]const u8{ "path", "content", "mode" };
 
 pub const Input = struct {
     path: []u8,
@@ -25,6 +26,7 @@ pub fn decode(
     var args: tool_args.ArgsDecoder = .{ .alloc = ctx.allocator, .tool = "write_file" };
     var parsed = args.parse(args_json) catch |err| return .{ .failure = try args.takeFailure(err) };
     defer parsed.deinit();
+    args.rejectUnknown(parsed.value.object, &accepted_fields) catch |err| return .{ .failure = try args.takeFailure(err) };
     const path = args.requiredString(parsed.value.object, "path") catch |err| return .{ .failure = try args.takeFailure(err) };
     const content = args.requiredString(parsed.value.object, "content") catch |err| return .{ .failure = try args.takeFailure(err) };
     const raw_mode = args.optionalString(parsed.value.object, "mode") catch |err| return .{ .failure = try args.takeFailure(err) };
@@ -119,6 +121,7 @@ test "write_file decodes invalid argument shapes as failures" {
         .{ .json = "{\"path\":\"/tmp/x\",\"content\":1}", .reason = "write_file field \"content\" must be a string" },
         .{ .json = "{\"path\":\"/tmp/x\",\"content\":\"x\",\"mode\":\"prepend\"}", .reason = "write_file field \"mode\" must be one of overwrite, append" },
         .{ .json = "{\"path\":\"/tmp/x\",\"content\":\"x\",\"mode\":2}", .reason = "write_file field \"mode\" must be a string" },
+        .{ .json = "{\"path\":\"/tmp/x\",\"content\":\"x\",\"file_path\":\"/tmp/y\"}", .reason = "write_file does not take argument \"file_path\"; accepted fields: path, content, mode" },
     };
 
     for (cases) |case| {

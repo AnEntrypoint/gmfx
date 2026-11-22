@@ -451,7 +451,7 @@ pub fn formatStoredResultOutput(alloc: Allocator, handle: []const u8, preview: [
     return alloc.print(
         "<tool_result_preview handle=\"{s}\" stored_bytes=\"{d}\">\n{s}\n</tool_result_preview>\n" ++
             "<tool_result_handle>{s}</tool_result_handle>\n" ++
-            "Full result is stored outside session JSON. Use read_tool_result with this handle to inspect a byte range or literal query.",
+            "Full result is stored outside session JSON. Page it in a run_code body with gm.read_tool_result({{handle,start_byte,byte_count}}), or pass query for a literal search.",
         .{ handle, stored_bytes, preview, handle },
     );
 }

@@ -1196,7 +1196,6 @@ pub const run_code = tool_dispatch.Tool{
     },
     .executor_kind = .host,
     .activity_kind = .command,
-    .requires_approval = true,
     .decode = run_code_tool.decode,
     .call = callRunCode,
     .runtime_provider = .verb_host,

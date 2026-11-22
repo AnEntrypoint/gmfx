@@ -62,19 +62,35 @@
     return candidates.find((candidate) => readText(candidate) !== null) ?? null;
   };
   const moduleCache = new Map();
+  const locatedErrors = new WeakSet();
+  const functionHeaderLines = 2;
+  const sourceLine = (error) => {
+    const frame = /(?:<input>|<anonymous>):(\d+)/.exec(String(error.stack ?? ''));
+    const line = frame === null ? 0 : Number(frame[1]) - functionHeaderLines;
+    return line > 0 ? ':' + line : '';
+  };
+  const locate = (thrown, path, hasLines) => {
+    const error = thrown !== null && typeof thrown === 'object' ? thrown : new Error(String(thrown));
+    if (locatedErrors.has(error)) return error;
+    error.message = path + (hasLines ? sourceLine(error) : '') + ': ' + error.message;
+    locatedErrors.add(error);
+    return error;
+  };
   const loadFile = (path) => {
     const cached = moduleCache.get(path);
     if (cached) return cached.exports;
     const text = readText(path);
     const module = { exports: {}, id: path, filename: path };
     moduleCache.set(path, module);
-    if (path.endsWith('.json')) {
-      module.exports = JSON.parse(text);
-      return module.exports;
-    }
+    const isJson = path.endsWith('.json');
     const dir = dirOf(path);
-    const factory = new Function('exports', 'require', 'module', '__filename', '__dirname', text);
-    factory.call(module.exports, module.exports, makeRequire(dir), module, path, dir);
+    try {
+      if (isJson) module.exports = JSON.parse(text);
+      else new Function('exports', 'require', 'module', '__filename', '__dirname', text).call(module.exports, module.exports, makeRequire(dir), module, path, dir);
+    } catch (thrown) {
+      moduleCache.delete(path);
+      throw locate(thrown, path, !isJson);
+    }
     return module.exports;
   };
   const makeRequire = (dir) => (spec) => {

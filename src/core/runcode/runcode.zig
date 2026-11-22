@@ -222,7 +222,7 @@ pub fn execute(alloc: std.mem.Allocator, body: []const u8, options: Options) !Ou
     return .{ .ok = status == 0, .text = text, .console = console, .console_dropped = session.dropped };
 }
 
-pub fn reportJson(alloc: std.mem.Allocator, outcome: Outcome) ![]u8 {
+pub fn reportJson(alloc: std.mem.Allocator, outcome: Outcome, notice: ?[]const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     if (outcome.ok) {
@@ -234,7 +234,12 @@ pub fn reportJson(alloc: std.mem.Allocator, outcome: Outcome) ![]u8 {
     }
     try out.writer.writeAll(",\"console\":");
     try std.json.Stringify.value(outcome.console, .{}, &out.writer);
-    try out.writer.print(",\"console_dropped\":{d}}}", .{outcome.console_dropped});
+    try out.writer.print(",\"console_dropped\":{d}", .{outcome.console_dropped});
+    if (notice) |text| {
+        try out.writer.writeAll(",\"notice\":");
+        try std.json.Stringify.value(text, .{}, &out.writer);
+    }
+    try out.writer.writeByte('}');
     return out.toOwnedSlice();
 }
 
@@ -283,7 +288,7 @@ pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Ver
     const root = std.fs.path.dirname(absolute) orelse "/";
     const outcome = try execute(alloc, body, .{ .format = cli.format, .deadline_ms = cli.deadline_ms, .body_path = absolute, .root = root, .verbs = verbs });
     defer outcome.deinit(alloc);
-    const report = try reportJson(alloc, outcome);
+    const report = try reportJson(alloc, outcome, null);
     defer alloc.free(report);
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), report);
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), "\n");

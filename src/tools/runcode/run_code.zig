@@ -12,6 +12,7 @@ const host_verb_gate = @import("../../core/runcode/host_verb_gate.zig");
 const managed_execution = @import("../../core/execution/managed_execution.zig");
 const tool_mcp_registry = @import("../../core/tooling/tool_mcp_registry.zig");
 const tool_mcp_runtime = @import("../../core/tooling/tool_mcp_runtime.zig");
+const tool_args = @import("../../core/tooling/tool_args.zig");
 
 pub const tool_name = "run_code";
 
@@ -42,6 +43,16 @@ pub const properties = [_]model_tool_schema.Property{
     .{ .name = "deadline_ms", .json_type = .integer, .description = "Wall-clock budget for the whole body, verb calls included. Default 120000." },
 };
 
+const accepted_fields = blk: {
+    var names: [properties.len][]const u8 = undefined;
+    for (properties, &names) |property, *name| name.* = property.name;
+    const final = names;
+    break :blk final;
+};
+
+pub const batching_notice = "Three run_code bodies in a row each made one verb call; put a step's independent calls in one body, for example with Promise.all.";
+const batching_threshold: usize = 3;
+
 const max_deadline_ms: u64 = 3_600_000;
 
 const Input = struct {
@@ -68,6 +79,9 @@ pub fn decode(ctx: tool_dispatch.DispatchContext, args_json: []const u8) tool_di
     };
     defer parsed.deinit();
     if (parsed.value != .object) return .{ .failure = try ctx.allocator.dupe(u8, "run_code arguments must be an object") };
+    if (tool_args.firstUnknownKey(parsed.value.object, &accepted_fields)) |unknown| {
+        return .{ .failure = try tool_args.unknownArgumentMessage(ctx.allocator, tool_name, unknown, &accepted_fields) };
+    }
     const body_value = parsed.value.object.get("body") orelse return .{ .failure = try ctx.allocator.dupe(u8, "run_code field \"body\" is required") };
     if (body_value != .string) return .{ .failure = try ctx.allocator.dupe(u8, "run_code field \"body\" must be a string") };
     const format: runcode.Format = if (parsed.value.object.get("format")) |value| switch (value) {
@@ -110,31 +124,63 @@ fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, a
     var verb_arena = std.heap.ArenaAllocator.init(alloc);
     defer verb_arena.deinit();
     const verb_alloc = verb_arena.allocator();
-    const id = try std.fmt.allocPrint(verb_alloc, "run_code:{d}", .{bridge.calls});
+    const parent_id = if (bridge.ctx.tool_call_id.len == 0) tool_name else bridge.ctx.tool_call_id;
+    const id = try std.fmt.allocPrint(verb_alloc, "{s}:{d}", .{ parent_id, bridge.calls });
     var ctx = bridge.ctx;
     ctx.allocator = verb_alloc;
     ctx.command_outcome = .{ .context = bridge, .outcome = commandOutcome };
     ctx.tool_call_id = id;
     ctx.tool_call_name = name;
-    if (host_verbs.isHostVerb(name)) {
-        if (!hostVerbAdmitted(ctx, name)) return notAdmittedReply(alloc, name);
-        if (try host_verb_gate.refusal(ctx, bridge.registry, alloc, name, args_json)) |denied| return denied;
-        return host_verbs.call(alloc, name, args_json);
-    }
-    const tool_call: message.ToolCall = .{ .id = id, .name = name, .arguments_json = args_json };
-    if (bridge.registry.lookup(name) == null and ctx.mcp_ctx != null and ctx.mcp_call_tool != null) {
-        ctx.mcp_call_options.call_id = id;
-        ctx.mcp_call_options.expected_binding = null;
-        ctx.mcp_call_options.expected_runtime_generation = null;
-        ctx.mcp_execution_error_sink = null;
-        ctx.mcp_call_status_sink = null;
-        const mcp_tool = [_]tool_dispatch.Tool{tool_mcp_registry.dynamicTool(name)};
-        const result = try tool_dispatch.dispatchToolCall(ctx, .{ .tools = &mcp_tool }, tool_call);
+    const host = host_verbs.isHostVerb(name);
+    const mcp = !host and bridge.registry.lookup(name) == null and ctx.mcp_ctx != null and ctx.mcp_call_tool != null;
+    const admitted = if (host) hostVerbAdmitted(ctx, name) else mcp or toolAdmitted(ctx, name);
+    if (!admitted) return notAdmittedReply(alloc, name);
+    const proposed: message.ToolCall = .{ .id = id, .name = name, .arguments_json = args_json };
+    const gate = ctx.inner_call_gate orelse return ungatedReply(ctx, bridge.registry, alloc, proposed, host, mcp);
+    const verb_call: message.ToolCall = switch (try gate.start_fn(gate.context, verb_alloc, proposed)) {
+        .refuse => |reason| return verbReply(alloc, false, reason),
+        .proceed => |arguments_json| .{ .id = id, .name = name, .arguments_json = arguments_json },
+    };
+    const reply = if (host) try hostVerbReply(ctx, bridge.registry, verb_call) else try gate.run_fn(gate.context, verb_alloc, verb_call);
+    gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
+    if (host) return alloc.dupe(u8, reply.body);
+    return verbReply(alloc, reply.ok, reply.body);
+}
+
+fn ungatedReply(
+    base: tool_dispatch.DispatchContext,
+    registry: tool_dispatch.Registry,
+    alloc: std.mem.Allocator,
+    verb_call: message.ToolCall,
+    host: bool,
+    mcp: bool,
+) ![]u8 {
+    if (host) return alloc.dupe(u8, (try hostVerbReply(base, registry, verb_call)).body);
+    if (!mcp) {
+        const result = try tool_dispatch.dispatchToolCall(base, registry, verb_call);
         return verbReply(alloc, result.status == .success, result.body);
     }
-    if (!toolAdmitted(ctx, name)) return notAdmittedReply(alloc, name);
-    const result = try tool_dispatch.dispatchToolCall(ctx, bridge.registry, tool_call);
+    var ctx = base;
+    ctx.mcp_call_options.call_id = verb_call.id;
+    ctx.mcp_call_options.expected_binding = null;
+    ctx.mcp_call_options.expected_runtime_generation = null;
+    ctx.mcp_execution_error_sink = null;
+    ctx.mcp_call_status_sink = null;
+    const mcp_tool = [_]tool_dispatch.Tool{tool_mcp_registry.dynamicTool(verb_call.name)};
+    const result = try tool_dispatch.dispatchToolCall(ctx, .{ .tools = &mcp_tool }, verb_call);
     return verbReply(alloc, result.status == .success, result.body);
+}
+
+fn hostVerbReply(ctx: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry, verb_call: message.ToolCall) !tool_dispatch.InnerCallReply {
+    if (try host_verb_gate.refusal(ctx, registry, ctx.allocator, verb_call.name, verb_call.arguments_json)) |denied| return .{ .ok = false, .body = denied };
+    const body = try host_verbs.call(ctx.allocator, verb_call.name, verb_call.arguments_json);
+    return .{ .ok = std.mem.startsWith(u8, body, "{\"ok\":true"), .body = body };
+}
+
+fn batchingNotice(single_verb_bodies: ?*usize, calls: usize) ?[]const u8 {
+    const streak = single_verb_bodies orelse return null;
+    streak.* = if (calls == 1) streak.* + 1 else 0;
+    return if (streak.* >= batching_threshold) batching_notice else null;
 }
 
 fn toolAdmitted(ctx: tool_dispatch.DispatchContext, name: []const u8) bool {
@@ -291,7 +337,7 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
         .verbs = .{ .context = &bridge, .catalog = catalog, .invoke = invokeVerb },
     }) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not start the txiki runtime") };
     defer outcome.deinit(ctx.allocator);
-    const report = runcode.reportJson(ctx.allocator, outcome) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
+    const report = runcode.reportJson(ctx.allocator, outcome, batchingNotice(ctx.single_verb_bodies, bridge.calls)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     if (outcome.ok) return .{ .success = report };
     return .{ .failure = report };
 }
@@ -386,6 +432,115 @@ test "a verb outside the agent's allowed tools is refused by name before dispatc
     for ([_][]const u8{ "\"name\":\"read_file\"", "\"name\":\"fs_read\"", "\"name\":\"Bash\"", "\"name\":\"run_command\"" }) |absent| {
         try std.testing.expect(std.mem.indexOf(u8, catalog, absent) == null);
     }
+}
+
+test "run_code refuses an argument it does not take by name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const decoded = try decode(.{ .allocator = arena.allocator() }, "{\"body\":\"return 1;\",\"timeout\":5}");
+    switch (decoded) {
+        .failure => |reason| try std.testing.expectEqualStrings("run_code does not take argument \"timeout\"; accepted fields: body, format, deadline_ms", reason),
+        .input => return error.TestExpectedDecodeFailure,
+    }
+}
+
+const RecordingGate = struct {
+    alloc: std.mem.Allocator,
+    ids: std.ArrayList([]const u8) = .empty,
+
+    fn gate(self: *RecordingGate) tool_dispatch.InnerCallGate {
+        return .{ .context = self, .start_fn = start, .authorize_fn = authorize, .run_fn = run, .finish_fn = finish };
+    }
+
+    fn start(raw: *anyopaque, _: std.mem.Allocator, verb_call: message.ToolCall) anyerror!tool_dispatch.InnerCallStart {
+        const self: *RecordingGate = @ptrCast(@alignCast(raw));
+        try self.ids.append(self.alloc, try self.alloc.dupe(u8, verb_call.id));
+        return .{ .proceed = verb_call.arguments_json };
+    }
+
+    fn authorize(_: *anyopaque, _: std.mem.Allocator, _: message.ToolCall) anyerror!?[]const u8 {
+        return null;
+    }
+
+    fn run(_: *anyopaque, _: std.mem.Allocator, _: message.ToolCall) anyerror!tool_dispatch.InnerCallReply {
+        return .{ .ok = true, .body = "done" };
+    }
+
+    fn finish(_: *anyopaque, _: std.mem.Allocator, _: message.ToolCall, _: tool_dispatch.InnerCallReply) void {}
+};
+
+test "inner call ids carry the parent call id, so two bodies never repeat one" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var recorder = RecordingGate{ .alloc = alloc };
+    for ([_][]const u8{ "call-a", "call-b" }) |parent| {
+        const ctx: tool_dispatch.DispatchContext = .{
+            .allocator = alloc,
+            .execution_authority = .ordinary,
+            .workspace_root = ".",
+            .permission_mode = .yolo,
+            .tool_call_id = parent,
+            .inner_call_gate = recorder.gate(),
+        };
+        const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+            .id = parent,
+            .name = "run_code",
+            .arguments_json = "{\"body\":\"gm.glob_files({ pattern: 'a' }); gm.glob_files({ pattern: 'b' }); return 1;\"}",
+        });
+        if (result.status != .success) return error.RunCodeDidNotSucceed;
+    }
+    try std.testing.expectEqual(@as(usize, 4), recorder.ids.items.len);
+    const expected = [_][]const u8{ "call-a:1", "call-a:2", "call-b:1", "call-b:2" };
+    for (expected, recorder.ids.items) |want, got| try std.testing.expectEqualStrings(want, got);
+}
+
+test "the batching notice follows the third consecutive single-verb body and not the second" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var single_verb_bodies: usize = 0;
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = arena.allocator(),
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+        .single_verb_bodies = &single_verb_bodies,
+    };
+    for (0..3) |index| {
+        const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+            .id = "single-verb",
+            .name = "run_code",
+            .arguments_json = "{\"body\":\"gm.process_info({}); return 1;\"}",
+        });
+        if (result.status != .success) return error.RunCodeDidNotSucceed;
+        try std.testing.expectEqual(index == 2, std.mem.indexOf(u8, result.body, batching_notice) != null);
+    }
+}
+
+test "an error thrown while loading a required file names the file and its line" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    const io_mod = @import("../../core/shared/io.zig");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io_mod.getIo(), .{ .sub_path = "broken.cjs", .data = "const a = 1;\nconst b = 2;\nthrow new Error('boom');\n" });
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const root = try io_mod.dirRealpathAlloc(arena.allocator(), tmp.dir, ".");
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = arena.allocator(),
+        .execution_authority = .ordinary,
+        .workspace_root = root,
+        .permission_mode = .yolo,
+    };
+    const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+        .id = "load-error",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"return require('./broken.cjs');\"}",
+    });
+    try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.failure, result.status);
+    try std.testing.expect(std.mem.indexOf(u8, result.body, "broken.cjs:3: boom") != null);
 }
 
 const FakeMcpListing = struct {

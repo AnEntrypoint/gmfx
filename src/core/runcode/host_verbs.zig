@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const model_tool_schema = @import("../tooling/model_tool_schema.zig");
+const tool_args = @import("../tooling/tool_args.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -223,6 +224,7 @@ pub const verbs = [_]Verb{
                 .{ .name = "cwd", .json_type = .string },
                 .{ .name = "env", .json_type = .object },
                 .{ .name = "timeout_ms", .json_type = .integer },
+                .{ .name = "input_base64", .json_type = .string, .description = "Standard input as base64; only an empty value is accepted in this build." },
             },
             .required = &.{"file"},
         },
@@ -276,10 +278,25 @@ pub fn call(alloc: Allocator, name: []const u8, args_json: []const u8) ![]u8 {
     };
     defer parsed.deinit();
     if (parsed.value != .object) return invalid(alloc, "arguments must be a JSON object");
+    if (try unknownArgument(alloc, name, parsed.value.object)) |message| {
+        defer alloc.free(message);
+        return invalid(alloc, message);
+    }
     return dispatch(alloc, name, parsed.value.object) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => failure(alloc, err),
     };
+}
+
+fn unknownArgument(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) !?[]u8 {
+    const verb = for (verbs) |entry| {
+        if (std.mem.eql(u8, entry.name, name)) break entry;
+    } else return null;
+    const accepted = try alloc.alloc([]const u8, verb.input_schema.properties.len);
+    defer alloc.free(accepted);
+    for (verb.input_schema.properties, accepted) |property, *field| field.* = property.name;
+    const key = tool_args.firstUnknownKey(args, accepted) orelse return null;
+    return try tool_args.unknownArgumentMessage(alloc, name, key, accepted);
 }
 
 fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerror![]u8 {
@@ -875,4 +892,12 @@ test "invalid arguments reply with EINVAL" {
     const missing = try call(alloc, "fs_read", "{}");
     defer alloc.free(missing);
     try std.testing.expect(std.mem.indexOf(u8, missing, "\"code\":\"EINVAL\"") != null);
+}
+
+test "a host verb refuses an argument outside its schema by name" {
+    const alloc = std.testing.allocator;
+    const reply = try call(alloc, "fs_exists", "{\"path\":\".\",\"follow\":true}");
+    defer alloc.free(reply);
+    try std.testing.expect(std.mem.indexOf(u8, reply, "\"code\":\"EINVAL\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, reply, "fs_exists does not take argument \\\"follow\\\"; accepted fields: path") != null);
 }

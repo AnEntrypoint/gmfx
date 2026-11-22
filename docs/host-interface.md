@@ -114,7 +114,7 @@ Gate inputs, from source:
 - Rule name: `permissionNameForTool`: read_file -> read, write_file and edit_file -> edit, glob_files -> glob, grep_files -> grep, run_command -> bash, FetchURL -> FetchURL, Skill and install_skill -> skill, else the tool name.
 - Decision: `Action = allow | deny | ask` with `ToolPermissionDenialReason = user_denied | auto_denied | review_caution | review_evidence_incomplete | review_unavailable | policy_denied | permission_required | dont_ask_denied`.
 
-Today's body-level behaviour: run_code is itself `irreversible` and not read-only, and its description states one approval covers the whole body and every verb it calls. The `--permission-mode` flag of `fx run-code` sets the mode for the body. So per-call prompts inside a body are not exercised in the shipped path; the per-call gate is what dispatchToolCall enforces for the mode given. For `fx:host` the contract is stricter (per call gate, never body-level amnesty): planned.
+Per-call behaviour: run_code is admitted as the carrier and needs no approval of its own. Each verb a body calls is gated on its own: the tool runtime gives the body an inner call gate (src/core/tooling/tool_runtime.zig, InnerCallGateState) that runs PreToolUse hooks under the verb's name, asks the same permission path a model tool call uses (TUI prompt, ACP session/request_permission, configured rules, auto review; headless ask refuses), executes the verb, then runs PostToolUse. Host verbs are asked through the model tool of their class. Inner call ids are `{parent_call_id}:{n}`. The `--permission-mode` flag of `fx run-code` sets the mode for a body run outside a session, where no gate exists and dispatchToolCall decides by mode.
 
 ### 2.3 Errors
 
@@ -400,7 +400,7 @@ None of this exists in the tree (grep for rollback, last known good, js-root: no
 | G12 | AsyncLocalStorage | named gap |
 | G13 | `vm` | named gap |
 | G14 | `inspector` | named gap |
-| G15 | Per-call gate for `fx:host` calls inside a body (today one approval for the whole body) | planned |
+| G15 | Per-call gate for `fx:host` calls inside a body | done |
 | G16 | Structured tool results (images, details) and named error classes | planned |
 | G17 | JS-implemented custom tools and providers registered into the Zig registry | planned |
 | G18 | JS hooks that can veto in the native hook table | planned |

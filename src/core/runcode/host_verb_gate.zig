@@ -110,7 +110,11 @@ fn admit(
     tool_name: []const u8,
     call_json: []const u8,
 ) !?[]u8 {
-    const call: message.ToolCall = .{ .id = "host_verb", .name = tool_name, .arguments_json = call_json };
+    const call: message.ToolCall = .{ .id = if (ctx.tool_call_id.len == 0) "host_verb" else ctx.tool_call_id, .name = tool_name, .arguments_json = call_json };
+    if (ctx.inner_call_gate) |gate| {
+        const denied = (try gate.authorize_fn(gate.context, ctx.allocator, call)) orelse return null;
+        return try denialReply(reply_alloc, verb, denied);
+    }
     switch (try tool_dispatch.admitToolCall(ctx, registry, call)) {
         .admitted => |admitted| {
             admitted.deinit();

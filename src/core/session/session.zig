@@ -1438,6 +1438,7 @@ pub const SessionRuntime = struct {
     permission_state: session_permission_state.State = .{},
     plan_mode: plan_mode.State = .{},
     read_tracker: read_tracker.ReadTracker = .{},
+    single_verb_bodies: usize = 0,
     max_history_turns: usize,
     unversioned_history_len: usize = 0,
     has_stale_shell_handles: bool = false,

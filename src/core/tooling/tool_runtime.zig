@@ -57,6 +57,7 @@ const file_mutation_execution = @import("file_mutation_execution.zig");
 const tool_mcp_registry = @import("tool_mcp_registry.zig");
 const tool_mcp_runtime = @import("tool_mcp_runtime.zig");
 const mcp_call_capability = @import("mcp_call_capability.zig");
+const runtime_lifecycle = @import("../agent/runtime/lifecycle.zig");
 const model_tool_schema = @import("model_tool_schema.zig");
 const auto_classifier_context = @import("../permissions/auto_classifier_context.zig");
 const capability_retrieval = @import("capability_retrieval.zig");
@@ -660,6 +661,8 @@ pub fn executeHostToolCallAuthorized(
         request.call,
     );
     dispatch_ctx.execution_authority = request.authority;
+    var inner_call_gate = InnerCallGateState{ .runtime = execution_ctx };
+    if (spec.runtime_provider == .verb_host) dispatch_ctx.inner_call_gate = inner_call_gate.gate();
     const dispatched = try tool_dispatch.dispatchAuthorizedToolCall(
         dispatch_ctx,
         execution_ctx.tool_registry,
@@ -901,6 +904,7 @@ fn executeRegisteredTool(
         .completion_sink = &dispatch_metadata.subagent_completion,
     };
     var mcp_call_bridge = McpCallBridgeState{ .runtime = ctx };
+    var inner_call_gate = InnerCallGateState{ .runtime = ctx };
     var dispatch_ctx = typedDispatchContextForCall(ctx, arena, call);
     dispatch_metadata.attach(&dispatch_ctx);
     var result_commit_token: ?result_commit.Token = null;
@@ -947,6 +951,7 @@ fn executeRegisteredTool(
             .execute_fn = executeSubagentProvider,
         },
     }
+    if (runtime_provider == .verb_host) dispatch_ctx.inner_call_gate = inner_call_gate.gate();
     dispatch_ctx.mcp_execution_error_sink = &mcp_execution_error;
     attachSelectedDynamicToolSink(&dispatch_ctx, &selected_dynamic_tool_sink);
     attachContextNoticeSink(&dispatch_ctx, &context_notice_sink);
@@ -1028,21 +1033,112 @@ fn authorizeBridgeCall(
     check.advertised_dynamic_tool_names = names;
     check.mcp_review_schema_json = try bridgeReviewSchema(arena, resolved);
     check.expected_mcp_binding = resolved.mcp_binding;
-    check.permission_review_turn = .{
+    const outcome = try reviewedPermissionOutcome(check, arena, call);
+    if (try permissionDenial(arena, tool, outcome)) |text| return .{ .deny = text };
+    return .{ .allow = .{ .binding = resolved.mcp_binding } };
+}
+
+fn reviewedPermissionOutcome(ctx: Context, arena: Allocator, call: ToolCall) !command_admission.PermissionOutcome {
+    var reviewed = ctx;
+    reviewed.permission_review_turn = .{
         .observer = ctx.observer,
         .model = ctx.model,
         .pending_assistant = .{ .role = .assistant, .tool_calls = try arena.dupe(ToolCall, &.{call}) },
-        .target_call_id = request_id,
+        .target_call_id = call.id,
         .origin = if (ctx.lifecycle_scope.kind == .subagent) .subagent else .root,
         .trusted_root_context = auto_classifier_context.rootUserRequestContext(ctx.root_user_intent_context) orelse "",
         .current_turn_untrusted_messages = ctx.current_turn_messages,
     };
-    const outcome = try tool_admission.requestPermissionOutcome(check.admissionInput(), arena, call, ctx.permission_mode, ctx.session_grants);
-    if (!outcome.decision.isDenied() and outcome.tool_failure == null) {
-        return .{ .allow = .{ .binding = resolved.mcp_binding } };
+    return tool_admission.requestPermissionOutcome(reviewed.admissionInput(), arena, call, ctx.permission_mode, ctx.session_grants);
+}
+
+fn permissionDenial(arena: Allocator, tool: []const u8, outcome: command_admission.PermissionOutcome) !?[]const u8 {
+    if (!outcome.decision.isDenied() and outcome.tool_failure == null) return null;
+    return outcome.tool_failure orelse outcome.feedback orelse
+        try arena.print("Permission to run {s} was not granted ({s}).", .{ tool, @tagName(outcome.decision) });
+}
+
+const InnerCallGateState = struct {
+    runtime: Context,
+
+    fn gate(self: *InnerCallGateState) tool_dispatch.InnerCallGate {
+        return .{
+            .context = @ptrCast(self),
+            .start_fn = startInnerCall,
+            .authorize_fn = authorizeInnerCall,
+            .run_fn = runInnerCall,
+            .finish_fn = finishInnerCall,
+        };
     }
-    return .{ .deny = outcome.tool_failure orelse outcome.feedback orelse
-        try arena.print("Permission to run {s} was not granted ({s}).", .{ tool, @tagName(outcome.decision) }) };
+
+    fn lifecycle(self: *const InnerCallGateState, arena: Allocator) runtime_lifecycle.LifecycleContext {
+        return .{ .view = self.runtime.lifecycle_view, .scope = self.runtime.lifecycle_scope, .outcome_allocator = arena };
+    }
+
+    fn turnId(self: *const InnerCallGateState) u64 {
+        return if (self.runtime.output_chunk_lifecycle_id) |id| id.turn_id else 0;
+    }
+};
+
+fn startInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool_dispatch.InnerCallStart {
+    const state: *InnerCallGateState = @ptrCast(@alignCast(raw));
+    const prepared = try runtime_lifecycle.prepareToolCallForLifecycle(arena, state.lifecycle(arena), state.runtime.cancel_flag, state.turnId(), 0, call);
+    return switch (prepared) {
+        .blocked => |blocked| .{ .refuse = blocked.model_output orelse try arena.print("A PreToolUse hook refused {s}.", .{call.name}) },
+        .ready => |ready| .{ .proceed = ready.arguments_json },
+        .provider_executed => .{ .proceed = call.arguments_json },
+    };
+}
+
+fn authorizeInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!?[]const u8 {
+    const state: *InnerCallGateState = @ptrCast(@alignCast(raw));
+    return permissionDenial(arena, call.name, try reviewedPermissionOutcome(state.runtime, arena, call));
+}
+
+fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool_dispatch.InnerCallReply {
+    const state: *InnerCallGateState = @ptrCast(@alignCast(raw));
+    const ctx = state.runtime;
+    if (ctx.tool_registry.lookup(call.name) == null) return runInnerMcpCall(ctx, arena, call);
+    if (try checkToolAvailability(ctx, arena, call)) |reason| return .{ .ok = false, .body = reason };
+    const outcome = try reviewedPermissionOutcome(ctx, arena, call);
+    if (try permissionDenial(arena, call.name, outcome)) |text| return .{ .ok = false, .body = text };
+    const authority = outcome.execution_authority orelse
+        return .{ .ok = false, .body = try arena.print("Permission to run {s} carried no execution authority.", .{call.name}) };
+    const result = try executeToolCallAuthorized(ctx, .{
+        .call_allocator = arena,
+        .result_allocator = arena,
+        .call = call,
+        .authority = authority,
+        .current_turn_messages = ctx.current_turn_messages,
+        .session_grants = ctx.session_grants,
+        .advertised_dynamic_tool_names = ctx.advertised_dynamic_tool_names,
+        .max_tool_result_bytes = ctx.max_tool_result_bytes,
+        .lifecycle_id = ctx.output_chunk_lifecycle_id,
+        .presentation_group_id = ctx.output_chunk_presentation_group_id,
+    });
+    return .{ .ok = result.status == .success, .body = result.model_output };
+}
+
+fn runInnerMcpCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_dispatch.InnerCallReply {
+    if (ctx.mcp_ctx == null or ctx.mcp_call_tool == null) return .{ .ok = false, .body = try arena.print("unknown tool: {s}", .{call.name}) };
+    var bridge = McpCallBridgeState{ .runtime = ctx };
+    const allowed = switch (try authorizeBridgeCall(&bridge, arena, call.id, call.name, call.arguments_json)) {
+        .deny => |text| return .{ .ok = false, .body = text },
+        .allow => |value| value,
+    };
+    const outcome = try runBridgeCall(&bridge, arena, call.id, call.name, call.arguments_json, allowed, runtimeCancelFlag(ctx));
+    return .{ .ok = outcome.status == .ok, .body = outcome.bytes };
+}
+
+fn finishInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall, reply: tool_dispatch.InnerCallReply) void {
+    const state: *InnerCallGateState = @ptrCast(@alignCast(raw));
+    runtime_lifecycle.dispatchToolObservationCheckpoint(state.lifecycle(arena), arena, .{
+        .turn_id = state.turnId(),
+        .call = call,
+        .failed = !reply.ok,
+        .output = reply.body,
+        .cancel_flag = state.runtime.cancel_flag,
+    }) catch |err| debug_trace.logf("run_code", "PostToolUse for {s} did not run err={s}", .{ call.name, @errorName(err) });
 }
 
 fn bridgeReviewSchema(arena: Allocator, resolved: tool_mcp_runtime.SelectedTool) ![]const u8 {
@@ -1529,6 +1625,7 @@ fn typedDispatchContext(ctx: Context, arena: Allocator) tool_dispatch.DispatchCo
         .observer = ctx.observer,
         .permission_mode = ctx.permission_mode,
         .plan_mode = &ctx.session.plan_mode,
+        .single_verb_bodies = &ctx.session.single_verb_bodies,
         .workspace_root = ctx.workspace_root,
         .access_scope = ctx.access_scope,
         .change_tracker = ctx.tracker,
@@ -3229,6 +3326,106 @@ test "admission input represents prompt capability directly" {
     ctx.permission_prompter = .{ .context = &rt, .request_fn = unexpectedTestPrompt };
     const admission = ctx.admissionInput();
     try std.testing.expect(admission.permission_prompter != null);
+}
+
+const inner_write_call = ToolCall{
+    .id = "carrier",
+    .name = "run_code",
+    .arguments_json = "{\"body\":\"try { gm.write_file({ path: 'out.txt', content: 'x' }); return 'wrote'; } catch (error) { return 'refused: ' + error.message; }\"}",
+};
+
+const InnerVerbPrompts = struct {
+    buffer: [64]u8 = undefined,
+    len: usize = 0,
+    count: usize = 0,
+
+    fn deny(
+        raw: *anyopaque,
+        alloc: Allocator,
+        _: permission_request.PermissionRequest,
+        call: ToolCall,
+        _: ?*const diff_mod.FileReview,
+        _: ?[]const types.PermissionGrant,
+    ) anyerror!permission_request.OwnedPermissionResponse {
+        const self: *InnerVerbPrompts = @ptrCast(@alignCast(raw));
+        self.count += 1;
+        self.len = @min(call.name.len, self.buffer.len);
+        @memcpy(self.buffer[0..self.len], call.name[0..self.len]);
+        return permission_request.OwnedPermissionResponse.init(alloc, .deny, null);
+    }
+
+    fn name(self: *const InnerVerbPrompts) []const u8 {
+        return self.buffer[0..self.len];
+    }
+};
+
+const BlockInnerWrite = struct {
+    seen: usize = 0,
+
+    fn run(raw: *anyopaque, input: hooks.PreToolUseInput) hooks.HandlerError!hooks.PreToolUseAction {
+        const self: *BlockInnerWrite = @ptrCast(@alignCast(raw));
+        if (!std.mem.eql(u8, input.tool_name, "write_file")) return .continue_;
+        self.seen += 1;
+        return .{ .block = "inner writes are blocked here" };
+    }
+};
+
+test "in ask mode the permission prompt for a write inside run_code names the inner verb" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    var rt = TestRuntime{ .workspace_root = root, .tool_registry = test_builtin_tools.registry_with_tower, .interactive = false };
+    defer rt.deinit(alloc);
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    var prompts = InnerVerbPrompts{};
+    var ctx = rt.context();
+    ctx.permission_prompter = .{ .context = &prompts, .request_fn = InnerVerbPrompts.deny };
+    const result = try executeToolCall(ctx, arena.allocator(), inner_write_call);
+    try std.testing.expectEqual(@as(usize, 1), prompts.count);
+    try std.testing.expectEqualStrings("write_file", prompts.name());
+    try expectContains(result.model_output, "refused: ");
+}
+
+test "headless ask admits run_code as the carrier and refuses the inner write through the permission path" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    var rt = TestRuntime{ .workspace_root = root, .tool_registry = test_builtin_tools.registry_with_tower, .interactive = false };
+    defer rt.deinit(alloc);
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const ctx = rt.context();
+    const carrier = try tool_admission.requestPermissionOutcome(ctx.admissionInput(), arena.allocator(), inner_write_call, .ask, &.{});
+    try std.testing.expect(!carrier.decision.isDenied());
+    const result = try executeToolCall(ctx, arena.allocator(), inner_write_call);
+    try expectContains(result.model_output, "refused: Permission to run write_file was not granted (permission_required).");
+}
+
+test "a PreToolUse hook matching write_file refuses the write inside run_code as data" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    var rt = TestRuntime{ .workspace_root = root, .tool_registry = test_builtin_tools.registry_with_tower, .permission_mode = .yolo };
+    defer rt.deinit(alloc);
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    var blocker = BlockInnerWrite{};
+    var hook_runtime = hooks.Runtime.init(alloc);
+    defer hook_runtime.deinit();
+    try hook_runtime.registerPreToolUse(.{ .name = "block-inner-write", .ctx = &blocker, .run = BlockInnerWrite.run });
+    var ctx = rt.context();
+    ctx.lifecycle_view = hook_runtime.freeze();
+    const result = try executeToolCall(ctx, arena.allocator(), inner_write_call);
+    try std.testing.expectEqual(@as(usize, 1), blocker.seen);
+    try expectContains(result.model_output, "refused: ");
+    try expectContains(result.model_output, "inner writes are blocked here");
 }
 
 fn expectContains(haystack: []const u8, needle: []const u8) !void {

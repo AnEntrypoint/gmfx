@@ -281,6 +281,24 @@ pub const CommandOutcomeSource = struct {
     ) anyerror!command_admission.PermissionOutcome,
 };
 
+pub const InnerCallStart = union(enum) {
+    proceed: []const u8,
+    refuse: []const u8,
+};
+
+pub const InnerCallReply = struct {
+    ok: bool,
+    body: []const u8,
+};
+
+pub const InnerCallGate = struct {
+    context: *anyopaque,
+    start_fn: *const fn (context: *anyopaque, arena: Allocator, call: message.ToolCall) anyerror!InnerCallStart,
+    authorize_fn: *const fn (context: *anyopaque, arena: Allocator, call: message.ToolCall) anyerror!?[]const u8,
+    run_fn: *const fn (context: *anyopaque, arena: Allocator, call: message.ToolCall) anyerror!InnerCallReply,
+    finish_fn: *const fn (context: *anyopaque, arena: Allocator, call: message.ToolCall, reply: InnerCallReply) void,
+};
+
 pub const DispatchContext = struct {
     allocator: Allocator,
     permission_mode: permission_gate.PermissionMode = .ask,
@@ -288,6 +306,8 @@ pub const DispatchContext = struct {
     permission_decider: ?PermissionDecider = null,
     execution_authority: ?command_admission.ToolExecutionAuthority = null,
     command_outcome: ?CommandOutcomeSource = null,
+    inner_call_gate: ?InnerCallGate = null,
+    single_verb_bodies: ?*usize = null,
     workspace_root: []const u8 = "",
     access_scope: ?workspace_access.AccessScope = null,
     ignored_list_entries: []const []const u8 = &default_ignored_list_entries,
