@@ -5284,3 +5284,14 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Red checks (predicted, to confirm in fx-st25): remove the cap check (inline always), ignore output_handle on replay, propagate the reader error instead of the fallback.
 - Cap: max_inline_output_bytes = 8 KiB, reason in commit 0e962248.
 - Open: the live path shows inner rows with summaries only, so replay can show more detail than live (see the replay report).
+
+## Witnesses from the st24 and st25 windows (2026-11-23)
+
+- fx-st25 (tree df514662, bounded ledger and replay), /workspace/tmp/fx/win_st25.out: ST25_DONE 0; build exit 0; suite 12260 passed, 27 skipped, 0 failed; txiki witness all checks passed.
+- fx-st24 (tree 5fab4055), /workspace/tmp/fx/win_st24.out: ST24_DONE 0; suite 12252 passed, 0 failed.
+- e2e on the st24 binary, /workspace/tmp/fx/win_e2e24_<part>.out, files with zero failing rows:
+  - acp: 176 pass, 0 fail (part F).
+  - ask-presentation: 20 pass, 0 fail (part F).
+  - tui-compaction-activity: 15 pass, 0 fail (part D).
+  - tui-slash-menu: 40 pass, 0 fail (part D).
+- Failing rows on st24 are re-run through run_rows.sh on st25 (tickets fx-rows25-R1, R2, R3; results /workspace/tmp/fx/win_rows25_<R>.out, DONE lines ROWS_<R>_DONE). Open rows not re-run: tui-permissions (14) and tui-interrupt-recovery (2), reverted to HEAD by decision.
