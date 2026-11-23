@@ -5340,3 +5340,9 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Failing, owner decision: tui-resume "zero-output cancelled command restores its row without an output block". Cause: the Cancelled row shows the run_code body (body: return gm.Bash({"command":"./z.sh"})) because the Ctrl-O detail renders a run_code body. Decision: may the Ctrl-O detail of a run_code show its JavaScript body? The unit test requires it; this row forbids it.
 - Failing, open: tui-decision-prompts "kitty Escape cancels a question turn before a new prompt". Cause: two Cancelled rows. The live cancel path does not produce the second row; the replay path (app_session_runtime.zig:3853) is the unconfirmed source.
 - Failing, open: tui-full-transcript-brutal "Ctrl-O keeps saved tool output intact across window replacement". Cause: the footer text is still written over row 251 ("originaltooloutpescclose"). The \x1b[K in paint_plan.zig:1091 clears only the tail of the footer row; the cells before the footer text are left unerased by the render engine. A render-engine change is needed, which is out of the footer composer.
+
+## Witness from the st30 window (tree 07c5d9b8)
+
+- Build and suite (/workspace/tmp/fx/win_st30.out): ST30_DONE 0. The build passed in 556 s; the suite ran 12260 passed, 27 skipped, 0 failed; the txiki witness reported all checks passed.
+- The tree includes the read_file Ctrl-O fix (8df5c1ae): both render paths in src/ui/full_transcript_screen.zig unwrap the inner read_file output.
+- Row re-run queued on st30: G7 (tui-resume "Ctrl-O renders read_file results as readable content") at /workspace/tmp/fx/win_rows30_G7.out, ending ROWS_G7_DONE. The zero-output row stays an owner decision and is not re-run.
