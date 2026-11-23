@@ -36,9 +36,24 @@ pub const Row = struct {
 
 const Report = struct {
     @"error": ?[]const u8 = null,
+    value: ?std.json.Value = null,
     calls: []const InnerCall = &.{},
     calls_dropped: usize = 0,
 };
+
+fn valueNotice(arena: Allocator, report: Report) ?[]const u8 {
+    const value = report.value orelse return null;
+    const object = switch (value) {
+        .object => |object| object,
+        .string => |text| switch (std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch return null) {
+            .object => |object| object,
+            else => return null,
+        },
+        else => return null,
+    };
+    const notice = object.get("notice") orelse return null;
+    return if (notice == .string) notice.string else null;
+}
 
 pub fn isRunCode(name: []const u8) bool {
     return std.mem.eql(u8, name, tool_name);
@@ -149,6 +164,7 @@ pub fn detail(alloc: Allocator, registry: tool_dispatch.Registry, call: ToolCall
         try out.print(alloc, "  {s}({s}) -> {s}\n", .{ inner.verb, try argsSummary(scratch, registry, inner), if (inner.ok) "ok" else "error" });
         if (inner.notice) |notice| try out.print(alloc, "    notice: {s}\n", .{notice});
     }
+    if (valueNotice(scratch, report)) |notice| try out.print(alloc, "  notice: {s}\n", .{notice});
     if (report.calls_dropped > 0) try out.print(alloc, "  ... {d} more calls\n", .{report.calls_dropped});
     if (report.@"error") |message| try out.print(alloc, "error: {s}\n", .{text_utils.utf8PrefixByBytes(message, max_error_bytes)});
     try out.appendSlice(alloc, try codeFence(scratch, try body(scratch, call)));
@@ -236,6 +252,12 @@ test "run_code detail shows the notice an inner call carried under that call" {
     try std.testing.expect(std.mem.find(u8, text, "-> ok\n    notice: shell snapshot unavailable\n") != null);
 }
 
+test "run_code detail shows the notice the result value already carries" {
+    const output = "{\"ok\":true,\"value\":{\"state\":\"completed\",\"notice\":\"shell snapshot unavailable\"},\"calls\":[{\"verb\":\"Bash\",\"args\":\"{}\",\"ok\":true}],\"calls_dropped\":0}";
+    const text = (try detail(std.testing.allocator, test_builtin_tools.registry, test_call, output)).?;
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "-> ok\n  notice: shell snapshot unavailable\n") != null);
+}
 test "run_code detail lists each inner call with its own presenter's summary and the body as JavaScript" {
     const text = (try detail(std.testing.allocator, test_builtin_tools.registry, test_call, test_output)).?;
     defer std.testing.allocator.free(text);
