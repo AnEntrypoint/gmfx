@@ -297,6 +297,7 @@ const StoredResultKind = enum {
 
 const StoredResult = struct {
     kind: StoredResultKind = .tool_result,
+    run_code_envelope: bool = false,
     handle: []const u8,
     preview: ?[]const u8,
     framed_bytes: usize = 0,
@@ -1237,6 +1238,57 @@ test "stored result projection streams terminal-safe head middle and tail pages"
     defer alloc.free(head);
     try std.testing.expect(std.mem.find(u8, head, "before") != null);
     try std.testing.expect(std.mem.find(u8, head, "HEAD-SENTINEL") != null);
+}
+
+test "stored run_code read_file output is shown unwrapped, not as its envelope" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "results");
+    const result_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "results");
+    defer alloc.free(result_dir);
+    var capability = try session_child_store.SessionChildCapability.initLegacyRoute(
+        alloc,
+        result_dir,
+        .tool_results,
+        .writable,
+    );
+    defer capability.deinit();
+
+    const envelope =
+        \\{"ok":true,"value":"<path>README.md</path>\n<content>\nREAD_RESULT_MARKER\n</content>","calls":[{"verb":"read_file","ok":true,"output":"<path>README.md</path>\n<content>\nREAD_RESULT_MARKER\n</content>"}]}
+    ;
+    const handle = try result_store.storeLargeResultManaged(
+        alloc,
+        &capability,
+        "run-code-read-file",
+        "run_code",
+        envelope,
+    );
+    defer alloc.free(handle);
+    defer result_store.deleteManaged(&capability, handle) catch {};
+
+    var projection = Projection{ .styles = .{
+        .system_notice_label_style = "",
+        .system_notice_text_style = "",
+        .reset_style = "",
+        .dim_style = "",
+        .red_style = "",
+    } };
+    defer projection.deinit(alloc);
+    try projection.segments.append(alloc, .{ .stored_result = .{
+        .run_code_envelope = true,
+        .handle = handle,
+        .preview = null,
+    } });
+
+    const measurement = try measureProjection(alloc, &projection, &capability, 80);
+    try std.testing.expect(measurement.total_rows > 0);
+    const rendered = try renderProjectionViewportSource(alloc, &projection, &capability, 80, 40, 0);
+    defer alloc.free(rendered);
+    try std.testing.expect(std.mem.find(u8, rendered, "READ_RESULT_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, rendered, "<path>") == null);
+    try std.testing.expect(std.mem.find(u8, rendered, "\"ok\":true") == null);
 }
 
 test "stored Unicode result remains pageable at the minimum projection width" {
@@ -5143,6 +5195,52 @@ const TerminalSafeIndentedWriter = struct {
     }
 };
 
+const RunCodeReadFileOutput = union(enum) {
+    stored: []const u8,
+    inline_text: []const u8,
+};
+
+fn runCodeReadFileOutput(
+    arena: Allocator,
+    capability: ?*session_child_store.SessionChildCapability,
+    stored: StoredResult,
+) !?RunCodeReadFileOutput {
+    var reader = try openStoredResultReader(arena, capability, stored);
+    defer reader.deinit();
+    const envelope = try reader.readPage(arena, 0, reader.size());
+    const call: types.ToolCall = .{
+        .id = "",
+        .name = run_code_presentation.tool_name,
+        .arguments_json = "",
+    };
+    for (try run_code_presentation.rows(arena, call, envelope)) |row| {
+        if (!std.mem.eql(u8, row.call.name, "read_file")) continue;
+        if (row.output) |text| return .{ .inline_text = tool_result_display.contentForDisplay(text) };
+        if (row.output_handle) |handle| return .{ .stored = handle };
+    }
+    return null;
+}
+
+fn appendInlineStoredContent(
+    alloc: Allocator,
+    walker: *ProjectionRowWalker,
+    styles: transcript_blocks.Styles,
+    line_prefix: []const u8,
+    text: []const u8,
+) !bool {
+    const styled_prefix = try styledSecondaryLinePrefix(alloc, styles, line_prefix);
+    defer alloc.free(styled_prefix);
+    var terminal_safe: TerminalSafeIndentedWriter = .{
+        .prefix = styled_prefix,
+        .line_suffix = styles.reset_style,
+    };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try terminal_safe.append(&encoded.writer, text);
+    try terminal_safe.finish(&encoded.writer);
+    return walker.appendWithSoftWrapPrefix(encoded.written(), styled_prefix);
+}
+
 fn appendStoredResultContent(
     alloc: Allocator,
     walker: *ProjectionRowWalker,
@@ -5150,6 +5248,19 @@ fn appendStoredResultContent(
     styles: transcript_blocks.Styles,
     stored: StoredResult,
 ) !bool {
+    if (stored.kind == .tool_result and stored.run_code_envelope) {
+        var arena_state = std.heap.ArenaAllocator.init(alloc);
+        defer arena_state.deinit();
+        if (try runCodeReadFileOutput(arena_state.allocator(), capability, stored)) |output| switch (output) {
+            .stored => |handle| {
+                var unwrapped = stored;
+                unwrapped.handle = handle;
+                unwrapped.run_code_envelope = false;
+                return appendStoredResultContent(alloc, walker, capability, styles, unwrapped);
+            },
+            .inline_text => |text| return appendInlineStoredContent(alloc, walker, styles, stored.line_prefix, text),
+        };
+    }
     if (stored.kind != .tool_result) {
         if (!try appendCommandStoredResultContent(
             alloc,
@@ -6495,6 +6606,7 @@ fn storedResultForDetail(detail: *const ToolDetailRecord) ?StoredResult {
             .kind = if (isCapturedCommandDetail(detail)) .command_result else .tool_result,
             .handle = handle,
             .preview = detail.result,
+            .run_code_envelope = run_code_presentation.isRunCode(detail.tool_name),
         };
     }
     return null;
