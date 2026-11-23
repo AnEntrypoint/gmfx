@@ -3381,7 +3381,8 @@ fn appendToolCallRecord(
     var scratch_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer scratch_state.deinit();
     const scratch = scratch_state.allocator();
-    const is_shell = std.mem.eql(u8, call.name, "Bash");
+    const is_shell = std.mem.eql(u8, call.name, "Bash") or
+        (if (result) |execution| execution.command_result_json != null else false);
     const error_code = if (is_shell and error_category != null)
         try ctx.alloc.dupe(
             u8,

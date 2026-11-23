@@ -1130,7 +1130,7 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
     });
     for (result.context_notices) |notice| try recordContextNoticeForDispatch(state.notices, notice);
     const images = if (result.tool_result_memory) |memory| memory.tool_images else &.{};
-    return .{ .ok = result.status == .success, .body = result.model_output, .images = images };
+    return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json };
 }
 
 fn runInnerMcpCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_dispatch.InnerCallReply {

@@ -290,6 +290,7 @@ pub const InnerCallReply = struct {
     ok: bool,
     body: []const u8,
     images: []const core_types.ToolImage = &.{},
+    command_result_json: ?[]const u8 = null,
 };
 
 pub const InnerCallGate = struct {

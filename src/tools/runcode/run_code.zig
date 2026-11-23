@@ -119,6 +119,15 @@ const Bridge = struct {
     registry: tool_dispatch.Registry,
     calls: usize = 0,
     images: std.ArrayList(core_types.ToolImage) = .empty,
+    command_result_json: ?[]u8 = null,
+
+    fn keepCommandResult(self: *Bridge, ok: bool, json: ?[]const u8) !void {
+        const failed_json = json orelse return;
+        if (ok) return;
+        const copy = try self.ctx.allocator.dupe(u8, failed_json);
+        if (self.command_result_json) |previous| self.ctx.allocator.free(previous);
+        self.command_result_json = copy;
+    }
 
     fn keepImages(self: *Bridge, images: []const core_types.ToolImage) !void {
         const copies = try core_types.dupeToolImages(self.ctx.allocator, images);
@@ -152,6 +161,7 @@ fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, a
     };
     const reply = if (host) try hostVerbReply(ctx, bridge.registry, verb_call) else try gate.run_fn(gate.context, verb_alloc, verb_call);
     try bridge.keepImages(reply.images);
+    try bridge.keepCommandResult(reply.ok, reply.command_result_json);
     gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
     if (host) return alloc.dupe(u8, reply.body);
     return verbReply(alloc, reply.ok, reply.body);
@@ -169,6 +179,7 @@ fn ungatedReply(
     if (!mcp) {
         const result = try tool_dispatch.dispatchToolCall(base, bridge.registry, verb_call);
         try bridge.keepImages(result.images);
+        try bridge.keepCommandResult(result.status == .success, result.command_result_json);
         return verbReply(alloc, result.status == .success, result.body);
     }
     var ctx = base;
@@ -357,12 +368,14 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     defer outcome.deinit(ctx.allocator);
     const base = runcode.reportJson(ctx.allocator, outcome, batchingNotice(ctx.single_verb_bodies, bridge.calls)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     const report = ledger.report(ctx.allocator, base) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
+    if (bridge.command_result_json) |json| tool_dispatch.reportCommandResultJson(ctx, json);
+    const succeeded = outcome.ok and bridge.command_result_json == null;
     if (bridge.images.items.len > 0) return .{ .rich = .{
         .text = report,
         .images = bridge.images.toOwnedSlice(ctx.allocator) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not attach its images") },
-        .is_error = !outcome.ok,
+        .is_error = !succeeded,
     } };
-    if (outcome.ok) return .{ .success = report };
+    if (succeeded) return .{ .success = report };
     return .{ .failure = report };
 }
 
@@ -471,6 +484,8 @@ test "run_code refuses an argument it does not take by name" {
 const RecordingGate = struct {
     alloc: std.mem.Allocator,
     images: []const core_types.ToolImage = &.{},
+    ok: bool = true,
+    command_result_json: ?[]const u8 = null,
     ids: std.ArrayList([]const u8) = .empty,
 
     fn gate(self: *RecordingGate) tool_dispatch.InnerCallGate {
@@ -489,7 +504,7 @@ const RecordingGate = struct {
 
     fn run(raw: *anyopaque, _: std.mem.Allocator, _: message.ToolCall) anyerror!tool_dispatch.InnerCallReply {
         const self: *RecordingGate = @ptrCast(@alignCast(raw));
-        return .{ .ok = true, .body = "done", .images = self.images };
+        return .{ .ok = self.ok, .body = "done", .images = self.images, .command_result_json = self.command_result_json };
     }
 
     fn finish(_: *anyopaque, _: std.mem.Allocator, _: message.ToolCall, _: tool_dispatch.InnerCallReply) void {}
@@ -548,6 +563,56 @@ test "an image an inner verb returns reaches the run_code result's attachments" 
     try std.testing.expectEqual(@as(usize, 2), result.images.len);
     try std.testing.expectEqualSlices(u8, &data, result.images[0].data);
     try std.testing.expectEqualStrings("image/png", result.images[1].mime_type);
+}
+
+test "a failed inner command's result json reaches the run_code result and fails it" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const json = "{\"termination_indeterminate\":true}";
+    var recorder = RecordingGate{ .alloc = alloc, .ok = false, .command_result_json = json };
+    var captured: ?[]const u8 = null;
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = alloc,
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+        .tool_call_id = "call-command",
+        .inner_call_gate = recorder.gate(),
+        .command_result_json_sink = &captured,
+    };
+    const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+        .id = "call-command",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"return gm.glob_files({ pattern: 'a' });\"}",
+    });
+    try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.failure, result.status);
+    try std.testing.expectEqualStrings(json, result.command_result_json.?);
+    try std.testing.expectEqualStrings(json, captured.?);
+}
+
+test "an inner call that succeeds leaves the run_code result without command json" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var recorder = RecordingGate{ .alloc = alloc, .command_result_json = "{\"exit_code\":0}" };
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = alloc,
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+        .tool_call_id = "call-ok",
+        .inner_call_gate = recorder.gate(),
+    };
+    const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+        .id = "call-ok",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"return gm.glob_files({ pattern: 'a' });\"}",
+    });
+    try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.success, result.status);
+    try std.testing.expect(result.command_result_json == null);
 }
 
 test "the batching notice follows the third consecutive single-verb body and not the second" {
