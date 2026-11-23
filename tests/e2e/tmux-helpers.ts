@@ -193,6 +193,12 @@ export function fakeGatewayToolCall(
   ]);
 }
 
+export function fakeGatewayVerbCall(id: string, verb: string, input: object) {
+  return fakeGatewayToolCall(id, "run_code", {
+    body: `return gm.${verb}(${JSON.stringify(input)});`,
+  });
+}
+
 export function fakeShellRun(
   id: string,
   command: string,
@@ -201,7 +207,7 @@ export function fakeShellRun(
   const timeout = options.timeout_ms === undefined
     ? undefined
     : Math.min(300, Math.max(1, Math.ceil(options.timeout_ms / 1000)));
-  return fakeGatewayToolCall(id, "Bash", {
+  return fakeGatewayVerbCall(id, "Bash", {
     command,
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     ...(timeout === undefined ? {} : { timeout }),

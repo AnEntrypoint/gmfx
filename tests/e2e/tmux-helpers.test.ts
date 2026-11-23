@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   buildObservedCommand,
+  fakeGatewayVerbCall,
+  fakeShellRun,
   heldFakeGatewayFinalText,
   isVolatileTokenStatusRow,
   paneExitMatches,
@@ -439,4 +441,14 @@ tmuxTest("minimum history lines survive a fresh tmux server restart", async () =
       });
     } catch {}
   }
+});
+
+test("a fake model verb call is a run_code call whose body calls that verb", async () => {
+  const verb = await fakeGatewayVerbCall("call-1", "read_file", { path: "a.txt" }).text();
+  expect(verb).toContain('"toolName":"run_code"');
+  expect(verb).toContain(JSON.stringify('gm.read_file({"path":"a.txt"})').slice(1, -1));
+  expect(verb).not.toContain('"toolName":"read_file"');
+  const shell = await fakeShellRun("call-2", "echo hi").text();
+  expect(shell).toContain('"toolName":"run_code"');
+  expect(shell).toContain("gm.Bash(");
 });
