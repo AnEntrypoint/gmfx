@@ -142,8 +142,7 @@ function deferProfileServers(root: ReturnType<typeof createRoot>): void {
 
 function startToolGateway(finalText: string) {
   return startFakeGateway([
-    fakeGatewayToolCall("select_mcp", "select_tools", { names: [TOOL_NAME] }),
-    fakeGatewayToolCall("call_mcp", TOOL_NAME, { text: "hello" }),
+    fakeGatewayToolCall("call_mcp", "run_code", { body: `return await gm.${TOOL_NAME}({ text: "hello" });` }),
     fakeGatewayFinalText(finalText),
   ], {
     models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
@@ -924,7 +923,7 @@ describe("modern MCP Streamable HTTP", () => {
       expect(JSON.parse(result.stdout).output).toContain(
         `${mode} MCP HTTP complete.`,
       );
-      expect(gateway.requests[2]?.body).toContain(
+      expect(gateway.requests[1]?.body).toContain(
         `${MODERN_HTTP_TOOL_RESULT}:hello`,
       );
       assertModernWire(fixture);
@@ -955,12 +954,10 @@ describe("modern MCP Streamable HTTP", () => {
     expect(JSON.parse(result.stdout).output).toContain(
       "Server-authoritative schema complete.",
     );
-    expect(gateway.requests[2]?.body).toContain(
+    expect(gateway.requests[1]?.body).toContain(
       `${MODERN_HTTP_TOOL_RESULT}:hello`,
     );
-    expect(gateway.requests.some((request) =>
-      request.body.includes('"pattern":"^(?!blocked$).+$"')
-    )).toBe(true);
+    expect(JSON.parse(gateway.requests[0]!.body).tools.map((tool: { name: string }) => tool.name)).toEqual(["run_code"]);
     expect(fixture.requests.find((entry) => entry.message.method === "tools/call")?.message.params?.arguments).toEqual({
       text: "hello",
     });
@@ -1013,7 +1010,7 @@ describe("modern MCP Streamable HTTP", () => {
       expect(calls[1]?.message.params?._meta?.[
         "io.modelcontextprotocol/clientCapabilities"
       ]).toEqual({ elicitation: { form: {}, url: {} } });
-      expect(gateway.requests[2]?.body).toContain(
+      expect(gateway.requests[1]?.body).toContain(
         "HTTP continued after elicitation",
       );
       expect(readFileSync(stderrPath, "utf8")).toBe("");
@@ -1039,7 +1036,7 @@ describe("modern MCP Streamable HTTP", () => {
     expect(JSON.parse(result.stdout).output).toContain(
       "Mixed SSE delimiters complete.",
     );
-    expect(gateway.requests[2]?.body).toContain(
+    expect(gateway.requests[1]?.body).toContain(
       `${MODERN_HTTP_TOOL_RESULT}:hello`,
     );
     const deadline = Date.now() + 5_000;
@@ -1204,7 +1201,7 @@ describe("modern MCP Streamable HTTP", () => {
     expect(JSON.parse(result.stdout).output).toContain(
       "Held-open SSE complete.",
     );
-    expect(gateway.requests[2]?.body).toContain(
+    expect(gateway.requests[1]?.body).toContain(
       `${MODERN_HTTP_TOOL_RESULT}:hello`,
     );
     assertModernWire(fixture);

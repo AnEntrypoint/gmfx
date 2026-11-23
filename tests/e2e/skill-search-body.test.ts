@@ -75,7 +75,7 @@ describe("skill search over a skill body", () => {
         (body) => {
           const user = JSON.stringify(JSON.parse(body).prompt ?? []);
           if (user.includes("SEARCH-BODY") && resultsSinceLastUser(body).length === 0) {
-            return fakeGatewayToolCall("search_body", "capability_search", { query: BODY_QUERY });
+            return fakeGatewayToolCall("search_body", "run_code", { body: `return JSON.parse(await gm.capability_search({ query: ${JSON.stringify(BODY_QUERY)} })).skills.map((skill) => skill.name).join(",");` });
           }
           if (resultsSinceLastUser(body).length > 0) {
             searched = searchResultText(body, "search_body");
@@ -105,7 +105,7 @@ describe("skill search over a skill body", () => {
 
       expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
       expect(result.stdout).toContain("search done");
-      expect(searched).toContain('"name":"long-task"');
+      expect(JSON.parse(searched).value).toBe("long-task");
     },
     TIMEOUT,
   );
