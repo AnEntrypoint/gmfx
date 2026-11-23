@@ -5308,3 +5308,15 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Build and suite (/workspace/tmp/fx/win_st27.out): ST27_DONE 0. The build passed in 704 s; the suite ran 12260 passed, 27 skipped, 0 failed; the txiki witness reported all checks passed.
 - The st26 build failed on 2e0ae372 at app_session_runtime.zig:4520 (mutable slice for a borrowed tool_call_id and tool_name). Fixed in 074f53db. The st26 result is in /workspace/tmp/fx/win_st26.out (ST26_DONE 3).
 - Row re-runs on st27 are queued as three exclusive tickets: G1 (tui-resume, tui-resize), G2 (tui-command-permissions, tui-decision-prompts, tui-terminal-tool, tui-full-transcript-brutal), G3 (tui-gateway-stream-lifecycle, gateway-stream-lifecycle). Their results are in /workspace/tmp/fx/win_rows27_G1.out, G2, G3.
+
+## Passing rows on the st27 binary (tree 2a1dbb76, groups G1 to G3)
+
+Source of each witness: /workspace/tmp/fx/e2e27/<group>/<file>.out, group DONE lines in /workspace/tmp/fx/win_rows27_<group>.out (G1 ROWS_G1_DONE 1, G2 ROWS_G2_DONE 4, G3 ROWS_G3_DONE 2).
+
+- tui-resume (G1): resumed session labels shell interactions with their launch command; Ctrl-C leaves Ctrl-O before cancelling a streaming command; Ctrl-O keeps command output live while the alternate buffer is open; streaming scroll stays inline while Ctrl-O preserves native selection and ignores horizontal arrows; Ctrl-O navigation during shell streaming preserves grouped compact rows; an ask-user prompt takes over Ctrl-O and accepts its choice inline; Ctrl-O pressure preserves transcript and modal ownership under deterministic load; upgrade ctrl-g waits while a subagent works, then upgrades once it is done; answered question cards survive flag and picker resume; cancelled command presentation survives a distinct-process resume; a crash while a tool runs resumes with that tool answered as possibly run.
+- tui-resize (G1): live command resize preserves current grouped scrollback while output is folded.
+- tui-terminal-tool (G2): resumed task rows reclip to the live width from recorded launch commands.
+- tui-full-transcript-brutal (G2): Ctrl-O repeatedly survives mixed long chats, dense tool batches, live output, resize storms, and resume.
+- gateway-stream-lifecycle (G3): held skill resource label: model-selected, finish; held skill resource label: $skill attachment, finish.
+
+Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-permissions 2; tui-decision-prompts 2; tui-terminal-tool 3; tui-full-transcript-brutal 1; tui-gateway-stream-lifecycle 4; gateway-stream-lifecycle 5.
