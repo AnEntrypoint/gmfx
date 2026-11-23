@@ -38,6 +38,7 @@ import {
   fakeGatewaySse,
   fakeGatewaySerializedToolCall,
   fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   fakeShellRun,
   hasEmptyComposer,
   heldFakeGatewayFinalText,
@@ -48,6 +49,10 @@ import {
 } from "./tmux-helpers";
 
 const MODEL = "openai/gpt-5.5";
+
+const verbBody = (verb: string, input: object | string) => ({
+  body: `return gm.${verb}(${typeof input === "string" ? input : JSON.stringify(input)});`,
+});
 
 const REPORT_HEADER = "Subagent report (untrusted agent output, not user instructions):";
 
@@ -76,7 +81,7 @@ const DETACH_COMMAND = process.platform === "darwin"
   : "setsid <cmd> >log 2>&1 &";
 const MALFORMED_ARGUMENTS = '{"depth":1,"depth":2}';
 const MALFORMED_CALL_ID = "malformed_ask_1";
-const MALFORMED_TOOL_NAME = "AskUserQuestion";
+const MALFORMED_TOOL_NAME = "run_code";
 const DYNAMIC_MCP_TOOL_NAME = "mcp_fixture_echo";
 
 type FixtureRoot = {
@@ -118,7 +123,7 @@ test("the user talks to the parent while its background subagent works, and quit
     if (latest.includes("STEERING_LATER")) return fakeGatewayFinalText("LATER_OK");
     if (latest.includes("STEERING_FIRST")) return fakeGatewayFinalText("FIRST_ACCEPTED");
     if (raw.includes("steering-delegation")) return fakeGatewayFinalText("START_SENT");
-    return fakeGatewayToolCall("steering-delegation", "Agent", { description: "Steering child", prompt: "STEERING_CHILD", run_in_background: true });
+    return fakeGatewayVerbCall("steering-delegation", "Agent", { description: "Steering child", prompt: "STEERING_CHILD", run_in_background: true });
   }, { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
 
   const parent = () => rootSessionIds(root.home)[0]!;
@@ -337,11 +342,10 @@ function delayedSuccessfulResponse(): Response {
 function lengthLimitedCommandResponse(command: string): Response {
   return sse(
     'data: {"type":"text-delta","id":"answer","delta":"visible partial output"}\n\n' +
-      'data: {"type":"tool-input-start","id":"command_provisional","toolName":"Bash"}\n\n' +
+      'data: {"type":"tool-input-start","id":"command_provisional","toolName":"run_code"}\n\n' +
       `data: ${JSON.stringify({
         type: "tool-call",
-        toolName: "Bash",
-        input: { command, timeout: 300 },
+        toolName: "run_code", input: verbBody("Bash", { command, timeout: 300 }),
       })}\n\n` +
       'data: {"type":"finish","finishReason":{"unified":"length","raw":"length"}}\n\n' +
       "data: [DONE]\n\n",
@@ -400,7 +404,7 @@ function contentFilterResponse(): Response {
 
 function providerErrorAfterToolStartResponse(): Response {
   return sse(
-    'data: {"type":"tool-input-start","id":"read_1","toolName":"read_file"}\n\n' +
+    'data: {"type":"tool-input-start","id":"read_1","toolName":"run_code"}\n\n' +
       'data: {"type":"finish","finishReason":{"unified":"error","raw":"provider_error"}}\n\n' +
       "data: [DONE]\n\n",
   );
@@ -580,7 +584,20 @@ function toolResultOutput(body: string, callId: string): string {
     part.type === "tool-result" && part.toolCallId === callId
   );
   if (!result) throw new Error(`Missing tool result for ${callId}`);
-  return contentText(result.output);
+  return result.toolName === "run_code" ? runCodeValue(contentText(result.output)) : contentText(result.output);
+}
+
+function runCodeValue(text: string): string {
+  const open = text.indexOf("\n\n<fx-context-update>");
+  const body = open < 0 ? text : text.slice(0, open);
+  try {
+    const reply = JSON.parse(body);
+    if (typeof reply?.ok !== "boolean") return text;
+    const inner = reply.ok ? reply.value : reply.error?.replace?.(/^Error: /, "").replace(/\n\s+at [\s\S]*$/, "");
+    return (typeof inner === "string" ? inner : JSON.stringify(inner)) + text.slice(body.length);
+  } catch {
+    return text;
+  }
 }
 
 
@@ -850,7 +867,7 @@ describe("gateway stream lifecycle", () => {
           const paths = advertisedSkillPaths(body, "complete-workflow");
           expect(paths.map((path) => path.replaceAll("&amp;", "&"))).toEqual([directory]);
           location = directory;
-          return fakeGatewayToolCall("whole_main", "Skill", { skill: "complete-workflow" });
+          return fakeGatewayVerbCall("whole_main", "Skill", { skill: "complete-workflow" });
         }
         case 1:
           expect(toolResultOutput(body, "whole_main")).toContain("MAIN_RESOURCE_TAIL");
@@ -859,9 +876,9 @@ describe("gateway stream lifecycle", () => {
           expect(toolResultOutput(body, "whole_main")).not.toContain("tool_result_preview");
           expect(toolResultOutput(body, "whole_main")).toContain("skill_discovery_warning");
           return fakeGatewaySse([
-            { type: "tool-call", toolCallId: "whole_reference", toolName: "read_file", input: { path: join(location, "references", "rules.txt"), start_line: 890, line_count: 12 } },
-            { type: "tool-call", toolCallId: "ordinary_glob", toolName: "glob_files", input: { pattern: "*.txt" } },
-            { type: "tool-call", toolCallId: "stale_skill", toolName: "Skill", input: { skill: "missing-skill" } },
+            { type: "tool-call", toolCallId: "whole_reference", toolName: "run_code", input: verbBody("read_file", { path: join(location, "references", "rules.txt"), start_line: 890, line_count: 12 }) },
+            { type: "tool-call", toolCallId: "ordinary_glob", toolName: "run_code", input: verbBody("glob_files", { pattern: "*.txt" }) },
+            { type: "tool-call", toolCallId: "stale_skill", toolName: "run_code", input: verbBody("Skill", { skill: "missing-skill" }) },
             { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" } },
           ]);
         case 2:
@@ -894,11 +911,11 @@ describe("gateway stream lifecycle", () => {
       expect(output.exit_code).toBe(0);
       expect(output.session_id).not.toBe("");
       expect(output.tool_calls).toHaveLength(4);
-      expect(output.tool_calls[0]).toEqual({ name: "Skill", status: "success" });
+      expect(output.tool_calls[0]).toEqual({ name: "run_code", status: "success" });
       expect(output.tool_calls.slice(1)).toEqual(expect.arrayContaining([
-        expect.objectContaining({ name: "read_file", status: "success" }),
-        expect.objectContaining({ name: "glob_files", status: "success" }),
-        expect.objectContaining({ name: "Skill", status: "error" }),
+        expect.objectContaining({ name: "run_code", status: "success" }),
+        expect.objectContaining({ name: "run_code", status: "success" }),
+        expect.objectContaining({ name: "run_code", status: "error" }),
       ]));
       expect(gateway.requestCount()).toBe(3);
       expect(result.stderr).not.toContain("panic");
@@ -1242,7 +1259,7 @@ describe("gateway stream lifecycle", () => {
             "Unsupported tool: memory",
           );
           expect(readFileSync(memoriesPath, "utf8")).toBe(legacyStore);
-          return fakeGatewayToolCall(readCallId, "read_file", { path: "surviving.txt" });
+          return fakeGatewayVerbCall(readCallId, "read_file", { path: "surviving.txt" });
         case 2:
           expect(toolResultOutput(gateway.requests[2]!.body, readCallId)).toContain(
             "surviving tool works",
@@ -1270,7 +1287,7 @@ describe("gateway stream lifecycle", () => {
       expect(json.output).toContain("Memory removal verified.");
       expect(json.tool_calls).toEqual([
         { name: "memory", status: "error" },
-        { name: "read_file", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       expect(gateway.requestCount()).toBe(3);
       expect(readFileSync(memoriesPath, "utf8")).toBe(legacyStore);
@@ -1707,7 +1724,7 @@ describe("gateway stream lifecycle", () => {
     const gateway = startDynamicFakeGateway(() => {
       requests += 1;
       if (requests > rounds) return fakeGatewayFinalText("ROUNDS_COMPLETE");
-      return fakeGatewayToolCall(`round_${requests}`, "read_file", {
+      return fakeGatewayVerbCall(`round_${requests}`, "read_file", {
         path: "rounds.txt",
         start_line: requests,
         line_count: 1,
@@ -1751,7 +1768,7 @@ describe("gateway stream lifecycle", () => {
         JSON.stringify({ permission_mode: "ask", sandbox: "none" }),
       );
       const responses = [
-        fakeGatewayToolCall(`permission_mode_${mode}`, "read_file", {
+        fakeGatewayVerbCall(`permission_mode_${mode}`, "read_file", {
           path: probePath,
         }),
         fakeGatewayFinalText(`PERMISSION_MODE_${mode.toUpperCase()}_COMPLETE`),
@@ -1777,7 +1794,7 @@ describe("gateway stream lifecycle", () => {
         );
 
         expect(result.code).toBe(0);
-        expect(result.stderr).toBe(`Reading ${probePath}\n`);
+        expect(result.stderr).toBe("Working \n");
         expect(gateway.requests).toHaveLength(2);
         for (const request of gateway.requests) {
           expectPermissionModeContext(request.body, mode);
@@ -2220,7 +2237,7 @@ describe("gateway stream lifecycle", () => {
     const { target } = writeProjectOmissionFixture(root);
     const tracePath = join(root.root, "trace.log");
     const responses = [
-      fakeGatewayToolCall("project_omission_read", "read_file", { path: target }),
+      fakeGatewayVerbCall("project_omission_read", "read_file", { path: target }),
       fakeGatewayFinalText("PROJECT_OMISSION_ASK_COMPLETE"),
     ];
     const gateway = startGateway(() =>
@@ -2263,7 +2280,7 @@ describe("gateway stream lifecycle", () => {
       const tracePath = join(root.root, "trace.log");
       const stderrPath = join(root.root, "stderr.log");
       const responses = [
-        fakeGatewayToolCall("project_omission_tui_read", "read_file", { path: target }),
+        fakeGatewayVerbCall("project_omission_tui_read", "read_file", { path: target }),
         fakeGatewayFinalText("PROJECT_OMISSION_TUI_COMPLETE"),
       ];
       const gateway = startGateway(() =>
@@ -2354,8 +2371,8 @@ describe("gateway stream lifecycle", () => {
       for (const server of Object.values(mcpProfile.mcp) as Array<Record<string, unknown>>) server.deferred = true;
       writeFileSync(mcpProfilePath, JSON.stringify(mcpProfile));
       const responses = [
-        fakeGatewayToolCall("tool_time_skill", "Skill", { skill: skillName }),
-        fakeGatewayToolCall("tool_time_mcp", "select_tools", {
+        fakeGatewayVerbCall("tool_time_skill", "Skill", { skill: skillName }),
+        fakeGatewayVerbCall("tool_time_mcp", "select_tools", {
           names: ["mcp__fixture__echo"] }),
         fakeGatewayFinalText("TOOL_TIME_CONTEXT_COMPLETE"),
       ];
@@ -2458,7 +2475,7 @@ describe("gateway stream lifecycle", () => {
     gateway = startGateway(() => {
       switch (responseIndex++) {
         case 0:
-          return fakeGatewayToolCall(installCallId, "install_skill", {
+          return fakeGatewayVerbCall(installCallId, "install_skill", {
             source: sourceRoot,
             skill: skillName,
           });
@@ -2472,7 +2489,7 @@ describe("gateway stream lifecycle", () => {
             throw new Error(`Missing installed name in ${JSON.stringify(installOutput)}`);
           }
           returnedName = returnedNameMatch[1]!;
-          return fakeGatewayToolCall(loadCallId, "Skill", { skill: returnedName });
+          return fakeGatewayVerbCall(loadCallId, "Skill", { skill: returnedName });
         }
         case 2:
           return fakeGatewayFinalText("Install then explicit load complete.");
@@ -2507,8 +2524,8 @@ describe("gateway stream lifecycle", () => {
       expect(json.error).toBeUndefined();
       expect(json.output).toContain("Install then explicit load complete.");
       expect(json.tool_calls).toEqual([
-        { name: "install_skill", status: "success" },
-        { name: "Skill", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       expect(gateway.requestCount()).toBe(3);
       expect(returnedName).toBe(skillName);
@@ -2604,13 +2621,13 @@ describe("gateway stream lifecycle", () => {
       switch (responseIndex++) {
         case 0:
           advertised = advertisedSkillPaths(gateway.requests[0]!.body, skillName);
-          return fakeGatewayToolCall(searchCallId, "capability_search", {
+          return fakeGatewayVerbCall(searchCallId, "capability_search", {
             query: "managed exact duplicate workflow",
           });
         case 1:
-          return fakeGatewayToolCall(namedCallId, "Skill", { skill: skillName });
+          return fakeGatewayVerbCall(namedCallId, "Skill", { skill: skillName });
         case 2:
-          return fakeGatewayToolCall(locationCallId, "Skill", {
+          return fakeGatewayVerbCall(locationCallId, "Skill", {
             skill: skillName,
             location: skillDirectoryB,
           });
@@ -2641,9 +2658,9 @@ describe("gateway stream lifecycle", () => {
       expect(firstJson.exit_code).toBe(0);
       expect(firstJson.error).toBeUndefined();
       expect(firstJson.tool_calls).toEqual([
-        { name: "capability_search", status: "success" },
-        { name: "Skill", status: "success" },
-        expect.objectContaining({ name: "Skill", status: "error" }),
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
+        expect.objectContaining({ name: "run_code", status: "error" }),
       ]);
       expect(advertised).toEqual([skillDirectoryA]);
       expect(gateway.requestCount()).toBe(4);
@@ -2747,7 +2764,7 @@ describe("gateway stream lifecycle", () => {
     gateway = startGateway(() => {
       switch (responseIndex++) {
         case 0:
-          return fakeGatewayToolCall(searchCallId, "capability_search", {
+          return fakeGatewayVerbCall(searchCallId, "capability_search", {
             query: "send an email",
           });
         case 1: {
@@ -2756,7 +2773,7 @@ describe("gateway stream lifecycle", () => {
           );
           const selected = projectedSearch!.skills[0];
           if (!selected) throw new Error("Expected one projected skill result");
-          return fakeGatewayToolCall(loadCallId, "Skill", { skill: selected.name });
+          return fakeGatewayVerbCall(loadCallId, "Skill", { skill: selected.name });
         }
         case 2:
           return fakeGatewayFinalText("Projected skill search complete.");
@@ -2791,8 +2808,8 @@ describe("gateway stream lifecycle", () => {
       expect(json.exit_code).toBe(0);
       expect(json.error).toBeUndefined();
       expect(json.tool_calls).toEqual([
-        { name: "capability_search", status: "success" },
-        { name: "Skill", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       const initialSkills = skillListing(gateway.requests[0]!.body);
       expect(initialSkills).toContain("- animation-vocabulary:");
@@ -2841,8 +2858,8 @@ describe("gateway stream lifecycle", () => {
     const mainCallId = "skill_main";
     const resourceCallId = "skill_resource";
     const responses = [
-      fakeGatewayToolCall(mainCallId, "Skill", { skill: skillName }),
-      fakeGatewayToolCall(resourceCallId, "read_file", {
+      fakeGatewayVerbCall(mainCallId, "Skill", { skill: skillName }),
+      fakeGatewayVerbCall(resourceCallId, "read_file", {
         path: join(skillDirectory, "references", "contract-design.md"),
       }),
       fakeGatewayFinalText("Skill resource progress complete."),
@@ -2867,13 +2884,11 @@ describe("gateway stream lifecycle", () => {
       const json = parseAskJson(result.stdout);
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toBe(
-        `Loading skill ${skillName}\nReading ${join(skillDirectory, "references", "contract-design.md")}\n`,
-      );
+      expect(result.stderr).toBe("Working \nWorking \n");
       expect(json.exit_code).toBe(0);
       expect(json.tool_calls).toEqual([
-        { name: "Skill", status: "success" },
-        { name: "read_file", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       expect(toolResultOutput(gateway.requests[1]!.body, mainCallId)).toContain(
         "MAIN_SKILL_BODY",
@@ -2907,9 +2922,9 @@ describe("gateway stream lifecycle", () => {
         const locations = advertisedSkillPaths(body, skillName);
         expect(locations).toHaveLength(1);
         return fakeGatewaySse([
-          { type: "tool-call", toolCallId: "label_main", toolName: "Skill", input: { skill: skillName } },
-          ...additionalSkills.map((name) => ({ type: "tool-call", toolCallId: name, toolName: "Skill", input: { skill: name } })),
-          { type: "tool-call", toolCallId: "label_reference", toolName: "read_file", input: { path: join(locations[0]!, "references", "rules.md") } },
+          { type: "tool-call", toolCallId: "label_main", toolName: "run_code", input: verbBody("Skill", { skill: skillName }) },
+          ...additionalSkills.map((name) => ({ type: "tool-call", toolCallId: name, toolName: "run_code", input: verbBody("Skill", { skill: name }) })),
+          { type: "tool-call", toolCallId: "label_reference", toolName: "run_code", input: verbBody("read_file", { path: join(locations[0]!, "references", "rules.md") }) },
           { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" } },
         ]);
       }
@@ -3026,7 +3041,7 @@ describe("gateway stream lifecycle", () => {
           if (index === 0) {
             const locations = advertisedSkillPaths(body, skillName);
             expect(locations).toEqual([skillDirectory]);
-            if (!attached) return fakeGatewayToolCall(mainCallId, "Skill", { skill: skillName });
+            if (!attached) return fakeGatewayVerbCall(mainCallId, "Skill", { skill: skillName });
             expect(promptText(body)).toContain("Explicitly invoked skill content");
             expect(promptText(body)).toContain(mainSentinel);
           }
@@ -3037,7 +3052,7 @@ describe("gateway stream lifecycle", () => {
             return new Response(new ReadableStream<Uint8Array>({
               start(controller) {
                 stream = controller;
-                send({ type: "tool-input-start", id: resourceCallId, toolName: "read_file" });
+                send({ type: "tool-input-start", id: resourceCallId, toolName: "run_code" });
               },
               cancel() { streamClosed = true; },
             }), { headers: { "content-type": "text/event-stream" } });
@@ -3078,15 +3093,16 @@ describe("gateway stream lifecycle", () => {
           await tui.sendText(attached
             ? `$${skillName} read its supporting resource.`
             : "Load streamed-workflow and read its supporting resource.");
-          await tui.waitForPane((pane) => stream !== undefined && /^└ Reading$/m.test(pane), 15_000);
+          await tui.waitForPane((pane) => stream !== undefined && /^└ Working$/m.test(pane), 15_000);
           expect(gateway.requestCount()).toBe(heldRequestCount);
           expect(await tui.captureFullScrollback()).not.toContain(resource);
 
           const resourceInput = { path: resourcePath };
+          const showsRead = (pane: string) => pane.includes("gm.read_file(") && pane.includes(resourcePath);
           send({ type: "tool-input-delta", id: resourceCallId, delta: JSON.stringify(resourceInput) });
           send({ type: "tool-input-end", id: resourceCallId });
-          send({ type: "tool-call", toolCallId: resourceCallId, toolName: "read_file", input: resourceInput });
-          await tui.waitForPane((pane) => pane.includes(`Reading ${resourcePath}`), 10_000);
+          send({ type: "tool-call", toolCallId: resourceCallId, toolName: "run_code", input: verbBody("read_file", resourceInput) });
+          await tui.waitForPane((pane) => showsRead(pane), 10_000);
 
           const heldUntil = Date.now() + 250;
           while (Date.now() < heldUntil) {
@@ -3095,8 +3111,8 @@ describe("gateway stream lifecycle", () => {
             await Bun.sleep(25);
           }
           const held = await tui.captureFullScrollback();
-          expect(held).toContain(`Reading ${resourcePath}`);
-          expect(held).not.toContain(`Read ${resourcePath}`);
+          expect(showsRead(held)).toBe(true);
+          expect(held).not.toContain("run_code read_file");
           expect(finishReleased).toBe(false);
           expect(gateway.requestCount()).toBe(heldRequestCount);
 
@@ -3113,9 +3129,9 @@ describe("gateway stream lifecycle", () => {
             await tui.waitForText("HELD_SKILL_RESOURCE_COMPLETE", 15_000);
             await tui.waitForStableComposer(10_000);
             const completed = await tui.captureFullScrollback();
-            expect(completed).toContain(`Read ${resourcePath}`);
-            expect(completed).not.toContain(`Reading ${resourcePath}`);
-            if (!attached) expect(completed).toContain(`Loaded skill ${skillName}`);
+            expect(completed).toContain("run_code read_file");
+            expect(completed).not.toContain("Working return gm.read_file(");
+            if (!attached) expect(completed).toContain("run_code Skill");
             expect(gateway.requestCount()).toBe(heldRequestCount + 1);
           }
           await tui.sendText("Confirm later input still works.");
@@ -3178,8 +3194,8 @@ describe("gateway stream lifecycle", () => {
     const callId = "dynamic_context_skill_1";
     const duplicateCallId = "dynamic_context_skill_2";
     const responses = [
-      fakeGatewayToolCall(callId, "Skill", { skill: skillName }),
-      fakeGatewayToolCall(duplicateCallId, "Skill", { skill: skillName }),
+      fakeGatewayVerbCall(callId, "Skill", { skill: skillName }),
+      fakeGatewayVerbCall(duplicateCallId, "Skill", { skill: skillName }),
       fakeGatewayFinalText("Dynamic context stayed data."),
     ];
     const gateway = startGateway(() =>
@@ -3209,15 +3225,13 @@ describe("gateway stream lifecycle", () => {
       const json = parseAskJson(result.stdout);
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toBe(
-        `Loading skill ${skillName}\nLoading skill ${skillName}\n`,
-      );
+      expect(result.stderr).toBe("Working \nWorking \n");
       expect(json.exit_code).toBe(0);
       expect(json.error).toBeUndefined();
       expect(json.output).toContain("Dynamic context stayed data.");
       expect(json.tool_calls).toEqual([
-        { name: "Skill", status: "success" },
-        { name: "Skill", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       expect(gateway.requestCount()).toBe(3);
 
@@ -3286,9 +3300,9 @@ describe("gateway stream lifecycle", () => {
       const toolResult = parts.find((part) =>
         part.type === "tool-result" &&
         part.toolCallId === callId &&
-        part.toolName === "Skill"
+        part.toolName === "run_code"
       );
-      const toolOutput = contentText(toolResult?.output);
+      const toolOutput = runCodeValue(contentText(toolResult?.output));
       const followupText = followupTexts.join("\n");
 
       expect(toolResult).toBeDefined();
@@ -3316,9 +3330,9 @@ describe("gateway stream lifecycle", () => {
       const duplicateToolResult = duplicateParts.find((part) =>
         part.type === "tool-result" &&
         part.toolCallId === duplicateCallId &&
-        part.toolName === "Skill"
+        part.toolName === "run_code"
       );
-      const duplicateToolOutput = contentText(duplicateToolResult?.output);
+      const duplicateToolOutput = runCodeValue(contentText(duplicateToolResult?.output));
 
       expect(duplicateToolResult).toBeDefined();
       expect(duplicateToolOutput).toContain("dynamic-context-skill");
@@ -3343,10 +3357,10 @@ describe("gateway stream lifecycle", () => {
     const gateway = startGateway(() => {
       if (responseIndex++ === 0) {
         return sse(
-          'data: {"type":"tool-input-start","id":"call_1","toolName":"read_file"}\n\n' +
-            'data: {"type":"tool-input-delta","id":"call_1","delta":"{\\"path\\":\\"victim.txt\\"}"}\n\n' +
+          'data: {"type":"tool-input-start","id":"call_1","toolName":"run_code"}\n\n' +
+            `data: ${JSON.stringify({ type: "tool-input-delta", id: "call_1", delta: JSON.stringify(verbBody("write_file", { path: "victim.txt", content: "hijacked" })) })}\n\n` +
             'data: {"type":"tool-input-end","id":"call_1"}\n\n' +
-            'data: {"type":"tool-call","toolCallId":"call_1","toolName":"edit_file"}\n\n' +
+            'data: {"type":"tool-call","toolCallId":"call_1","toolName":"Bash"}\n\n' +
             'data: {"type":"finish","finishReason":{"unified":"tool-calls","raw":"tool-calls"}}\n\n' +
             "data: [DONE]\n\n",
         );
@@ -3369,8 +3383,9 @@ describe("gateway stream lifecycle", () => {
       const json = parseAskJson(result.stdout);
 
       expect(existsSync(victimPath)).toBe(true);
+      expect(readFileSync(victimPath, "utf8")).toBe("keep");
       expect(json.tool_calls).not.toContainEqual({
-        name: "edit_file",
+        name: "run_code",
         status: "success",
       });
     } finally {
@@ -3454,14 +3469,14 @@ describe("gateway stream lifecycle", () => {
     const tracePath = join(root.root, "trace.log");
     const inputs: unknown[] = [[], "[]", "[1]", "42", "null", "true", '"text"'];
     const badCalls = inputs.map((input, index) => ({
-      type: "tool-call", toolCallId: `invalid_${index}`, toolName: "read_file", input,
+      type: "tool-call", toolCallId: `invalid_${index}`, toolName: "run_code", input,
     }));
     const invalidSubagent = { type: "tool-call", toolCallId: "invalid_subagent", toolName: "subagent", input: "[]" };
     const responses = [
       fakeGatewaySse([
         ...badCalls,
         invalidSubagent,
-        { type: "tool-call", toolCallId: "valid_write", toolName: "write_file", input: { path: "valid.txt", content: "written once\n" } },
+        { type: "tool-call", toolCallId: "valid_write", toolName: "run_code", input: verbBody("write_file", { path: "valid.txt", content: "written once\n" }) },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
       fakeGatewayFinalText("Rejected invalid calls and completed the valid write."),
@@ -3479,10 +3494,10 @@ describe("gateway stream lifecycle", () => {
       });
       expect(first.code).toBe(0);
       const firstJson = parseAskJson(first.stdout);
-      expect(firstJson.tool_calls.filter((call) => call.name === "read_file")).toEqual(
-        badCalls.map(() => ({ name: "read_file", status: "error" })),
-      );
-      expect(firstJson.tool_calls.filter((call) => call.name === "write_file")).toEqual([{ name: "write_file", status: "success" }]);
+      expect(firstJson.tool_calls.filter((call) => call.name === "run_code")).toEqual([
+        ...badCalls.map(() => ({ name: "run_code", status: "error" })),
+        { name: "run_code", status: "success" },
+      ]);
       expect(firstJson.tool_calls.filter((call) => call.name === "subagent")).toEqual([{ name: "subagent", status: "error" }]);
       expect(readFileSync(join(root.workspace, "valid.txt"), "utf8")).toBe("written once\n");
       expect(readFileSync(tracePath, "utf8")).toContain("failure=non_object_json");
@@ -3533,7 +3548,7 @@ describe("gateway stream lifecycle", () => {
       ),
       fakeGatewaySerializedToolCall(
         "malformed_repeat_3",
-        "read_file",
+        "run_code",
         alternateMalformedArguments,
       ),
     ];
@@ -3572,9 +3587,9 @@ describe("gateway stream lifecycle", () => {
         json.tool_calls.filter(
           (call) => call.name === MALFORMED_TOOL_NAME && call.status === "error",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(3);
       expect(json.tool_calls).toContainEqual({
-        name: "read_file",
+        name: "run_code",
         status: "error",
       });
       expect(result.stdout).not.toContain(MALFORMED_ARGUMENTS);
@@ -3621,12 +3636,12 @@ describe("gateway stream lifecycle", () => {
         fileExistsAtRequest.push(existsSync(targetPath));
         switch (responseIndex++) {
           case 0:
-            return fakeGatewayToolCall(firstCallId, "write_file", {
+            return fakeGatewayVerbCall(firstCallId, "write_file", {
               path: "build/pkg/proof.txt",
               content: writtenContent,
             });
           case 1:
-            return fakeGatewayToolCall(secondCallId, "write_file", {
+            return fakeGatewayVerbCall(secondCallId, "write_file", {
               path: "build/pkg/proof.txt",
               content: writtenContent,
             });
@@ -3713,7 +3728,7 @@ describe("gateway stream lifecycle", () => {
       const firstCallId = `external_read_first_${variant.name}`;
       writeFileSync(externalPath, payload);
       const responses = [
-        fakeGatewayToolCall(firstCallId, "read_file", { path: externalPath }),
+        fakeGatewayVerbCall(firstCallId, "read_file", { path: externalPath }),
         fakeGatewayFinalText(`external read complete for ${variant.name}`),
       ];
       const gateway = startGateway(() =>
@@ -3762,14 +3777,12 @@ describe("gateway stream lifecycle", () => {
         {
           type: "tool-call",
           toolCallId: "same_batch_write_a",
-          toolName: "write_file",
-          input: { path: "shared/first.txt", content: "first\n" },
+          toolName: "run_code", input: verbBody("write_file", { path: "shared/first.txt", content: "first\n" }),
         },
         {
           type: "tool-call",
           toolCallId: "same_batch_write_b",
-          toolName: "write_file",
-          input: { path: "shared/second.txt", content: "second\n" },
+          toolName: "run_code", input: verbBody("write_file", { path: "shared/second.txt", content: "second\n" }),
         },
         {
           type: "finish",
@@ -3828,22 +3841,20 @@ describe("gateway stream lifecycle", () => {
         {
           type: "tool-call",
           toolCallId: "same_batch_edit_a",
-          toolName: "edit_file",
-          input: {
+          toolName: "run_code", input: verbBody("edit_file", {
             path: "sequence.txt",
             old_string: "phase one",
             new_string: "phase two",
-          },
+          }),
         },
         {
           type: "tool-call",
           toolCallId: "same_batch_edit_b",
-          toolName: "edit_file",
-          input: {
+          toolName: "run_code", input: verbBody("edit_file", {
             path: "sequence.txt",
             old_string: "phase two",
             new_string: "phase three",
-          },
+          }),
         },
         {
           type: "finish",
@@ -3883,8 +3894,8 @@ describe("gateway stream lifecycle", () => {
     mkdirSync(blockedPath);
     chmodSync(blockedPath, 0);
     const responses = [
-      fakeGatewayToolCall("os_access_denial_context", "glob_files", { pattern: "*", path: blockedPath }),
-      fakeGatewayToolCall(callId, "glob_files", { pattern: "*", path: blockedPath }),
+      fakeGatewayVerbCall("os_access_denial_context", "glob_files", { pattern: "*", path: blockedPath }),
+      fakeGatewayVerbCall(callId, "glob_files", { pattern: "*", path: blockedPath }),
       fakeGatewayFinalText("Reported the operating-system access denial."),
     ];
     const gateway = startGateway(() =>
@@ -3908,12 +3919,12 @@ describe("gateway stream lifecycle", () => {
       const resultPart = parts.find((part) =>
         part.type === "tool-result" &&
         part.toolCallId === callId &&
-        part.toolName === "glob_files"
+        part.toolName === "run_code"
       );
-      const output = contentText(resultPart?.output);
+      const output = runCodeValue(contentText(resultPart?.output));
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toContain("Matching *");
+      expect(result.stderr).toBe("Working \nWorking \n");
       expect(json.error).toBeUndefined();
       expect(gateway.requestCount()).toBe(3);
       expect(output).toContain("tool_execution_failed");
@@ -3944,7 +3955,7 @@ describe("gateway stream lifecycle", () => {
         { type: "reasoning-start", id: "reasoning" },
         { type: "reasoning-delta", id: "reasoning", delta: "REPLAY_PRIVATE_REASONING" },
         { type: "reasoning-end", id: "reasoning", providerMetadata: { openai: { reasoningEncryptedContent: "REPLAY_TOOL_SIGNATURE" } } },
-        { type: "tool-call", toolCallId: "replay_read", toolName: "read_file", input: '{ "path": "replay.txt" }', providerMetadata: { openai: { itemId: "REPLAY_CALL_ITEM" } } },
+        { type: "tool-call", toolCallId: "replay_read", toolName: "run_code", input: verbBody("read_file", '{ "path": "replay.txt" }'), providerMetadata: { openai: { itemId: "REPLAY_CALL_ITEM" } } },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" } },
       ]),
       fakeGatewaySse([
@@ -3972,7 +3983,7 @@ describe("gateway stream lifecycle", () => {
         },
       );
       expect(first.code).toBe(0);
-      expect(first.stderr).toBe("Reading replay.txt\n");
+      expect(first.stderr).toBe("Working \n");
       const firstJson = parseAskJson(first.stdout) as ReturnType<typeof parseAskJson> & {
         model: string;
         session_id: string;
@@ -4263,7 +4274,7 @@ describe("gateway stream lifecycle", () => {
               ...(metadata ? { providerMetadata: { vertex: { thoughtSignature: "removed-signature" } } } : {}),
             },
             {
-              type: "tool-call", toolCallId: "retained_call", toolName: "read_file", input: { path: "notes.txt" },
+              type: "tool-call", toolCallId: "retained_call", toolName: "run_code", input: verbBody("read_file", { path: "notes.txt" }),
               ...(metadata ? { providerMetadata: { vertex: { thoughtSignature: "retained-signature" } } } : {}),
             },
           ];
@@ -4287,9 +4298,9 @@ describe("gateway stream lifecycle", () => {
             });
             const result = parseAskJson(first.stdout);
             expect(first.code).toBe(0);
-            expect(first.stderr).toContain("Reading notes.txt");
+            expect(first.stderr).toContain("Working \n");
             expect(result.final_output).toBe("The notes were read.");
-            expect(result.tool_calls.filter((call) => call.name === "read_file")).toEqual([{ name: "read_file", status: "success" }]);
+            expect(result.tool_calls.filter((call) => call.name === "run_code")).toEqual([{ name: "run_code", status: "success" }]);
             expect(gateway.requestCount()).toBe(2);
 
             const logPath = join(sessionDir(root.home, result.session_id), "log.jsonl");
@@ -4539,7 +4550,7 @@ describe("gateway stream lifecycle", () => {
       expect(gateway.requestCount()).toBe(2);
       expect(json.tool_calls).toContainEqual(
         expect.objectContaining({
-          name: "Bash",
+          name: "run_code",
           status: "success",
         }),
       );
@@ -4611,7 +4622,7 @@ describe("gateway stream lifecycle", () => {
       expect(observedFailure).not.toContain("Unexpected");
       expect(json.tool_calls).toHaveLength(1);
       expect(json.tool_calls[0]).toMatchObject({
-        name: "Bash",
+        name: "run_code",
         status: "error",
         error: {
           category: "command_failed",
@@ -4693,7 +4704,7 @@ describe("gateway stream lifecycle", () => {
       expect(observedFailure).not.toContain("Unexpected");
       expect(json.tool_calls).toHaveLength(1);
       expect(json.tool_calls[0]).toMatchObject({
-        name: "Bash",
+        name: "run_code",
         status: "error",
         error: {
           category: "command_failed",
@@ -4723,7 +4734,7 @@ describe("gateway stream lifecycle", () => {
     const gateway = startGateway(() => {
       switch (step++) {
         case 0:
-          return fakeGatewayToolCall(callId, "TaskOutput", { task_id: "shell-missing" });
+          return fakeGatewayVerbCall(callId, "TaskOutput", { task_id: "shell-missing" });
         case 1:
           return fakeGatewayFinalText("Shell failure recorded.");
         default:
@@ -4747,7 +4758,7 @@ describe("gateway stream lifecycle", () => {
       expect(result.code).toBe(0);
       expect(gateway.requestCount()).toBe(2);
       expect(json.tool_calls).toHaveLength(1);
-      expect(json.tool_calls[0]).toEqual({ name: "TaskOutput", status: "error" });
+      expect(json.tool_calls[0]).toEqual({ name: "run_code", status: "error" });
       expect(JSON.parse(toolResultOutput(gateway.requests[1]!.body, callId))).toEqual({
         error: { tool: "shell", code: "ExecutionNotFound", retryable: false },
       });
@@ -4781,7 +4792,7 @@ describe("gateway stream lifecycle", () => {
     const gateway = startGateway((body) => {
       switch (step++) {
         case 0:
-          return fakeGatewayToolCall(readFileCallId, "read_file", {
+          return fakeGatewayVerbCall(readFileCallId, "read_file", {
             path: "large-result.txt",
           });
         case 1: {
@@ -4792,7 +4803,7 @@ describe("gateway stream lifecycle", () => {
           canonicalHandle = match?.[1] ?? "";
           expect(canonicalHandle.endsWith(".txt")).toBe(true);
           suffixlessHandle = canonicalHandle.slice(0, -4);
-          return fakeGatewayToolCall(readResultCallId, "read_tool_result", {
+          return fakeGatewayVerbCall(readResultCallId, "read_tool_result", {
             request: {
               handle: suffixlessHandle,
               query: needle,
@@ -4814,7 +4825,7 @@ describe("gateway stream lifecycle", () => {
             part.toolCallId === readResultCallId &&
             part.toolName === "read_tool_result"
           )?.input;
-          return fakeGatewayToolCall(readRangeCallId, "read_tool_result", {
+          return fakeGatewayVerbCall(readRangeCallId, "read_tool_result", {
             handle: suffixlessHandle,
             start_byte: 1,
             byte_count: 512,
@@ -4854,12 +4865,12 @@ describe("gateway stream lifecycle", () => {
       expect(json.error).toBeUndefined();
       expect(json.output).toContain("Suffixless result handle inspected.");
       expect(gateway.requestCount()).toBe(4);
-      expect(json.tool_calls).toContainEqual({ name: "read_file", status: "success" });
+      expect(json.tool_calls).toContainEqual({ name: "run_code", status: "success" });
       expect(json.tool_calls).toContainEqual({
-        name: "read_tool_result",
+        name: "run_code",
         status: "success",
       });
-      expect(json.tool_calls.filter((call) => call.name === "read_tool_result")).toHaveLength(2);
+      expect(json.tool_calls.filter((call) => call.name === "run_code")).toHaveLength(2);
 
       const hash = /-([a-f0-9]{64})\.txt$/.exec(canonicalHandle)?.[1];
       expect(hash).toBeDefined();
@@ -4897,14 +4908,14 @@ describe("gateway stream lifecycle", () => {
     writeFileSync(clipboardStub, "#!/bin/sh\nexit 1\n");
     chmodSync(clipboardStub, 0o755);
     const marker = join(root.workspace, "executions.txt");
-    const invalidInput = '{"command":"touch MUST_NOT_EXECUTE"';
+    const invalidInput = '{"body":"return gm.Bash({\\"command\\":\\"touch MUST_NOT_EXECUTE\\"})';
     let step = 0;
     const gateway = startGateway((body) => {
       switch (step++) {
         case 0:
           return fakeGatewaySse([
-            { type: "tool-call", toolCallId: "invalid_shell", toolName: "Bash", input: invalidInput },
-            { type: "tool-call", toolCallId: "valid_shell", toolName: "Bash", input: { command: "printf 'once\\n' >> executions.txt" } },
+            { type: "tool-call", toolCallId: "invalid_shell", toolName: "run_code", input: invalidInput },
+            { type: "tool-call", toolCallId: "valid_shell", toolName: "run_code", input: verbBody("Bash", { command: "printf 'once\\n' >> executions.txt" }) },
             { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
           ]);
         case 1: {
@@ -4940,11 +4951,11 @@ describe("gateway stream lifecycle", () => {
       await tui.sendText("Run the fixture and recover from its rejected input.");
       await tui.waitForPane((pane) => pane.includes("REJECTION_RECOVERED") && hasEmptyComposer(pane), 15_000);
       const recovered = await tui.captureFullScrollback();
-      expect(recovered.match(/Failed command: invalid JSON arguments/g)).toHaveLength(1);
+      expect(recovered.match(/Failed : invalid JSON arguments/g)).toHaveLength(1);
       expect(recovered).not.toContain("MUST_NOT_EXECUTE");
       await tui.sendText("Run the next fixture command once.");
       await tui.waitForPane((pane) => pane.includes("LATER_TURN_COMPLETE") && hasEmptyComposer(pane), 15_000);
-      expect((await tui.captureFullScrollback()).match(/Failed command: invalid JSON arguments/g)).toHaveLength(1);
+      expect((await tui.captureFullScrollback()).match(/Failed : invalid JSON arguments/g)).toHaveLength(1);
       await tui.sendText("/trace");
       await tui.waitForText("Trace saved at", 10_000);
       const traceFile = readdirSync(root.root).find((name) => name.startsWith("fx-trace-") && name.endsWith(".md"));
@@ -4982,18 +4993,18 @@ describe("gateway stream lifecycle", () => {
     const gateway = startGateway((body) => {
       switch (step++) {
         case 0:
-          return fakeGatewayToolCall("zero_timeout", "Bash", { command, timeout: 0 });
+          return fakeGatewayVerbCall("zero_timeout", "Bash", { command, timeout: 0 });
         case 1: {
           expect(existsSync(marker)).toBe(false);
           expect(toolResultOutput(body, "zero_timeout")).toBe("Bash timeout must be a positive number of seconds.");
-          return fakeGatewayToolCall("repair_invalid", "Bash", { request: { command }, timeout: 1 });
+          return fakeGatewayVerbCall("repair_invalid", "Bash", { request: { command }, timeout: 1 });
         }
         case 2: {
           expect(existsSync(marker)).toBe(false);
           expect(toolResultOutput(body, "repair_invalid")).toBe(
             'Bash does not take argument "request"; accepted fields: command, cwd, timeout, description, run_in_background, disable_timeout, name',
           );
-          return fakeGatewayToolCall("repair_valid", "Bash", { command, timeout: 1 });
+          return fakeGatewayVerbCall("repair_valid", "Bash", { command, timeout: 1 });
         }
         case 3:
           expect(shellResult(body, "repair_valid")).toMatchObject({
@@ -5019,6 +5030,7 @@ describe("gateway stream lifecycle", () => {
       expect(trace).toContain("call_id=repair_invalid");
       expect(trace.split("\n").filter((line) =>
         (line.includes("call_id=repair_invalid") || line.includes("call_id=zero_timeout")) &&
+        /\b(tool_name|name)=Bash\b/.test(line) &&
         (line.includes("permission_request") || line.includes("execution_start"))
       )).toHaveLength(0);
       expect(result.stderr).not.toMatch(/panic|error:|error\./i);
@@ -5044,14 +5056,14 @@ describe("gateway stream lifecycle", () => {
         expect(toolResultOutput(body, "neighbor_1")).toContain("NEIGHBOR_OK");
       }
       return fakeGatewaySse([
-        { type: "tool-call", toolCallId: `invalid_${batch}`, toolName: "Bash", input: {
+        { type: "tool-call", toolCallId: `invalid_${batch}`, toolName: "run_code", input: verbBody("Bash", {
           command: "printf unexpected > must-not-run.txt",
           tty: true,
           shell: batch === 1
             ? { kind: "executable", path: "/bin/bash" }
             : { path: "/bin/bash", kind: "executable" },
-        } },
-        { type: "tool-call", toolCallId: `neighbor_${batch}`, toolName: "read_file", input: { path: "neighbor.txt", force: true } },
+        }) },
+        { type: "tool-call", toolCallId: `neighbor_${batch}`, toolName: "run_code", input: verbBody("read_file", { path: "neighbor.txt", force: true }) },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]);
     });
@@ -5066,8 +5078,8 @@ describe("gateway stream lifecycle", () => {
       expect(gateway.requestCount()).toBe(2);
       expect(existsSync(marker)).toBe(false);
       const json = parseAskJson(result.stdout);
-      expect(json.tool_calls.filter((call) => call.name === "Bash" && call.status === "error")).toHaveLength(2);
-      expect(json.tool_calls.filter((call) => call.name === "read_file" && call.status === "success")).toHaveLength(2);
+      expect(json.tool_calls.filter((call) => call.name === "run_code" && call.status === "error")).toHaveLength(2);
+      expect(json.tool_calls.filter((call) => call.name === "run_code" && call.status === "success")).toHaveLength(2);
       const saved = await runFx(["session", "--id", json.session_id, "--json"], {
         cwd: root.workspace, env: { HOME: root.home },
       });
@@ -5107,7 +5119,7 @@ describe("gateway stream lifecycle", () => {
 
   function toolCallStep(...calls: Array<[id: string, name: string, input: object]>): Response {
     return fakeGatewaySse([
-      ...calls.map(([toolCallId, toolName, input]) => ({ type: "tool-call", toolCallId, toolName, input })),
+      ...calls.map(([toolCallId, verb, input]) => ({ type: "tool-call", toolCallId, toolName: "run_code", input: verbBody(verb, input) })),
       { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
     ]);
   }
@@ -5161,7 +5173,7 @@ describe("gateway stream lifecycle", () => {
     expect(result.code).toBe(0);
     const json = parseAskJson(result.stdout);
     expect(json.final_output).toContain("SPEC_WRITTEN");
-    expect(json.tool_calls.filter((call) => call.name === "Bash" && call.status === "error")).toHaveLength(3);
+    expect(json.tool_calls.filter((call) => call.name === "run_code" && call.status === "error")).toHaveLength(3);
     expect(trace).not.toContain("repeated_shell_execution_failure");
   });
 
@@ -5212,7 +5224,7 @@ describe("gateway stream lifecycle", () => {
     const gateway = startGateway((body) => {
       switch (step++) {
         case 0:
-          return fakeGatewayToolCall(invalidCallId, "Bash", { timeout: 1 });
+          return fakeGatewayVerbCall(invalidCallId, "Bash", { timeout: 1 });
         case 1: {
           expect(toolResultOutput(body, invalidCallId)).toBe("Bash requires command.");
           expect(existsSync(markerPath)).toBe(false);
@@ -5231,7 +5243,7 @@ describe("gateway stream lifecycle", () => {
           expect(timedOut.output_delta).toContain("PRE-TIMEOUT-OUT");
           replayHandle = timedOut.full_output_handle ?? "";
           expect(replayHandle).not.toBe("");
-          return fakeGatewayToolCall(readCallId, "read_tool_result", {
+          return fakeGatewayVerbCall(readCallId, "read_tool_result", {
             handle: replayHandle,
             query: "PRE-TIMEOUT-OUT",
           });
@@ -5270,7 +5282,7 @@ describe("gateway stream lifecycle", () => {
 
       const expiredCallId = "expired_replay_read_1";
       const expiredResponses = [
-        fakeGatewayToolCall(expiredCallId, "read_tool_result", {
+        fakeGatewayVerbCall(expiredCallId, "read_tool_result", {
           handle: replayHandle,
           start_byte: 1,
           byte_count: 1024,
@@ -5748,7 +5760,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         case 0:
           return fakeGatewayToolCall(verbsCallId, "run_code", { body: "return gm.verbs({ name: \"Bash\" });" });
         case 1: {
-          const description = JSON.parse(toolResultOutput(body, verbsCallId)).value?.description ?? "";
+          const description = JSON.parse(toolResultOutput(body, verbsCallId)).description ?? "";
           const advice = /To keep a service running, use `([^`]+)`/.exec(description)?.[1];
           if (advice !== DETACH_COMMAND) {
             gatewayObservationError = new Error(`the shell description gives no detach command: ${advice}`);
@@ -5833,7 +5845,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         replayHandle = commandOutput.full_output_handle ?? "";
         expect(replayHandle).not.toBe("");
         expect(commandOutput.output_delta).toContain("SAVED-REPLAY-NEEDLE");
-        return fakeGatewayToolCall(readCallId, "read_tool_result", {
+        return fakeGatewayVerbCall(readCallId, "read_tool_result", {
           handle: replayHandle,
           query: "SAVED-REPLAY-NEEDLE",
         });
@@ -5866,7 +5878,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
       const resumedReadCallId = "saved_terminal_resume_read_1";
       const resumeResponses = [
-        fakeGatewayToolCall(resumedReadCallId, "read_tool_result", {
+        fakeGatewayVerbCall(resumedReadCallId, "read_tool_result", {
           handle: replayHandle,
           query: "SAVED-REPLAY-NEEDLE",
         }),
@@ -5978,7 +5990,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       requests += 1;
       if (requests === 1) {
         return fakeGatewaySse([
-          { type: "tool-call", toolCallId: "usage_kill_1", toolName: "Bash", input: { command: "sleep 3" } },
+          { type: "tool-call", toolCallId: "usage_kill_1", toolName: "run_code", input: verbBody("Bash", { command: "sleep 3" }) },
           {
             type: "finish",
             finishReason: { unified: "tool-calls", raw: "tool-calls" },
@@ -6071,7 +6083,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         return fakeGatewaySse([{ type: "text-delta", id: "parent_answer", delta: "PARENT_DONE" }, finish("stop", 200, 20, 2)]);
       }
       return fakeGatewaySse([
-        { type: "tool-call", toolCallId: "usage_child", toolName: "Agent", input: { description: "Usage task", prompt: "Reply CHILD_DONE." } },
+        { type: "tool-call", toolCallId: "usage_child", toolName: "run_code", input: verbBody("Agent", { description: "Usage task", prompt: "Reply CHILD_DONE." }) },
         finish("tool-calls", 100, 10, 1),
       ]);
     }, {
@@ -6193,8 +6205,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(exitCode).toBe(0);
         expect(json.error).toBeUndefined();
         expect(json.tool_calls).toEqual([
-          expect.objectContaining({ name: "Bash", status: "success" }),
-          expect.objectContaining({ name: "Bash", status: "success" }),
+          expect.objectContaining({ name: "run_code", status: "success" }),
+          expect.objectContaining({ name: "run_code", status: "success" }),
         ]);
         expect(gateway.requestCount()).toBe(3);
         expect(firstOutput).toContain("first-terminal-exec-ok");
@@ -6345,7 +6357,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(replayMatches).toHaveLength(1);
         replayHandle = replayMatches[0]?.[1] ?? "";
         expect(replayHandle).not.toBe("");
-        return fakeGatewayToolCall(readCallId, "read_tool_result", {
+        return fakeGatewayVerbCall(readCallId, "read_tool_result", {
           handle: replayHandle,
           query: "CANCELLED-REPLAY-NEEDLE",
         });
@@ -6433,7 +6445,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         "first typed result sentinel\n",
       );
       const responses = [
-        fakeGatewayToolCall(callId, "read_file", { path: "typed-first.txt" }),
+        fakeGatewayVerbCall(callId, "read_file", { path: "typed-first.txt" }),
         fakeGatewayFinalText("canonical reply 1"),
         ...Array.from({ length: 8 }, (_, index) =>
           fakeGatewayFinalText(`canonical reply ${index + 2}`)
@@ -6466,7 +6478,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           };
           expect(result.code).toBe(0);
           if (turn === 1) {
-            expect(result.stderr).toContain("Reading typed-first.txt");
+            expect(result.stderr).toContain("Working \n");
           } else {
             expect(result.stderr).toBe("");
           }
@@ -6491,7 +6503,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(firstStep.tool_results[0]).toEqual(
           expect.objectContaining({
             tool_call_id: callId,
-            tool_name: "read_file",
+            tool_name: "run_code",
             status: "success",
           }),
         );
@@ -6608,7 +6620,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       if (ordinary <= 6) return fakeGatewaySse([
         { type: "reasoning-start", id: `reasoning-${ordinary}` },
         { type: "reasoning-end", id: `reasoning-${ordinary}`, providerMetadata: { openai: { reasoningEncryptedContent: `LARGE_REASONING_${ordinary}` + "a".repeat(60_000) } } },
-        { type: "tool-call", toolCallId: `read-${ordinary}`, toolName: "read_file", input: { path: "sentinel.txt" } },
+        { type: "tool-call", toolCallId: `read-${ordinary}`, toolName: "run_code", input: verbBody("read_file", { path: "sentinel.txt" }) },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]);
       if (ordinary === 7) {
@@ -6698,7 +6710,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           }
           switch (step++) {
             case 0:
-              return fakeGatewayToolCall("retrieval-source", "Bash", {
+              return fakeGatewayVerbCall("retrieval-source", "Bash", {
                 command: "printf 'once\\n' >> effects.txt; cat source.txt",
               });
             case 1: {
@@ -6706,7 +6718,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
               expect(source.exit_code).toBe(0);
               expect(source.full_output_handle).toBeString();
               sourceHandle = source.full_output_handle ?? "";
-              return fakeGatewayToolCall("retrieval-page", "read_tool_result", {
+              return fakeGatewayVerbCall("retrieval-page", "read_tool_result", {
                 handle: sourceHandle, query: "RETRIEVAL_MATCH",
               });
             }
@@ -6718,7 +6730,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
               return fakeGatewaySse([
                 { type: "reasoning-start", id: "retained_reasoning" },
                 { type: "reasoning-end", id: "retained_reasoning", providerMetadata: { openai: { reasoningEncryptedContent: replaySignature } } },
-                { type: "tool-call", toolCallId: "retrieval-follow-up", toolName: "read_file", input: { path: "small.txt" } },
+                { type: "tool-call", toolCallId: "retrieval-follow-up", toolName: "run_code", input: verbBody("read_file", { path: "small.txt" }) },
                 { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" }, ...(trigger === "automatic" ? { usage: { inputTokens: { total: 120000 }, outputTokens: { total: 10 } } } : {}) },
               ]);
             }
@@ -6732,7 +6744,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
             case 4:
               expect(body).toContain(replaySignature);
               expect(body).toContain(sourceHandle);
-              return fakeGatewayToolCall("retrieval-tail", "read_tool_result", {
+              return fakeGatewayVerbCall("retrieval-tail", "read_tool_result", {
                 handle: sourceHandle, start_byte: 65300, byte_count: 1024,
               });
             case 5:
@@ -6789,7 +6801,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           expect(resumed.code).toBe(0);
 
 
-          expect(resumed.stderr).toBe("Reading more command output\n");
+          expect(resumed.stderr).toBe("Working \n");
           expect(JSON.parse(resumed.stdout).final_output).toBe("RETRIEVAL_RESTART_COMPLETE");
           expect(gateway.requests).toHaveLength(8);
           expect(readFileSync(join(root.workspace, "effects.txt"), "utf8")).toBe("once\n");
@@ -6823,11 +6835,11 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       );
       writeFileSync(join(root.workspace, "manual-compaction-inline.txt"), `inline result\n${"retained bytes ".repeat(600)}\nRETAINED_END\n`);
       const responses = [
-        fakeGatewayToolCall(callId, "read_file", {
+        fakeGatewayVerbCall(callId, "read_file", {
           path: "manual-compaction-large.txt",
         }),
         fakeGatewayFinalText("FIRST_REPLY_COMPACTION_SENTINEL"),
-        fakeGatewayToolCall(inlineCallId, "read_file", {
+        fakeGatewayVerbCall(inlineCallId, "read_file", {
           path: "manual-compaction-inline.txt",
         }),
         fakeGatewayFinalText("SECOND_REPLY_COMPACTION_SENTINEL"),
@@ -6928,7 +6940,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(compactRequest.responseFormat).toBeUndefined();
         const compactSource = JSON.stringify(compactRequest.prompt);
 
-        expect(compactSource).toContain("[Tool call T1: read_file]");
+        expect(compactSource).toContain("[Tool call T1: run_code]");
         expect(compactSource).toContain("manual-compaction-large.txt");
         expect(compactSource).not.toContain("manual-compaction-inline.txt");
         expect(compactSource).toContain(bodySentinel);
@@ -7077,7 +7089,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           if (request.tools.length === 0) {
             compactions++;
 
-            expect(body).toContain("[Tool result T1: Agent]");
+            expect(body).toContain("[Tool result T1: run_code]");
             expect(body).toContain("aborted by user");
             diagnosticHandle = "T1";
             return fakeGatewayFinalText(`Turn 1 (T1)\nIn between: The subagent wait was cancelled, not completed. Its diagnostic is ${diagnosticHandle}. Continue without repeating it.`);
@@ -7098,7 +7110,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
             return fakeGatewayFinalText("CANCEL_RESTART_COMPLETE");
           }
           const followUpReadIsCurrent = hasCurrentToolResult(body, "cancel-follow-up-read");
-          if (followUpReadIsCurrent || body.includes("Its tools so far:\\n  T2 read_file follow-up.txt")) {
+          if (followUpReadIsCurrent || body.includes("Its tools so far:\\n  T2 run_code: return gm.read_file({\"path\":\"follow-up.txt\"});")) {
             if (followUpReadIsCurrent) expect(toolResultOutput(body, "cancel-follow-up-read")).toContain("FOLLOW_UP_FACT");
             expect(compactions).toBe(trigger === "automatic" ? 1 : 0);
             return fakeGatewayFinalText("CANCEL_FOLLOWUP_COMPLETE");
@@ -7106,12 +7118,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           if (latest.includes("Read the follow-up file")) {
             expect(toolResultOutput(body, "cancelled-history-wait")).toBe("aborted by user");
             return fakeGatewaySse([
-              { type: "tool-call", toolCallId: "cancel-follow-up-read", toolName: "read_file", input: { path: "follow-up.txt" } },
+              { type: "tool-call", toolCallId: "cancel-follow-up-read", toolName: "run_code", input: verbBody("read_file", { path: "follow-up.txt" }) },
               { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" }, ...(trigger === "automatic" ? { usage: { inputTokens: { total: 120000 }, outputTokens: { total: 10 } } } : {}) },
             ]);
           }
 
-          return fakeGatewayToolCall("cancelled-history-wait", "Agent", {
+          return fakeGatewayVerbCall("cancelled-history-wait", "Agent", {
             description: "Waiter",
             prompt: "Wait for further input without tools.",
           });
@@ -7153,7 +7165,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           expect(saved.startsWith(before)).toBe(true);
           expect(compactionCount(saved)).toBe(1);
           const savedTool = readFileSync(compactionRecordPath(root.home, sessionId, `compacted-${diagnosticHandle}.txt`)!, "utf8");
-          expect(savedTool.split("\n")[0]).toBe("T1 Agent: Waiter Wait for further input without tools.");
+          expect(savedTool.split("\n")[0]).toBe('T1 run_code: return gm.Agent({"description":"Waiter","prompt":"Wait for further input without tools."});');
           expect(savedTool).toContain("\nResult:\naborted by user\n");
           expect(await tui.captureFullScrollback()).not.toContain("IncompleteCompactionResult");
           await tui.sendText("/quit");
@@ -7204,7 +7216,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
       writeFileSync(join(root.workspace, "manual-cancel-notes.txt"), "notes\n");
       const responses = [
-        fakeGatewayToolCall("manual-cancel-read", "read_file", { path: "manual-cancel-notes.txt" }),
+        fakeGatewayVerbCall("manual-cancel-read", "read_file", { path: "manual-cancel-notes.txt" }),
         fakeGatewayFinalText("MANUAL_CANCEL_FIRST_READY"),
         fakeGatewayFinalText("MANUAL_CANCEL_SECOND_READY"),
         () => held.response,
@@ -7359,7 +7371,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         if (index === 0 || index === 4) {
           const locations = advertisedSkillPaths(body, skillName);
           expect(locations).toHaveLength(1);
-          return fakeGatewayToolCall(index === 0 ? beforeCallId : afterCallId, "Skill", { skill: skillName });
+          return fakeGatewayVerbCall(index === 0 ? beforeCallId : afterCallId, "Skill", { skill: skillName });
         }
         switch (index) {
           case 1: return fakeGatewayFinalText("SKILL_BEFORE_COMPACTION_COMPLETE");
@@ -7425,7 +7437,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(compactionRequest).toContain(bodySentinel);
         expect(compactionRequest).toContain(tailSentinel);
         expect(compactionRequest).toContain("<skill_content");
-        expect(compactionRequest).toMatch(/\[Tool result T\d+: Skill\]/);
+        expect(compactionRequest).toMatch(/\[Tool result T\d+: run_code\]/);
         expect(postCompactionRequest).toContain("compacted_conversation");
         expect(postCompactionRequest).not.toContain(bodySentinel);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
@@ -7654,7 +7666,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
   test("default fx ask resends without a warning when the gateway closed a pooled connection", async () => {
     const expectedOutput = "Answered after a closed pooled connection.";
-    const toolCallBody = await fakeGatewayToolCall("read_notes", "read_file", {
+    const toolCallBody = await fakeGatewayVerbCall("read_notes", "read_file", {
       path: "notes.txt",
     }).text();
     const finalBody = await fakeGatewayFinalText(expectedOutput).text();
@@ -7759,7 +7771,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
         expect(json.exit_code).toBe(0);
         expect(json.output).toBe(expectedOutput);
-        expect(json.tool_calls.map((call) => call.name)).toEqual(["read_file"]);
+        expect(json.tool_calls.map((call) => call.name)).toEqual(["run_code"]);
         expect(json.recovery).toBeUndefined();
         expect(result.stderr).not.toContain("Network interrupted");
         expect(result.stderr).not.toContain("retrying request");
@@ -7972,7 +7984,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
       expect(serializedError).toContain("ModelFailed");
       expect(output.tool_calls).toHaveLength(1);
-      expect(output.tool_calls[0]?.name).toBe("Bash");
+      expect(output.tool_calls[0]?.name).toBe("run_code");
       expect(output.tool_calls[0]?.status).toBe("success");
       expect(readFileSync(sideEffectPath, "utf8")).toBe("once\n");
       expect(gateway.requestCount()).toBe(4);
@@ -8005,7 +8017,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       if (requestIndex === 0) expect(existsSync(mcp.pidPath)).toBe(false);
       switch (requestIndex++) {
         case 0:
-          return fakeGatewayToolCall(searchCallId, "capability_search", {
+          return fakeGatewayVerbCall(searchCallId, "capability_search", {
             query: "fixture input public tools",
             server: "fixture",
           });
@@ -8100,7 +8112,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(body.includes("repeat a no-match search")).toBe(false);
       switch (responseIndex++) {
         case 0:
-          return fakeGatewayToolCall(searchCallId, "capability_search", {
+          return fakeGatewayVerbCall(searchCallId, "capability_search", {
             query:
               "pagerduty datadog grafana opsgenie incident management on-call alerts",
           });
@@ -8118,7 +8130,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           expect(toolShapesWithoutDescriptions(parseGatewayRequest(gateway.requests[1]!.body))).toEqual(
             toolShapesWithoutDescriptions(parseGatewayRequest(gateway.requests[0]!.body)),
           );
-          return fakeGatewayToolCall("mcp_corrected_search", "capability_search", {
+          return fakeGatewayVerbCall("mcp_corrected_search", "capability_search", {
             query: "fixture input public tools " + "fixture ".repeat(80),
             server: "fixture",
           });
@@ -8153,8 +8165,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(result.code).toBe(0);
       expect(json.output).toContain("No matching monitoring capability is configured.");
       expect(json.tool_calls).toEqual([
-        { name: "capability_search", status: "success" },
-        { name: "capability_search", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       expect(gateway.requestCount()).toBe(3);
       expect(existsSync(mcp.callLogPath)).toBe(false);
@@ -8198,7 +8210,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           body: `return await gm.${FIXTURE_MCP_ECHO_TOOL}({ text: "subagent MCP proof" });`,
         });
       }
-      return fakeGatewayToolCall("parent_subagent_create_1", "Agent", {
+      return fakeGatewayVerbCall("parent_subagent_create_1", "Agent", {
         description: "Call MCP echo",
         prompt: childPrompt,
         subagent_type: "coder",
@@ -8273,11 +8285,11 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         return fakeGatewayFinalText("Child with large MCP catalog complete.");
       }
       if (body.includes('"toolCallId":"parent_load_large_1"')) {
-        return fakeGatewayToolCall("parent_subagent_large_1", "Agent", {
+        return fakeGatewayVerbCall("parent_subagent_large_1", "Agent", {
           description: "Summarize catalog", prompt: childPrompt, subagent_type: "coder",
         });
       }
-      return fakeGatewayToolCall("parent_load_large_1", "capability_search", {
+      return fakeGatewayVerbCall("parent_load_large_1", "capability_search", {
         query: "fixture tools",
         server: "fixture",
       });
@@ -8302,8 +8314,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(gateway.requests.some((request) => latestUserIsReport(request.body))).toBe(false);
       expect(parseAskJson(result.stdout).final_output).toBe("Parent observed child completion.");
       expect(parseAskJson(result.stdout).tool_calls).toEqual([
-        { name: "capability_search", status: "success" },
-        { name: "Agent", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
     } finally {
       gateway.stop();
@@ -8320,13 +8332,13 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const gateway = startDynamicFakeGateway((body) => {
       if (isChildRequest(body)) {
         childRequests += 1;
-        return fakeGatewayToolCall("child_starts_mcp", "capability_search", {
+        return fakeGatewayVerbCall("child_starts_mcp", "capability_search", {
           query: "fixture echo",
           server: "fixture",
         });
       }
       expect(hasCurrentToolResult(body, "cancelled_child")).toBe(false);
-      return fakeGatewayToolCall("cancelled_child", "Agent", {
+      return fakeGatewayVerbCall("cancelled_child", "Agent", {
         description: "Call MCP echo", prompt: "Call the inherited MCP echo tool.", subagent_type: "coder",
       });
     }, {
@@ -8383,7 +8395,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           expect(toolResultOutput(body, "seed-delegate")).toContain("CHILD_SEED_DONE");
           return fakeGatewayFinalText("PARENT_SEED_SENTINEL");
         }
-        return fakeGatewayToolCall("seed-delegate", "Agent", { description: "Seed work", prompt: "Do the seed work.", subagent_type: "coder" });
+        return fakeGatewayVerbCall("seed-delegate", "Agent", { description: "Seed work", prompt: "Do the seed work.", subagent_type: "coder" });
       }
       expect(body).toContain("PARENT_SEED_SENTINEL");
       if (phase === 2) expect(body).toContain("PARENT_CONTINUATION_SAVED");
@@ -8460,12 +8472,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           return fakeGatewayFinalText("CHILD_RECOVERED");
         }
         return fakeGatewaySse([
-          ...badCalls.map(call => ({ type: "tool-call", toolCallId: call.id, toolName: call.name, input: call.input })),
-          { type: "tool-call", toolCallId: "recovery-read", toolName: "read_file", input: { path: "notes.txt" } },
+          ...badCalls.map(call => ({ type: "tool-call", toolCallId: call.id, toolName: "run_code", input: verbBody(call.name, call.input) })),
+          { type: "tool-call", toolCallId: "recovery-read", toolName: "run_code", input: verbBody("read_file", { path: "notes.txt" }) },
           { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
         ]);
       }
-      return fakeGatewayToolCall("recover-child", "Agent", { description: "Inspect fixture", prompt: "Inspect the prepared fixture and report.", subagent_type: "coder" });
+      return fakeGatewayVerbCall("recover-child", "Agent", { description: "Inspect fixture", prompt: "Inspect the prepared fixture and report.", subagent_type: "coder" });
     }, { classifierDecision: "clear" });
     try {
       const result = await runFx(["ask", "--json", "--auto", "Delegate the fixture inspection."], {
@@ -8482,8 +8494,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(readFileSync(join(root.workspace, "not-dir"), "utf8")).toBe("UNCHANGED\n");
       const lines = readFileSync(trace, "utf8").split("\n");
       for (const call of badCalls) {
-        expect(lines.filter(line => line.includes(`call_id=${call.id} `) && line.includes("event=execution_start"))).toHaveLength(0);
-        expect(lines.filter(line => line.includes(`call_id=${call.id} `) && line.includes("event=permission_requested"))).toHaveLength(0);
+        expect(lines.filter(line => line.includes(`call_id=${call.id} `) && line.includes("event=execution_start") && /\bname=(glob_files|grep_files)\b/.test(line))).toHaveLength(0);
+        expect(lines.filter(line => line.includes(`call_id=${call.id} `) && line.includes("event=permission_requested") && /\b(tool_)?name=(glob_files|grep_files)\b/.test(line))).toHaveLength(0);
       }
       expect(lines.filter(line => line.includes("call_id=recovery-read ") && line.includes("event=execution_start"))).toHaveLength(1);
       expect(lines.some(line => line.includes("event=child_execution_failed"))).toBe(false);
@@ -8517,12 +8529,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           return fakeGatewayFinalText("CHILD_RECOVERED");
         }
         if (hasCurrentToolResult(body, "approval-search")) {
-          expect(toolResultOutput(body, "approval-search")).toContain("Path not found: search-target");
-          return fakeGatewayToolCall("after-approval", "read_file", { path: "notes.txt" });
+          expect(toolResultOutput(body, "approval-search")).toContain("Unable to resolve grep search root: search-target (FileNotFound)");
+          return fakeGatewayVerbCall("after-approval", "read_file", { path: "notes.txt" });
         }
-        return fakeGatewayToolCall("approval-search", "grep_files", { pattern: "APPROVAL_SEARCH", path: "search-target" });
+        return fakeGatewayVerbCall("approval-search", "grep_files", { pattern: "APPROVAL_SEARCH", path: "search-target" });
       }
-      return fakeGatewayToolCall("approval-child", "Agent", { description: "Search fixture", prompt: "Search the fixture, then read notes.txt.", subagent_type: "coder" });
+      return fakeGatewayVerbCall("approval-child", "Agent", { description: "Search fixture", prompt: "Search the fixture, then read notes.txt.", subagent_type: "coder" });
     }, { classifierDecision: "clear" });
     let session: TmuxSession | null = null;
     try {
@@ -8542,7 +8554,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(childRequests).toBe(3);
       const lines = readFileSync(trace, "utf8").split("\n").filter(line => line.includes("call_id=approval-search "));
       expect(lines.some(line => line.includes("event=permission_decision") && line.includes("decision=once"))).toBe(true);
-      expect(lines.some(line => line.includes("event=execution_start"))).toBe(false);
+      expect(lines.some(line => line.includes("event=execution_start") && /\bname=grep_files\b/.test(line))).toBe(false);
       expect(readFileSync(join(root.workspace, "moved-target/match.txt"), "utf8")).toBe("APPROVAL_SEARCH\n");
       await session.sendText("/quit");
       await session.waitForPane(() => session!.paneStatus().dead, 10_000);
@@ -8563,7 +8575,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const persistentSecond = "Reply exactly PERSIST_TWO without using tools.";
     const persistentThird = "Reply exactly PERSIST_THREE without using tools.";
     const testerFirst = "Reply exactly TESTER_ONE without using tools.";
-    const reviewer = "agent-managed-message-one";
+    const reviewer = "agent-managed-message-one-1";
     const childRequests: string[] = [];
     const report = (body: string, id: string) => {
       const result = JSON.parse(toolResultOutput(body, id)) as { ok: boolean; result: string; error_code: string | null };
@@ -8619,7 +8631,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         const result = report(body, "managed_tester_one");
         expect(result).toContain("agent_id: agent-managed-tester-one");
         expect(result).toContain("[summary]\nTESTER_ONE");
-        return fakeGatewayToolCall("managed_message_three", "Agent", {
+        return fakeGatewayVerbCall("managed_message_three", "Agent", {
           prompt: persistentThird, description: "Reviewer third", resume: reviewer,
         });
       }
@@ -8627,7 +8639,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         const result = report(body, "managed_message_two");
         expect(result).toContain(`agent_id: ${reviewer}`);
         expect(result).toContain("[summary]\nPERSIST_TWO");
-        return fakeGatewayToolCall("managed_tester_one", "Agent", {
+        return fakeGatewayVerbCall("managed_tester_one", "Agent", {
           prompt: testerFirst, description: "Tester first", subagent_type: "coder",
         });
       }
@@ -8636,7 +8648,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(result).toContain(`agent_id: ${reviewer}`);
         expect(result).toContain("[summary]\nPERSIST_ONE");
         expect(result).toContain(`call Agent with resume "${reviewer}"`);
-        return fakeGatewayToolCall("managed_message_two", "Agent", {
+        return fakeGatewayVerbCall("managed_message_two", "Agent", {
           prompt: persistentSecond, description: "Reviewer second", resume: reviewer,
         });
       }
@@ -8644,12 +8656,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         const result = report(body, "managed_run_one_1");
         expect(result).toContain("agent_id: agent-managed-run-one-1");
         expect(result).toContain("[summary]\nCHILD_ONE");
-        return fakeGatewayToolCall("managed_message_one", "Agent", {
+        return fakeGatewayVerbCall("managed_message_one", "Agent", {
           prompt: persistentFirst, description: "Reviewer first", subagent_type: "coder",
         });
       }
       expect(latestUserIsReport(body)).toBe(false);
-      return fakeGatewayToolCall("managed_run_one_1", "Agent", {
+      return fakeGatewayVerbCall("managed_run_one_1", "Agent", {
         prompt: firstTask, description: "Helper first", subagent_type: "coder",
       });
     }, {
@@ -8677,7 +8689,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       const json = parseAskJson(result.stdout);
       expect(json.output).toContain("MANAGED_SUBAGENT_OK");
       expect(childRequests).toEqual(["helper-1", "reviewer-1", "reviewer-2", "tester-1", "reviewer-3"]);
-      expect(json.tool_calls).toEqual(Array.from({ length: 5 }, () => ({ name: "Agent", status: "success" })));
+      expect(json.tool_calls).toEqual(Array.from({ length: 5 }, () => ({ name: "run_code", status: "success" })));
       expect(gateway.requests.some((request) => latestUserIsReport(request.body))).toBe(false);
       const spawned = childLines(root.home, json.session_id).filter((line) => line.kind === "child_spawned");
       expect(new Set(spawned.map((line) => line.child)).size).toBe(3);
@@ -8724,12 +8736,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(JSON.stringify(childLines(root.home, parentId).at(-1).data)).toContain("AccessDenied");
         failureObserved = true;
         chmodSync(childBlobs, 0o700);
-        return fakeGatewayToolCall("followup", "Agent", {
+        return fakeGatewayVerbCall("followup", "Agent", {
           prompt: nextTask, description: "Recover reporter", resume: "agent-delegate",
         });
       }
       if (!isChildRequest(body)) {
-        return fakeGatewayToolCall("delegate", "Agent", {
+        return fakeGatewayVerbCall("delegate", "Agent", {
           prompt: childTask, description: "Reporter effect", subagent_type: "coder",
         });
       }
@@ -8744,7 +8756,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           parentId = rootSessionIds(root.home)[0]!;
           childBlobs = join(sessionDir(root.home, childWork(root.home, parentId).child), "blobs");
           chmodSync(childBlobs, 0o500);
-          return fakeGatewayToolCall("read_effect", "read_file", { path: marker });
+          return fakeGatewayVerbCall("read_effect", "read_file", { path: marker });
         }
         return fakeShellRun("child_effect", "printf 'EFFECT_ONCE\\n' >> effect.txt");
       }
@@ -8766,8 +8778,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(persisted?.output).toContain("agent_turn_failed: AccessDenied");
       expect(savedToolResults(history).find((entry) => entry.tool_call_id === "followup")?.status).toBe("success");
       expect(parseAskJson(result.stdout).tool_calls).toEqual([
-        { name: "Agent", status: "error" },
-        { name: "Agent", status: "success" },
+        { name: "run_code", status: "error" },
+        { name: "run_code", status: "success" },
       ]);
 
       expect(scripted.requestCount()).toBe(6);
@@ -8810,11 +8822,11 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         failedWork = childWork(root.home, parentId);
         failedCause = JSON.stringify(childLines(root.home, parentId).at(-1).data);
         return withEffect
-          ? fakeGatewayToolCall("http_followup", "Agent", { prompt: followupTask, description: "Recover reporter", resume: "agent-http-delegate" })
+          ? fakeGatewayVerbCall("http_followup", "Agent", { prompt: followupTask, description: "Recover reporter", resume: "agent-http-delegate-1" })
           : fakeGatewayFinalText("SUBAGENT_HTTP_OBSERVED");
       }
       if (!isChildRequest(body)) {
-        return fakeGatewayToolCall("http_delegate", "Agent", {
+        return fakeGatewayVerbCall("http_delegate", "Agent", {
           prompt: task, description: "Reporter task", subagent_type: "coder",
         });
       }
@@ -8841,7 +8853,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(run.code).toBe(0);
       expect(run.timedOut).toBe(false);
 
-      expect(failed).toContain("agent_id: agent-http-delegate");
+      expect(failed).toContain("agent_id: agent-http-delegate-1");
       expect(failed).toContain("status: failed");
       expect(reportTurns).toBe(0);
       expect(failed).toContain(`provider_http_error: API access denied · HTTP ${status}`);
@@ -8857,7 +8869,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       if (withEffect) {
         expect(markerAtFailure).toBe("EFFECT_ONCE\n");
         expect(readFileSync(marker, "utf8")).toBe("EFFECT_ONCE\n");
-        expect(recovered).toContain("agent_id: agent-http-delegate");
+        expect(recovered).toContain("agent_id: agent-http-delegate-1");
         expect(recovered).toContain("status: completed");
         expect(recovered).toContain("[summary]\nCHILD_RECOVERED");
         expect(childWork(root.home, parentId).outcome).toBe("ok");
@@ -8869,8 +8881,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       const json = parseAskJson(run.stdout);
       expect(json.output).toContain("SUBAGENT_HTTP_OBSERVED");
       expect(json.tool_calls).toEqual(withEffect
-        ? [{ name: "Agent", status: "error" }, { name: "Agent", status: "success" }]
-        : [{ name: "Agent", status: "error" }]);
+        ? [{ name: "run_code", status: "error" }, { name: "run_code", status: "success" }]
+        : [{ name: "run_code", status: "error" }]);
       expect(run.stderr).not.toMatch(/panic:|error:|unreachable/);
     } finally {
       gateway.stop();
@@ -8896,7 +8908,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       const parts = prompt.slice(lastUser + 1).flatMap((message) => Array.isArray(message.content) ? message.content : []) as Array<Record<string, unknown>>;
       const result = parts.find((part) => part.type === "tool-result" && part.toolCallId === `replayed_${delegation}`);
       if (result) {
-        seen[delegation].push(JSON.parse(contentText(result.output)));
+        seen[delegation].push(JSON.parse(runCodeValue(contentText(result.output))));
         return fakeGatewayFinalText("REPLAY_PARENT_DONE");
       }
       const asked = contentText(prompt[lastUser]?.content);
@@ -8910,7 +8922,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           status: 401, headers: { "content-type": "application/json" },
         });
       }
-      return fakeGatewayToolCall(`replayed_${delegation}`, "Agent", { prompt: tasks[delegation], description: "Replayed delegation", subagent_type: "coder", run_in_background: true });
+      return fakeGatewayVerbCall(`replayed_${delegation}`, "Agent", { prompt: tasks[delegation], description: "Replayed delegation", subagent_type: "coder", run_in_background: true });
     }, { classifierDecision: "clear", models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     const env = fixtureEnv(root, gateway, join(root.root, "trace.log"));
     try {
@@ -8976,7 +8988,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           setTimeout(() => resolve(fakeGatewayFinalText("TERMINAL_CHILD_DONE")), 1250);
         });
       }
-      return fakeGatewayToolCall("terminal_result", "Agent", {
+      return fakeGatewayVerbCall("terminal_result", "Agent", {
         prompt: childTask, description: "Held tester", subagent_type: "coder", run_in_background: true,
       });
     }, {
@@ -9056,14 +9068,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         {
           type: "tool-call",
           toolCallId: "sibling_first",
-          toolName: "Agent",
-          input: { prompt: firstTask, description: "First sibling", subagent_type: "coder", run_in_background: true },
+          toolName: "run_code", input: verbBody("Agent", { prompt: firstTask, description: "First sibling", subagent_type: "coder", run_in_background: true }),
         },
         {
           type: "tool-call",
           toolCallId: "sibling_second",
-          toolName: "Agent",
-          input: { prompt: secondTask, description: "Second sibling", subagent_type: "coder", run_in_background: true },
+          toolName: "run_code", input: verbBody("Agent", { prompt: secondTask, description: "Second sibling", subagent_type: "coder", run_in_background: true }),
         },
         {
           type: "finish",
@@ -9125,7 +9135,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     mkdirSync(oldSkill, { recursive: true });
     writeFileSync(join(oldSkill, "SKILL.md"), "---\nname: original-workspace-only\ndescription: Original workspace task\n---\nUNSELECTED_OLD_BODY\n");
     const tracePath = join(root.root, "trace.log");
-    const persistentReviewer = "agent-persistent-resume-one";
+    const persistentReviewer = "agent-persistent-resume-one-1";
     const firstMessage = "Reply exactly PERSISTED_FIRST.";
     const secondMessage = "Reply exactly PERSISTED_SECOND.";
     const gateway = startDynamicFakeGateway((body) => {
@@ -9152,7 +9162,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         return fakeGatewayFinalText("PERSISTED_SECOND");
       }
       if (promptText(body).includes("RESUME_PERSISTENT_SECOND")) {
-        return fakeGatewayToolCall("persistent_resume_two", "Agent", {
+        return fakeGatewayVerbCall("persistent_resume_two", "Agent", {
           prompt: secondMessage, description: "Reviewer second", resume: persistentReviewer, run_in_background: true,
         });
       }
@@ -9170,7 +9180,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(body).not.toContain('"name":"Agent"');
         return fakeGatewayFinalText("PERSISTED_FIRST");
       }
-      return fakeGatewayToolCall("persistent_resume_one", "Agent", {
+      return fakeGatewayVerbCall("persistent_resume_one", "Agent", {
         prompt: firstMessage, description: "Reviewer first", subagent_type: "coder", run_in_background: true,
       });
     }, {
@@ -9298,7 +9308,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           { timeout_ms: 60_000 },
         );
       }
-      return fakeGatewayToolCall("persistent_sigkill_message", "Agent", {
+      return fakeGatewayVerbCall("persistent_sigkill_message", "Agent", {
         prompt: childPrompt, description: "Persistent reviewer", subagent_type: "coder", run_in_background: true,
       });
     }, {
@@ -9413,7 +9423,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const tracePath = join(root.root, "trace.log");
     const mcp = writeMcpFixture(root);
     const responses = [
-      fakeGatewayToolCall("select_mcp_auto", "select_tools", { names: [FIXTURE_MCP_ECHO_TOOL] }),
+      fakeGatewayVerbCall("select_mcp_auto", "select_tools", { names: [FIXTURE_MCP_ECHO_TOOL] }),
       fakeGatewayToolCall("dynamic_mcp_auto", FIXTURE_MCP_ECHO_TOOL, { text: "exact-auto" }),
       fakeGatewayFinalText("MCP auto handled."),
     ];
@@ -9470,7 +9480,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       const tracePath = join(root.root, "trace.log");
       const mcp = writeMcpFixture(root);
       const responses = [
-        fakeGatewayToolCall(
+        fakeGatewayVerbCall(
           "select_mcp_1",
           "select_tools",
           { names: [FIXTURE_MCP_ECHO_TOOL] },
@@ -9505,7 +9515,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         const pid = Number.parseInt(readFileSync(mcp.pidPath, "utf8"), 10);
 
         expect(result.code).toBe(0);
-        expect(result.stderr).toContain("Selecting MCP tool dynamic tool\n");
+        expect(result.stderr).toContain("Working \n");
         expect(json.output).toContain("MCP argument handling complete.");
         expect(json.tool_calls).toContainEqual({
           name: FIXTURE_MCP_ECHO_TOOL,
@@ -9587,12 +9597,11 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     { type: "reasoning-start", id: "spent_reasoning" },
     { type: "reasoning-delta", id: "spent_reasoning", delta: "thinking until the limit runs out" },
     { type: "reasoning-end", id: "spent_reasoning" },
-    { type: "tool-input-start", id: "cut_call", toolName: "Bash" },
+    { type: "tool-input-start", id: "cut_call", toolName: "run_code" },
     {
       type: "tool-call",
       toolCallId: "cut_call",
-      toolName: "Bash",
-      input: { command: `printf ran > ${CUT_CALL_SENTINEL}` },
+      toolName: "run_code", input: verbBody("Bash", { command: `printf ran > ${CUT_CALL_SENTINEL}` }),
     },
     {
       type: "finish",
@@ -9719,7 +9728,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
   test("a reply that spent its limit before a cut-off tool call is resent at low effort without running the call", async () => {
     const { result, json, bodies, trace, cutCallRan } = await askWithReplies("cut-tool-call-resend", [
       cutToolCallReply,
-      () => fakeGatewayToolCall("listed", "glob_files", { pattern: "*" }),
+      () => fakeGatewayVerbCall("listed", "glob_files", { pattern: "*" }),
       () => fakeGatewayFinalText("finished after the resend"),
     ], {
       context_window: 1_050_000,
@@ -9862,9 +9871,9 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
   test("each separate empty stop in one turn gets its own nudge", async () => {
     const { result, json, bodies } = await askWithReplies("other-separate-stops", [
-      () => fakeGatewayToolCall("list_1", "glob_files", { pattern: "*" }),
+      () => fakeGatewayVerbCall("list_1", "glob_files", { pattern: "*" }),
       emptyOtherReply(),
-      () => fakeGatewayToolCall("list_2", "glob_files", { pattern: "*" }),
+      () => fakeGatewayVerbCall("list_2", "glob_files", { pattern: "*" }),
       emptyOtherReply(),
       () => fakeGatewayFinalText("finished after two nudges"),
     ]);
@@ -10063,7 +10072,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       }
       parentBodies.push(raw);
       if (parentBodies.length === 1) {
-        return fakeGatewayToolCall("empty-report-delegation", "Agent", { description: "Report task", prompt: "EMPTY_REPORT_TASK", run_in_background: true });
+        return fakeGatewayVerbCall("empty-report-delegation", "Agent", { description: "Report task", prompt: "EMPTY_REPORT_TASK", run_in_background: true });
       }
       if (parentBodies.length === 2) return heldEmptyOther();
       return fakeGatewayFinalText("EMPTY_REPORT_ALL_DONE");
@@ -10124,10 +10133,10 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const root = createFixtureRoot("distinct-replay-handles");
     const tracePath = join(root.root, "trace.log");
     const handles: string[] = [];
-    const run = (id: string, command: string) => fakeGatewayToolCall(id, "Bash", {
+    const run = (id: string, command: string) => fakeGatewayVerbCall(id, "Bash", {
       command,
     });
-    const read = (id: string, handle: string) => fakeGatewayToolCall(id, "read_tool_result", {
+    const read = (id: string, handle: string) => fakeGatewayVerbCall(id, "read_tool_result", {
       request: { handle, query: "SAME_OUTPUT" },
     });
     let step = 0;
@@ -10190,7 +10199,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const sentinelPath = join(root.workspace, "command-must-not-run.txt");
     const responses = [
       sse(
-        'data: {"type":"tool-call","toolCallId":"command_1","toolName":"Bash","input":{"command":"printf executed > command-must-not-run.txt","timeout":30}}\n\n' +
+        `data: ${JSON.stringify({ type: "tool-call", toolCallId: "command_1", toolName: "run_code", input: verbBody("Bash", {"command":"printf executed > command-must-not-run.txt","timeout":30}) })}\n\n` +
           'data: {"type":"finish","finishReason":{"unified":"error","raw":"provider_error"}}\n\n' +
           "data: [DONE]\n\n",
       ),
@@ -10291,7 +10300,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       JSON.stringify({ max_tool_result_bytes: 1024 }),
     );
     const responses = [
-      fakeGatewayToolCall(callId, "read_file", { path: "no-save-large.txt" }),
+      fakeGatewayVerbCall(callId, "read_file", { path: "no-save-large.txt" }),
       fakeGatewayFinalText("No-save capped result completed."),
     ];
     const gateway = startGateway(() =>
@@ -10534,7 +10543,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     writeFileSync(join(root.workspace, "fixture.txt"), "id projection fixture\n");
     const responses = [
       fakeGatewaySse([
-        ...ids.map((id) => ({ type: "tool-call", toolCallId: id, toolName: "read_file", input: { path: "fixture.txt", force: true } })),
+        ...ids.map((id) => ({ type: "tool-call", toolCallId: id, toolName: "run_code", input: verbBody("read_file", { path: "fixture.txt", force: true }) })),
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
       fakeGatewayFinalText("Read the fixture."),
@@ -10550,7 +10559,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(result.code).toBe(0);
       expect(result.signal).toBeNull();
       const json = parseAskJson(result.stdout);
-      expect(json.tool_calls).toEqual(ids.map(() => ({ name: "read_file", status: "success" })));
+      expect(json.tool_calls).toEqual(ids.map(() => ({ name: "run_code", status: "success" })));
       expect(gateway.requests).toHaveLength(2);
       const firstParts = JSON.parse(gateway.requests[1]!.body).prompt.flatMap((message: { content: unknown }) => Array.isArray(message.content) ? message.content : []);
       const wireIds = firstParts.filter((part: { type: string }) => part.type === "tool-call").map((part: { toolCallId: string }) => part.toolCallId);
@@ -10608,10 +10617,10 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         { type: "tool-input-end", id: "p".repeat(257) },
       ] : [];
       const responses = [
-        fakeGatewayToolCall("prior", "write_file", { path: "prior.txt", content: "settled" }),
+        fakeGatewayVerbCall("prior", "write_file", { path: "prior.txt", content: "settled" }),
         fakeGatewaySse([
           ...streamed,
-          { type: "tool-call", toolCallId: "sibling", toolName: "write_file", input: { path: "must-not-exist.txt", content: "unexpected effect" } },
+          { type: "tool-call", toolCallId: "sibling", toolName: "run_code", input: verbBody("write_file", { path: "must-not-exist.txt", content: "unexpected effect" }) },
           invalid,
           { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" } },
         ]),
@@ -10629,7 +10638,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(existsSync(join(root.workspace, "must-not-exist.txt"))).toBe(false);
         expect(gateway.requests).toHaveLength(2);
         const json = parseAskJson(result.stdout);
-        expect(json.tool_calls).toEqual([{ name: "write_file", status: "success" }]);
+        expect(json.tool_calls).toEqual([{ name: "run_code", status: "success" }]);
         const detail = await runFx(["session", "--id", json.session_id, "--json"], { cwd: root.workspace, env });
         expect(detail.code).toBe(0);
         const history = JSON.parse(detail.stdout).history;
@@ -10659,7 +10668,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
   test("blank current tool id is rejected before file execution", async () => {
     const root = createFixtureRoot("blank-call-id");
     const tracePath = join(root.root, "trace.log");
-    const gateway = startGateway(() => fakeGatewayToolCall(" \t", "write_file", {
+    const gateway = startGateway(() => fakeGatewayVerbCall(" \t", "write_file", {
       path: "must-not-exist.txt", content: "unexpected effect",
     }));
     try {
@@ -10682,8 +10691,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const tracePath = join(root.root, "trace.log");
     writeFileSync(join(root.workspace, "fixture.txt"), "settled evidence\n");
     const responses = [
-      fakeGatewayToolCall("read_1", "read_file", { path: "fixture.txt" }),
-      fakeGatewayToolCall("read_2", "read_file", { path: "fixture.txt", force: true }),
+      fakeGatewayVerbCall("read_1", "read_file", { path: "fixture.txt" }),
+      fakeGatewayVerbCall("read_2", "read_file", { path: "fixture.txt", force: true }),
       fakeGatewayFinalText(" \t\r\n"),
       fakeGatewayFinalText("Finished reading the fixture."),
     ];
@@ -10697,12 +10706,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       );
       expect(result.code).toBe(0);
       expect(result.signal).toBeNull();
-      expect(result.stderr).toBe("Reading fixture.txt\nReading fixture.txt\n");
+      expect(result.stderr).toBe("Working \nWorking \n");
       const json = parseAskJson(result.stdout);
       expect(json.output).toContain("Finished reading the fixture.");
       expect(json.tool_calls).toEqual([
-        { name: "read_file", status: "success" },
-        { name: "read_file", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       expect(gateway.requests).toHaveLength(4);
       const request = JSON.parse(gateway.requests[3]!.body);
@@ -10745,9 +10754,9 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     writeFileSync(join(root.workspace, "fixture.txt"), "settled evidence\n");
     const finalText = "Replacement inspection completed.";
     const responses = [
-      fakeGatewaySerializedToolCall("first_read", "read_file", '{"path":"fixture.txt"}', commentary),
+      fakeGatewaySerializedToolCall("first_read", "run_code", JSON.stringify(verbBody("read_file", { path: "fixture.txt" })), commentary),
       sse(`data: ${JSON.stringify({ type: "text-delta", id: "answer", delta: partialText })}\n\n`),
-      fakeGatewayToolCall("replacement_read", "read_file", { path: "fixture.txt", force: true }),
+      fakeGatewayVerbCall("replacement_read", "read_file", { path: "fixture.txt", force: true }),
       fakeGatewayFinalText(finalText),
     ];
     const gateway = startGateway(() =>
@@ -10765,8 +10774,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(json.output).not.toContain(partialText);
       expect(json.final_output).toBe(finalText);
       expect(json.tool_calls).toEqual([
-        { name: "read_file", status: "success" },
-        { name: "read_file", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       expect(gateway.requestCount()).toBe(4);
       expect(gateway.requests[3]!.body).not.toContain(partialText);
@@ -10793,8 +10802,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           fakeGatewayFinalText(finalText),
         ]
         : [
-          fakeGatewayToolCall("silent_read_1", "read_file", { path: "fixture.txt" }),
-          fakeGatewayToolCall("silent_read_2", "read_file", { path: "fixture.txt" }),
+          fakeGatewayVerbCall("silent_read_1", "read_file", { path: "fixture.txt" }),
+          fakeGatewayVerbCall("silent_read_2", "read_file", { path: "fixture.txt" }),
           partial,
           fakeGatewayFinalText(""),
           fakeGatewayFinalText(finalText),
@@ -11069,7 +11078,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const gateway = startGateway(() =>
       requestIndex++ === 0
         ? sse(
-          'data: {"type":"tool-call","toolCallId":"command_1","toolName":"Bash","input":{"command":"printf executed > command-must-not-run.txt","timeout":30}}\n\n' +
+          `data: ${JSON.stringify({ type: "tool-call", toolCallId: "command_1", toolName: "run_code", input: verbBody("Bash", {"command":"printf executed > command-must-not-run.txt","timeout":30}) })}\n\n` +
             'data: {"type":"finish","finishReason":{"unified":"","raw":"provider_error"}}\n\n' +
             "data: [DONE]\n\n",
         )
@@ -11257,7 +11266,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
 
       if (index === 0) return unavailableResponse("1");
-      if (index === 1) return fakeGatewayToolCall("read_notes", "read_file", { path: "notes.txt" });
+      if (index === 1) return fakeGatewayVerbCall("read_notes", "read_file", { path: "notes.txt" });
       return new Response(JSON.stringify({ error: { message: "bad request body" } }), {
         status: 400,
         headers: { "content-type": "application/json" },
@@ -11390,7 +11399,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
         return raw.includes('"seed-read"')
           ? fakeGatewayFinalText("SEED_DONE")
-          : fakeGatewayToolCall("seed-read", "read_file", { path: "seed-notes.txt" });
+          : fakeGatewayVerbCall("seed-read", "read_file", { path: "seed-notes.txt" });
       }
       attempt += 1;
 
@@ -11482,7 +11491,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const gateway = startDynamicFakeGateway((body) => {
       requestIndex += 1;
       if (requestIndex === 1) {
-        return fakeGatewayToolCall("read_retry_order", "read_file", {
+        return fakeGatewayVerbCall("read_retry_order", "read_file", {
           path: "fixture.txt",
         });
       }
@@ -11525,7 +11534,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(result.code).toBe(0);
       expect(json.exit_code).toBe(0);
       expect(json.output).toBe(recoveredText);
-      expect(json.tool_calls).toEqual([{ name: "read_file", status: "success" }]);
+      expect(json.tool_calls).toEqual([{ name: "run_code", status: "success" }]);
       expect(gateway.requestCount()).toBe(3);
       expectOnlyLeadingSystemMessages(gateway.requests[2]!.body);
       expect(retryPrompt.at(-1)?.role).toBe("tool");
@@ -11546,7 +11555,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const sentinelPath = join(root.workspace, "should-not-exist.txt");
     const responses = [
       sse(
-        'data: {"type":"tool-call","toolCallId":"write_1","toolName":"write_file","input":{"path":"should-not-exist.txt","content":"unsafe"}}\n\n' +
+        `data: ${JSON.stringify({ type: "tool-call", toolCallId: "write_1", toolName: "run_code", input: verbBody("write_file", {"path":"should-not-exist.txt","content":"unsafe"}) })}\n\n` +
           "data: [DONE]\n\n",
       ),
       fakeGatewayFinalText("Recovered without executing the uncertain write."),
@@ -11614,10 +11623,10 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const sentinelPath = join(root.workspace, "must-not-repeat.txt");
     const responses = [
       sse(
-        'data: {"type":"tool-call","toolCallId":"write_uncertain","toolName":"write_file","input":{"path":"must-not-repeat.txt","content":"unsafe"}}\n\n' +
+        `data: ${JSON.stringify({ type: "tool-call", toolCallId: "write_uncertain", toolName: "run_code", input: verbBody("write_file", {"path":"must-not-repeat.txt","content":"unsafe"}) })}\n\n` +
           "data: [DONE]\n\n",
       ),
-      fakeGatewayToolCall("write_repeat", "write_file", {
+      fakeGatewayVerbCall("write_repeat", "write_file", {
         path: "must-not-repeat.txt",
         content: "unsafe",
       }),
