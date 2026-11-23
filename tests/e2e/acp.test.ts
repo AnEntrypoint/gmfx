@@ -40,6 +40,7 @@ import {
   fakeGatewaySerializedToolCall,
   fakeGatewaySse,
   fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   fakeShellRun,
   startDynamicFakeGateway,
   startFakeGateway,
@@ -144,7 +145,7 @@ async function expectMcpProcessExited(pidPath: string): Promise<void> {
 }
 
 function fileToolCall(id: string, path: string, content: string) {
-  return fakeGatewayToolCall(id, "write_file", { path, content });
+  return fakeGatewayVerbCall(id, "write_file", { path, content });
 }
 
 function lengthLimitedCommandCall(command: string) {
@@ -289,7 +290,17 @@ function acpToolResultText(body: string, callId: string): string {
     part.type === "tool-result" && part.toolCallId === callId
   );
   if (!result) throw new Error(`Missing tool result for ${callId}`);
-  return acpContentText(result.output);
+  return runCodeVerbReply(acpContentText(result.output));
+}
+
+function runCodeVerbReply(text: string): string {
+  try {
+    const envelope = JSON.parse(text);
+    if (envelope?.ok !== true || !("value" in envelope)) return text;
+    return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
+  } catch {
+    return text;
+  }
 }
 
 function occurrenceCount(text: string, needle: string): number {
@@ -1088,11 +1099,11 @@ for (const [name, finalText] of [
 test("ACP shell completed and replayed updates show the command output", async () => {
   const fixture = createConfiguredProviderFixture(body => body.messages.some((message: any) => message.role === "tool")
     ? configuredCompletion(body.model, "done")
-    : configuredToolCompletion(body.model, "Bash", { command: "echo hello-$((6*7))" }, "call_shell"));
-  const shellText = (lines: any[]) => lines
+    : configuredToolCompletion(body.model, "run_code", { body: "return gm.Bash({ command: \"echo hello-$((6*7))\" });" }, "call_shell"));
+  const shellText = (lines: any[], status: string) => lines
     .filter((message: any) => message.method === "session/update" && message.params?.update?.toolCallId === "call_shell")
     .map((message: any) => message.params.update)
-    .filter((update: any) => update.status === "completed")
+    .filter((update: any) => update.status === status && update.content)
     .map((update: any) => update.content);
   let client: AcpClient | undefined;
   try {
@@ -1104,7 +1115,7 @@ test("ACP shell completed and replayed updates show the command output", async (
     const prompt = await runPrompt(client, "Run the command.", TIMEOUT);
     expect(prompt.promptResult.result.stopReason).toBe("end_turn");
     const expected = [{ type: "content", content: { type: "text", text: "hello-42\n" } }];
-    expect(shellText(prompt.messages)).toEqual([expected]);
+    expect(shellText(prompt.messages, "in_progress")).toEqual([expected]);
     expect(client.stderr).toBe("");
     client.endStdin();
     expect(await client.waitForExit()).toBe(0);
@@ -1114,7 +1125,7 @@ test("ACP shell completed and replayed updates show the command output", async (
     await client.request("initialize", { protocolVersion: 1 }, 1);
     const loaded = await client.request("session/load", { sessionId: created.result.sessionId, cwd: fixture.workspace, mcpServers: [] }, 2) as any;
     if (loaded.error) throw new Error(JSON.stringify(loaded));
-    expect(shellText(client.rawLines.map(line => JSON.parse(line)))).toEqual([expected]);
+    expect(shellText(client.rawLines.map(line => JSON.parse(line)), "completed")).toEqual([[{ type: "content", content: { type: "text", text: expect.stringContaining("Bash(echo hello-$((6*7))) -> ok") } }]]);
     expect(client.stderr).toBe("");
   } finally {
     await client?.close();
@@ -1126,8 +1137,8 @@ test("ACP finishes tool calls that a cancel stopped before they ran", async () =
   const root = createIsolatedRoot("fx-acp-cancel-cards-");
   const gateway = startFakeGateway([
     fakeGatewaySse([
-      { type: "tool-call", toolCallId: "call_slow", toolName: "Bash", input: { command: "sleep 5; echo slow" } },
-      { type: "tool-call", toolCallId: "call_skipped", toolName: "Bash", input: { command: "echo skipped" } },
+      { type: "tool-call", toolCallId: "call_slow", toolName: "run_code", input: { body: "return gm.Bash({ command: \"sleep 5; echo slow\" });" } },
+      { type: "tool-call", toolCallId: "call_skipped", toolName: "run_code", input: { body: "return gm.Bash({ command: \"echo skipped\" });" } },
       { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
     ]),
   ]);
@@ -1982,7 +1993,7 @@ describe("acp: model-independent", () => {
       const fifo = Bun.spawnSync(["mkfifo", fifoPath]);
       expect(fifo.exitCode).toBe(0);
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("fifo_read_1", "read_file", {
+        fakeGatewayVerbCall("fifo_read_1", "read_file", {
           path: "search-pipe",
         }),
         finalText("FIFO rejection handled."),
@@ -2226,7 +2237,7 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-load-tool-replay-");
       writeFileSync(join(root.workspace, "replay-note.txt"), "ACP_LOAD_REPLAY_CONTENT\n");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("replay_call_1", "read_file", { path: "replay-note.txt" }),
+        fakeGatewayVerbCall("replay_call_1", "read_file", { path: "replay-note.txt" }),
         finalText("ACP_LOAD_REPLAY_ANSWER"),
       ]);
       let client: AcpClient | undefined;
@@ -2265,15 +2276,15 @@ describe("acp: model-independent", () => {
           update.sessionUpdate === "tool_call" && update.toolCallId === "replay_call_1"
         );
         expect(announce).toBeDefined();
-        expect(announce.name).toBe("read_file");
-        expect(announce.kind).toBe("read");
-        expect(announce.rawInput).toEqual({ path: "replay-note.txt" });
+        expect(announce.name).toBe("run_code");
+        expect(announce.kind).toBe("execute");
+        expect(announce.rawInput).toEqual({ body: 'return gm.read_file({"path":"replay-note.txt"});' });
 
         const finish = updates.find((update) =>
           update.sessionUpdate === "tool_call_update" && update.toolCallId === "replay_call_1"
         );
         expect(finish?.status).toBe("completed");
-        expect(JSON.stringify(finish?.content)).toContain("ACP_LOAD_REPLAY_CONTENT");
+        expect(JSON.stringify(finish?.content)).toContain("read_file(replay-note.txt) -> ok");
 
         expect(updates.some((update) =>
           update.sessionUpdate === "user_message_chunk" &&
@@ -2384,7 +2395,7 @@ describe("acp: model-independent", () => {
       writeFileSync(join(root.workspace, "recovery-fixture.txt"), `${toolEvidence}\n`);
       const held = heldFakeGatewayFinalText();
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("recovery_read_1", "read_file", {
+        fakeGatewayVerbCall("recovery_read_1", "read_file", {
           path: "recovery-fixture.txt",
         }),
         partialEofResponse(partialText),
@@ -2448,7 +2459,7 @@ describe("acp: model-independent", () => {
         expect(loadUpdates).toContain("\"sessionUpdate\":\"tool_call\"");
         expect(loadUpdates).toContain("\"sessionUpdate\":\"tool_call_update\"");
         expect(loadUpdates).toContain("recovery_read_1");
-        expect(occurrenceCount(loadUpdates, toolEvidence)).toBe(1);
+        expect(occurrenceCount(loadUpdates, "read_file(recovery-fixture.txt) -> ok")).toBe(1);
         expect(occurrenceCount(loadUpdates, partialText)).toBe(0);
 
 
@@ -2489,7 +2500,7 @@ describe("acp: model-independent", () => {
         expect(completedLoadResponse.error).toBeUndefined();
         const completedLoadUpdates = JSON.stringify(completedLoadMessages);
         expect(completedLoadUpdates).not.toContain("modelResponseRecovery");
-        expect(occurrenceCount(completedLoadUpdates, toolEvidence)).toBe(1);
+        expect(occurrenceCount(completedLoadUpdates, "read_file(recovery-fixture.txt) -> ok")).toBe(1);
         expect(occurrenceCount(completedLoadUpdates, partialText)).toBe(0);
         expect(occurrenceCount(completedLoadUpdates, replacementText)).toBe(1);
         expect(client.stderr).toBe("");
@@ -2513,7 +2524,7 @@ describe("acp: model-independent", () => {
       writeFileSync(join(root.workspace, "fixture.txt"), `${toolEvidence}\n`);
       const held = heldFakeGatewayFinalText();
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("crash_read_1", "read_file", { path: "fixture.txt" }),
+        fakeGatewayVerbCall("crash_read_1", "read_file", { path: "fixture.txt" }),
         partialEofResponse(partialText),
         held.response,
         finalText(replacementText),
@@ -2558,7 +2569,7 @@ describe("acp: model-independent", () => {
 
 
         expect(occurrenceCount(loadUpdates, partialText)).toBe(0);
-        expect(occurrenceCount(loadUpdates, toolEvidence)).toBe(1);
+        expect(occurrenceCount(loadUpdates, "read_file(fixture.txt) -> ok")).toBe(1);
 
         const resumed = await runPrompt(client, "Carry on from the saved read.", TIMEOUT);
         expect(resumed.promptResult.result.stopReason).toBe("end_turn");
@@ -2631,7 +2642,7 @@ describe("acp: model-independent", () => {
       const root = createShortIsolatedRoot("fx-acp-terminal-");
       const toolCallId = "acp_shell_tty_1";
       const gateway = startFakeGateway([
-        fakeGatewayToolCall(toolCallId, "Bash", {
+        fakeGatewayVerbCall(toolCallId, "Bash", {
           command: "printf ACP_PUBLIC_SHELL_TTY",
           cwd: root.workspace,
         }),
@@ -2685,7 +2696,7 @@ describe("acp: model-independent", () => {
         "alias fxsmall='printf ACP_FULL_STARTUP_ALIAS'\n";
       writeFileSync(join(root.home, ".zshrc"), startup);
       writeFileSync(join(root.home, ".bash_profile"), startup);
-      const run = (id: string) => fakeGatewayToolCall(id, "Bash", { command: "fxsmall", cwd: root.workspace });
+      const run = (id: string) => fakeGatewayVerbCall(id, "Bash", { command: "fxsmall", cwd: root.workspace });
       const gateway = startFakeGateway([
         run("acp_snapshot_1"),
         run("acp_snapshot_2"),
@@ -2737,7 +2748,7 @@ describe("acp: model-independent", () => {
       writeFileSync(join(root.external, "AGENTS.md"), sentinel + "\n");
       writeFileSync(target, "ACP_ADDED_ROOT_CONTENT\n");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("acp_added_read_1", "read_file", {
+        fakeGatewayVerbCall("acp_added_read_1", "read_file", {
           path: target,
           line_count: 10,
         }),
@@ -3083,15 +3094,15 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-v2-");
       const httpFixture = startModernMcpHttpFixture("json");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("search_http", "capability_search", {
+        fakeGatewayVerbCall("search_http", "capability_search", {
           kind: "mcp",
           server: "fixture",
           query: "echo",
           limit: 5,
         }),
-        fakeGatewayToolCall("select_http", "select_tools", {
+        fakeGatewayVerbCall("select_http", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http", MCP_TOOL_NAME, { text: "acp" }),
+        fakeGatewayVerbCall("call_http", MCP_TOOL_NAME, { text: "acp" }),
         finalText("ACP MCP complete"),
       ]);
       try {
@@ -3138,15 +3149,9 @@ describe("acp: model-independent", () => {
           .filter((message) => message.params?.update?.sessionUpdate === "tool_call")
           .map((message) => message.params.update);
         const toolCall = (id: string) => toolCalls.find((update) => update.toolCallId === id);
-        expect(toolCall("search_http")?._meta.fx.toolCall).toEqual({ internal: true });
-        expect(toolCall("select_http")?._meta.fx.toolCall).toEqual({ internal: true });
-        expect(toolCall("call_http")?.name).toBe(MCP_TOOL_NAME);
-        expect(toolCall("call_http")?._meta.fx.toolCall).toEqual({
-          internal: false,
-          mcp: { server: "fixture", tool: "echo" },
-        });
-        expect(toolCall("call_http")?.title).toBe("echo");
-        expect(client.hookEvents.find(event => event.type === "mcp.start").data).toMatchObject({ callId: "call_http", server: "fixture", tool: "echo", transport: "http" });
+        for (const id of ["search_http", "select_http", "call_http"]) expect(toolCall(id)?.name).toBe("run_code");
+        expect(toolCall("call_http")?.title).toContain(`gm.`);
+        expect(client.hookEvents.find(event => event.type === "mcp.start").data).toMatchObject({ callId: "call_http:1", server: "fixture", tool: "echo", transport: "http" });
         expect(client.hookEvents.find(event => event.type === "mcp.request").data.requestIdKind).toBe("engine");
         expect(client.hookEvents.filter(event => event.type === "mcp.end")).toHaveLength(1);
         expect(client.hookEvents.find(event => event.type === "mcp.end").data.operationId)
@@ -3179,7 +3184,7 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-notices-");
       const httpFixture = startModernMcpHttpFixture("json");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("search_notice", "capability_search", { kind: "mcp", server: "fixture", query: "echo", limit: 5 }),
+        fakeGatewayVerbCall("search_notice", "capability_search", { kind: "mcp", server: "fixture", query: "echo", limit: 5 }),
         finalText("ACP notices complete"),
       ]);
       try {
@@ -3229,7 +3234,7 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-notices-false-");
       const httpFixture = startModernMcpHttpFixture("json");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("search_notice", "capability_search", { kind: "mcp", server: "fixture", query: "echo", limit: 5 }),
+        fakeGatewayVerbCall("search_notice", "capability_search", { kind: "mcp", server: "fixture", query: "echo", limit: 5 }),
         finalText("ACP notices complete"),
       ]);
       try {
@@ -3274,9 +3279,9 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-v2-loaded-");
       const httpFixture = startModernMcpHttpFixture("json");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("call_loaded", MCP_TOOL_NAME, { text: "acp" }),
+        fakeGatewayVerbCall("call_loaded", MCP_TOOL_NAME, { text: "acp" }),
         finalText("ACP MCP loaded"),
-        fakeGatewayToolCall("call_loaded_again", MCP_TOOL_NAME, { text: "again" }),
+        fakeGatewayVerbCall("call_loaded_again", MCP_TOOL_NAME, { text: "again" }),
         finalText("ACP MCP loaded again"),
         finalText("ACP MCP lazy"),
       ]);
@@ -3339,7 +3344,7 @@ describe("acp: model-independent", () => {
       const pidPath = join(root.root, "fixture.pid");
       const eofPath = join(root.root, "fixture.eof");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("call_stdio", MCP_TOOL_NAME, { text: "acp" }),
+        fakeGatewayVerbCall("call_stdio", MCP_TOOL_NAME, { text: "acp" }),
         finalText("ACP MCP stdio"),
       ]);
 
@@ -3400,9 +3405,9 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-v2-load-once-");
       const pidPath = join(root.root, "fixture.pid");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("call_old", MCP_TOOL_NAME, { text: "old" }),
+        fakeGatewayVerbCall("call_old", MCP_TOOL_NAME, { text: "old" }),
         finalText("ACP MCP old"),
-        fakeGatewayToolCall("call_new", MCP_TOOL_NAME, { text: "new" }),
+        fakeGatewayVerbCall("call_new", MCP_TOOL_NAME, { text: "new" }),
         finalText("ACP MCP new"),
       ]);
 
@@ -3476,7 +3481,7 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-direct-");
       const httpFixture = startModernMcpHttpFixture("json");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("direct_unloaded", MCP_TOOL_NAME, { text: "direct" }),
+        fakeGatewayVerbCall("direct_unloaded", MCP_TOOL_NAME, { text: "direct" }),
         finalText("direct call complete"),
       ]);
       try {
@@ -3767,7 +3772,7 @@ describe("acp: model-independent", () => {
       writeFileSync(join(root.external, "AGENTS.md"), "EXTERNAL_RULES_MARKER\n");
       writeFileSync(join(root.external, "note.txt"), "EXTERNAL_NOTE_CONTENT\n");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("cwd_read", "read_file", { path: "note.txt" }),
+        fakeGatewayVerbCall("cwd_read", "read_file", { path: "note.txt" }),
         finalText("read the external note"),
         finalText("back in the process workspace"),
       ]);
@@ -3839,10 +3844,10 @@ describe("acp: model-independent", () => {
         }),
       );
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("plain_call", "mcp__profile__echo", { text: "from plain" }),
+        fakeGatewayVerbCall("plain_call", "mcp__profile__echo", { text: "from plain" }),
         finalText("plain session done"),
-        fakeGatewayToolCall("select_profile", "select_tools", { names: ["mcp__profile__echo"] }),
-        fakeGatewayToolCall("profile_call", "mcp__profile__echo", { text: "from profile" }),
+        fakeGatewayVerbCall("select_profile", "select_tools", { names: ["mcp__profile__echo"] }),
+        fakeGatewayVerbCall("profile_call", "mcp__profile__echo", { text: "from profile" }),
         finalText("profile tool used"),
       ]);
       const promptOf = (index: number) => acpGatewayRequest(gateway.requests[index]!.body).prompt
@@ -3913,8 +3918,8 @@ describe("acp: model-independent", () => {
         }),
       );
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_project", "select_tools", { names: ["mcp__project__echo"] }),
-        fakeGatewayToolCall("call_project", "mcp__project__echo", { text: "acp" }),
+        fakeGatewayVerbCall("select_project", "select_tools", { names: ["mcp__project__echo"] }),
+        fakeGatewayVerbCall("call_project", "mcp__project__echo", { text: "acp" }),
         finalText("project MCP complete"),
       ]);
       try {
@@ -3952,7 +3957,7 @@ describe("acp: model-independent", () => {
         async () => {
           firstRequest.resolve();
           await releaseFirst.promise;
-          return fakeGatewayToolCall("load_select", "select_tools", { names: ["mcp__mini__browser_read"] });
+          return fakeGatewayVerbCall("load_select", "select_tools", { names: ["mcp__mini__browser_read"] });
         },
         fakeGatewayToolCall("load_read", "mcp__mini__browser_read", {}),
         finalText("Example Domain"),
@@ -4087,9 +4092,9 @@ describe("acp: model-independent", () => {
         }),
       );
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_project", "select_tools", {
+        fakeGatewayVerbCall("select_project", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_project", MCP_TOOL_NAME, { text: "acp" }),
+        fakeGatewayVerbCall("call_project", MCP_TOOL_NAME, { text: "acp" }),
         finalText("ACP project MCP complete"),
       ]);
       const env = {
@@ -4176,8 +4181,8 @@ describe("acp: model-independent", () => {
         }),
       );
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_project", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_project", MCP_TOOL_NAME, { text: "acp" }),
+        fakeGatewayVerbCall("select_project", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_project", MCP_TOOL_NAME, { text: "acp" }),
         finalText("ACP project MCP complete"),
       ]);
       const env = { ...fakeGatewayEnv(root, gateway) };
@@ -4348,9 +4353,9 @@ describe("acp: model-independent", () => {
       const loadFixture = startLegacyHttpSseFixture();
       const resumeFixture = startLegacyHttpSseFixture();
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_legacy_http", "select_tools", {
+        fakeGatewayVerbCall("select_legacy_http", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_legacy_http", MCP_TOOL_NAME, { text: "new" }),
+        fakeGatewayVerbCall("call_legacy_http", MCP_TOOL_NAME, { text: "new" }),
         finalText("legacy HTTP new complete"),
         finalText("legacy SSE load held"),
         finalText("legacy SSE resume held"),
@@ -4494,7 +4499,7 @@ describe("acp: model-independent", () => {
         },
       });
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_protected", "select_tools", {
+        fakeGatewayVerbCall("select_protected", "select_tools", {
           names: ["mcp__protected__echo"] }),
         finalText("protected server checked"),
       ]);
@@ -4534,7 +4539,7 @@ describe("acp: model-independent", () => {
         expect(selected).not.toContain("fx mcp login");
 
 
-        expect(mcpRequests).toBe(1);
+        expect(mcpRequests).toBe(2);
         expect(metadataRequests).toBe(0);
         const credentials = join(root.home, ".fx", "mcp-credentials");
         const saved = existsSync(credentials)
@@ -4572,9 +4577,9 @@ describe("acp: model-independent", () => {
         },
       });
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_http_auth", "select_tools", {
+        fakeGatewayVerbCall("select_http_auth", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http_auth", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_http_auth", MCP_TOOL_NAME, {
           text: "authenticated",
         }),
         finalText("ACP authenticated HTTP complete"),
@@ -4640,14 +4645,14 @@ describe("acp: model-independent", () => {
       const loadFixture = startModernMcpHttpFixture("json");
       const resumeFixture = startModernMcpHttpFixture("json");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_http_new", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http_new", MCP_TOOL_NAME, { text: "new" }),
+        fakeGatewayVerbCall("select_http_new", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_http_new", MCP_TOOL_NAME, { text: "new" }),
         finalText("HTTP new complete"),
-        fakeGatewayToolCall("select_http_load", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http_load", MCP_TOOL_NAME, { text: "load" }),
+        fakeGatewayVerbCall("select_http_load", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_http_load", MCP_TOOL_NAME, { text: "load" }),
         finalText("HTTP load complete"),
-        fakeGatewayToolCall("select_http_resume", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http_resume", MCP_TOOL_NAME, { text: "resume" }),
+        fakeGatewayVerbCall("select_http_resume", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_http_resume", MCP_TOOL_NAME, { text: "resume" }),
         finalText("HTTP resume complete"),
       ]);
       try {
@@ -4775,20 +4780,20 @@ describe("acp: model-independent", () => {
       const fastFixture = startModernMcpHttpFixture("json");
       const closeFixture = startModernMcpHttpFixture("stall_call");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_http_replacement_slow", "select_tools", {
+        fakeGatewayVerbCall("select_http_replacement_slow", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http_replacement_slow", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_http_replacement_slow", MCP_TOOL_NAME, {
           text: "slow",
         }),
-        fakeGatewayToolCall("select_http_replacement_fast", "select_tools", {
+        fakeGatewayVerbCall("select_http_replacement_fast", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http_replacement_fast", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_http_replacement_fast", MCP_TOOL_NAME, {
           text: "fast",
         }),
         finalText("HTTP replacement complete"),
-        fakeGatewayToolCall("select_http_close_slow", "select_tools", {
+        fakeGatewayVerbCall("select_http_close_slow", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http_close_slow", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_http_close_slow", MCP_TOOL_NAME, {
           text: "slow",
         }),
       ]);
@@ -4876,9 +4881,9 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-http-eof-");
       const httpFixture = startModernMcpHttpFixture("stall_call");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_http_eof_slow", "select_tools", {
+        fakeGatewayVerbCall("select_http_eof_slow", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_http_eof_slow", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_http_eof_slow", MCP_TOOL_NAME, {
           text: "slow",
         }),
       ]);
@@ -4931,7 +4936,7 @@ describe("acp: model-independent", () => {
         "version_retry_error_status",
       ] as const;
       const gateway = startFakeGateway(modes.flatMap((mode) => [
-        fakeGatewayToolCall(`select_${mode}`, "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall(`select_${mode}`, "select_tools", { names: [MCP_TOOL_NAME] }),
         finalText(`${mode} checked`),
       ]));
       try {
@@ -5078,14 +5083,14 @@ describe("acp: model-independent", () => {
       const loadPid = join(root.root, "mcp-load.pid");
       const resumePid = join(root.root, "mcp-resume.pid");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_new", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_new", MCP_TOOL_NAME, { text: "new" }),
+        fakeGatewayVerbCall("select_new", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_new", MCP_TOOL_NAME, { text: "new" }),
         finalText("new complete"),
-        fakeGatewayToolCall("select_load", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_load", MCP_TOOL_NAME, { text: "load" }),
+        fakeGatewayVerbCall("select_load", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_load", MCP_TOOL_NAME, { text: "load" }),
         finalText("load complete"),
-        fakeGatewayToolCall("select_resume", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_resume", MCP_TOOL_NAME, { text: "resume" }),
+        fakeGatewayVerbCall("select_resume", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_resume", MCP_TOOL_NAME, { text: "resume" }),
         finalText("resume complete"),
       ]);
       try {
@@ -5179,8 +5184,8 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-mrtr-");
       const pidPath = join(root.root, "mcp-mrtr.pid");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_mrtr", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_mrtr", MCP_TOOL_NAME, { text: "acp" }),
+        fakeGatewayVerbCall("select_mrtr", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_mrtr", MCP_TOOL_NAME, { text: "acp" }),
         finalText("ACP MRTR boundary complete"),
       ]);
       try {
@@ -5237,9 +5242,9 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-unadvertised-url-");
       const pidPath = join(root.root, "mcp-unadvertised-url.pid");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_unadvertised", "select_tools", {
+        fakeGatewayVerbCall("select_unadvertised", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_unadvertised", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_unadvertised", MCP_TOOL_NAME, {
           text: "unadvertised",
         }),
         finalText("unadvertised URL mode checked"),
@@ -5337,8 +5342,8 @@ describe("acp: model-independent", () => {
         const pidPath = join(root.root, "mcp-cap.pid");
         const wirePath = join(root.root, "mcp-cap.wire.jsonl");
         const activeGateway = startFakeGateway([
-          fakeGatewayToolCall("select_cap", "select_tools", { names: [MCP_TOOL_NAME] }),
-          fakeGatewayToolCall("call_cap", MCP_TOOL_NAME, { text: testCase.label }),
+          fakeGatewayVerbCall("select_cap", "select_tools", { names: [MCP_TOOL_NAME] }),
+          fakeGatewayVerbCall("call_cap", MCP_TOOL_NAME, { text: testCase.label }),
           finalText("ACP capability form complete"),
         ]);
         let activeClient: AcpClient | null = null;
@@ -5414,8 +5419,8 @@ describe("acp: model-independent", () => {
       const pidPath = join(root.root, "mcp-elicitation-form.pid");
       const wirePath = join(root.root, "mcp-elicitation-form.wire.jsonl");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_form", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_form", MCP_TOOL_NAME, { text: "acp-form" }),
+        fakeGatewayVerbCall("select_form", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_form", MCP_TOOL_NAME, { text: "acp-form" }),
         finalText("ACP form elicitation complete"),
       ]);
       const directRequests: Array<Record<string, any>> = [];
@@ -5534,8 +5539,8 @@ describe("acp: model-independent", () => {
       const pidPath = join(root.root, "mcp-v2-form.pid");
       const wirePath = join(root.root, "mcp-v2-form.wire.jsonl");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_form", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_form", MCP_TOOL_NAME, { text: "acp-form" }),
+        fakeGatewayVerbCall("select_form", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_form", MCP_TOOL_NAME, { text: "acp-form" }),
         finalText("ACP MCP form complete"),
       ]);
       const directRequests: Array<Record<string, any>> = [];
@@ -5609,8 +5614,8 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-elicitation-eof-");
       const pidPath = join(root.root, "mcp-elicitation-eof.pid");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_eof", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_eof", MCP_TOOL_NAME, { text: "eof" }),
+        fakeGatewayVerbCall("select_eof", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_eof", MCP_TOOL_NAME, { text: "eof" }),
       ]);
       const directRequests: Array<Record<string, unknown>> = [];
       try {
@@ -5679,8 +5684,8 @@ describe("acp: model-independent", () => {
       const wirePath = join(root.root, "mcp-elicitation-secret.wire.jsonl");
       const tracePath = join(root.root, "fx-trace.log");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_secret", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_secret", MCP_TOOL_NAME, { text: "secret" }),
+        fakeGatewayVerbCall("select_secret", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_secret", MCP_TOOL_NAME, { text: "secret" }),
         finalText("Secret form rejected"),
       ]);
       const directRequests: Array<Record<string, unknown>> = [];
@@ -5766,8 +5771,8 @@ describe("acp: model-independent", () => {
       });
       const targetUrl = `http://127.0.0.1:${target.port}/authorize?flow=test`;
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_url", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_url", MCP_TOOL_NAME, { text: "acp-url" }),
+        fakeGatewayVerbCall("select_url", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_url", MCP_TOOL_NAME, { text: "acp-url" }),
         finalText("ACP URL elicitation complete"),
       ]);
       const directRequests: Array<Record<string, any>> = [];
@@ -5877,9 +5882,9 @@ describe("acp: model-independent", () => {
         mode: "elicitation_form",
       });
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_legacy_form", "select_tools", {
+        fakeGatewayVerbCall("select_legacy_form", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_legacy_form", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_legacy_form", MCP_TOOL_NAME, {
           text: "legacy-form",
         }),
         finalText("Legacy form elicitation complete"),
@@ -5978,9 +5983,9 @@ describe("acp: model-independent", () => {
         manualUrlCompletion: true,
       });
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_legacy_url", "select_tools", {
+        fakeGatewayVerbCall("select_legacy_url", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_legacy_url", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_legacy_url", MCP_TOOL_NAME, {
           text: "legacy-url",
         }),
         finalText("Legacy URL elicitation complete"),
@@ -6091,9 +6096,9 @@ describe("acp: model-independent", () => {
         completeBeforeElicitationResponse: true,
       });
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_legacy_url_early", "select_tools", {
+        fakeGatewayVerbCall("select_legacy_url_early", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_legacy_url_early", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_legacy_url_early", MCP_TOOL_NAME, {
           text: "legacy-url-early",
         }),
         finalText("Early legacy URL completion accepted"),
@@ -6179,9 +6184,9 @@ describe("acp: model-independent", () => {
         completeBeforeElicitationResponse: true,
       });
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_legacy_url_decline", "select_tools", {
+        fakeGatewayVerbCall("select_legacy_url_decline", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_legacy_url_decline", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_legacy_url_decline", MCP_TOOL_NAME, {
           text: "legacy-url-decline",
         }),
         finalText("Early legacy URL completion declined"),
@@ -6259,9 +6264,9 @@ describe("acp: model-independent", () => {
       const root = createIsolatedRoot("fx-acp-mcp-elicitation-cancel-");
       const pidPath = join(root.root, "mcp-elicitation-cancel.pid");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_cancelled_form", "select_tools", {
+        fakeGatewayVerbCall("select_cancelled_form", "select_tools", {
           names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_cancelled_form", MCP_TOOL_NAME, {
+        fakeGatewayVerbCall("call_cancelled_form", MCP_TOOL_NAME, {
           text: "cancelled-form",
         }),
       ]);
@@ -6354,13 +6359,13 @@ describe("acp: model-independent", () => {
       const firstPid = join(root.root, "mcp-first.pid");
       const secondPid = join(root.root, "mcp-second.pid");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_first", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_first", MCP_TOOL_NAME, { text: "one" }),
+        fakeGatewayVerbCall("select_first", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_first", MCP_TOOL_NAME, { text: "one" }),
         finalText("first complete"),
-        fakeGatewayToolCall("select_after_failure", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("select_after_failure", "select_tools", { names: [MCP_TOOL_NAME] }),
         finalText("broken replacement checked"),
-        fakeGatewayToolCall("select_second", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_second", MCP_TOOL_NAME, { text: "two" }),
+        fakeGatewayVerbCall("select_second", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_second", MCP_TOOL_NAME, { text: "two" }),
         finalText("second complete"),
       ]);
       try {
@@ -6581,13 +6586,13 @@ describe("acp: model-independent", () => {
       const closePid = join(root.root, "close-slow.pid");
       const closeWire = join(root.root, "close-slow.jsonl");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("select_replacement_slow", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_replacement_slow", MCP_TOOL_NAME, { text: "slow" }),
-        fakeGatewayToolCall("select_replacement_fast", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_replacement_fast", MCP_TOOL_NAME, { text: "fast" }),
+        fakeGatewayVerbCall("select_replacement_slow", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_replacement_slow", MCP_TOOL_NAME, { text: "slow" }),
+        fakeGatewayVerbCall("select_replacement_fast", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_replacement_fast", MCP_TOOL_NAME, { text: "fast" }),
         finalText("replacement complete"),
-        fakeGatewayToolCall("select_close_slow", "select_tools", { names: [MCP_TOOL_NAME] }),
-        fakeGatewayToolCall("call_close_slow", MCP_TOOL_NAME, { text: "slow" }),
+        fakeGatewayVerbCall("select_close_slow", "select_tools", { names: [MCP_TOOL_NAME] }),
+        fakeGatewayVerbCall("call_close_slow", MCP_TOOL_NAME, { text: "slow" }),
       ]);
       try {
         client = await AcpClient.create({
@@ -8721,7 +8726,7 @@ describe("acp: model-independent", () => {
         "ACP_HISTORY_EVIDENCE\n",
       );
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("history_read_1", "read_file", {
+        fakeGatewayVerbCall("history_read_1", "read_file", {
           path: "fixture.txt",
         }),
         finalText("ACP load replay complete."),
@@ -8791,15 +8796,15 @@ describe("acp: model-independent", () => {
         expect(replayedToolCalls).toHaveLength(1);
         expect(replayedToolCalls[0]).toMatchObject({
           toolCallId: "history_read_1",
-          name: "read_file",
-          kind: "read",
+          name: "run_code",
+          kind: "execute",
           status: "pending",
-          rawInput: { path: "fixture.txt" },
+          rawInput: { body: 'return gm.read_file({"path":"fixture.txt"});' },
         });
         expect(replayedToolUpdates).toHaveLength(1);
         expect(replayedToolUpdates[0].toolCallId).toBe("history_read_1");
         expect(replayedToolUpdates[0].status).toBe("completed");
-        expect(JSON.stringify(replayedToolUpdates[0].content)).toContain("ACP_HISTORY_EVIDENCE");
+        expect(JSON.stringify(replayedToolUpdates[0].content)).toContain("read_file(fixture.txt) -> ok");
         const replayedText = loadMessages
           .filter((message) =>
             message.method === "session/update" &&
@@ -8950,8 +8955,8 @@ describe("acp: model-independent", () => {
       writeFileSync(join(root.workspace, "a.txt"), "a\n");
       writeFileSync(join(root.workspace, "b.txt"), "b\n");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("read_1", "read_file", { path: "a.txt" }),
-        fakeGatewayToolCall("read_2", "read_file", { path: "b.txt" }),
+        fakeGatewayVerbCall("read_1", "read_file", { path: "a.txt" }),
+        fakeGatewayVerbCall("read_2", "read_file", { path: "b.txt" }),
         noToolLength(),
         noToolLength(),
         finalText("UNEXPECTED_CONTINUATION"),
@@ -9009,7 +9014,7 @@ describe("acp: model-independent", () => {
         (body) => {
           const paths = acpSkillPaths(body, "acp-explicit");
           expect(paths).toEqual([skillDirectory]);
-          return fakeGatewayToolCall(referenceCallId, "read_file", {
+          return fakeGatewayVerbCall(referenceCallId, "read_file", {
             path: join(paths[0]!, "references", "required.md"),
           });
         },
@@ -9501,7 +9506,7 @@ describe("acp: model-independent", () => {
         );
         expect(permission).toBeDefined();
         expect(permission.params.sessionId).toBeDefined();
-        expect(permission.params.toolCall.toolCallId).toBe("approved_call_1");
+        expect(permission.params.toolCall.toolCallId).toBe("approved_call_1:1");
         expect(permission.params.toolCall.name).toBe("write_file");
         expect(permission.params.toolCall.rawInput).toEqual({
           path: target,
@@ -9520,10 +9525,9 @@ describe("acp: model-independent", () => {
         const permissionIndex = first.messages.indexOf(permission);
         expect(pendingIndex).toBeGreaterThanOrEqual(0);
         expect(pendingIndex).toBeLessThan(permissionIndex);
-        expect(first.messages[pendingIndex]?.params.update.name).toBe("write_file");
+        expect(first.messages[pendingIndex]?.params.update.name).toBe("run_code");
         expect(first.messages[pendingIndex]?.params.update.rawInput).toEqual({
-          path: target,
-          content: "first\n",
+          body: `return gm.write_file(${JSON.stringify({ path: target, content: "first\n" })});`,
         });
         const firstWire = JSON.stringify(first.messages);
         expect(firstWire).toContain('"toolCallId":"approved_call_1"');
@@ -9575,10 +9579,10 @@ describe("acp: model-independent", () => {
         const permission = result.messages.find(
           (message: any) => message.method === "session/request_permission",
         );
-        expect(permission.params.toolCall.toolCallId).toBe("rejected_call_1");
+        expect(permission.params.toolCall.toolCallId).toBe("rejected_call_1:1");
         expect(existsSync(target)).toBe(false);
         const wire = JSON.stringify(result.messages);
-        expect(wire).toContain("user_denied");
+        expect(wire).toContain("Permission to run write_file was not granted");
         expect(wire).toContain('"status":"failed"');
         expect(wire).not.toContain('"status":"error"');
         expect(client.stderr).toBe("");
@@ -9609,7 +9613,7 @@ describe("acp: model-independent", () => {
           expect(acpToolResultText(body, createId)).toContain("child inspection complete");
           return finalText("ACP_PARENT_TURN_DONE");
         }
-        return fakeGatewayToolCall(createId, "Agent", {
+        return fakeGatewayVerbCall(createId, "Agent", {
           prompt: childPrompt,
           description: "inspect workspace",
           subagent_type: "explore",
@@ -9628,7 +9632,7 @@ describe("acp: model-independent", () => {
         expect(gateway.requests).toHaveLength(3);
         expect(acpGatewayRequest(gateway.requests[0]!.body).tools.map((tool) => tool.name)).toEqual(["run_code"]);
         const dispatched = client.hookEvents.find(event => event.type === "delegation" && event.data.phase === "dispatched");
-        expect(dispatched.data.callId).toBe(createId);
+        expect(dispatched.data.callId).toBe(`${createId}:1`);
         const child = client.hookEvents.find(event => event.type === "turn.start" && event.sessionId === dispatched.data.childSessionId);
         expect(child.rootSessionId).toBe(parentSession);
         expect(child.parentSessionId).toBe(parentSession);
@@ -9657,7 +9661,7 @@ describe("acp: model-independent", () => {
         if (acpLatestUserIsReport(body)) return finalText("ACP_LATE_REPORT_SEEN");
         if (acpPromptText(body).includes("Confirm the ACP server")) return finalText("ACP_SUBAGENT_CANCEL_FOLLOWUP_OK");
         if (body.includes(callId)) return finalText("ACP_PARENT_TURN_DONE");
-        return fakeGatewayToolCall(callId, "Agent", {
+        return fakeGatewayVerbCall(callId, "Agent", {
           prompt: childPrompt,
           description: "wait for cancellation",
           subagent_type: "explore",
@@ -9722,8 +9726,8 @@ describe("acp: model-independent", () => {
         expect(JSON.stringify(followUp)).toContain("ACP_SUBAGENT_CANCEL_FOLLOWUP_OK");
 
         expect(JSON.stringify(followUp)).toContain("ACP_LATE_REPORT_SEEN");
-        expect(JSON.stringify(reportUpdatesFor(followUp.messages, callId).at(-1))).toContain("late child completion");
-        expect(client.hookEvents.some(event => event.type === "delegation" && event.data.phase === "completed" && event.data.callId === callId)).toBe(true);
+        expect(JSON.stringify(reportUpdatesFor(followUp.messages, `${callId}:1`).at(-1))).toContain("late child completion");
+        expect(client.hookEvents.some(event => event.type === "delegation" && event.data.phase === "completed" && event.data.callId === `${callId}:1`)).toBe(true);
         expect(client.stderr).toBe("");
       } finally {
         heldChild.resolve(finalText("late child cleanup"));
@@ -9745,7 +9749,7 @@ describe("acp: model-independent", () => {
         JSON.stringify({ permission: { bash: { "printf *": "ask" } } }),
       );
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("approved_command_1", "Bash", {
+        fakeGatewayVerbCall("approved_command_1", "Bash", {
           command: `printf approved > '${marker}'`,
           timeout: 300,
         }),
@@ -9761,12 +9765,12 @@ describe("acp: model-independent", () => {
         client.setPermissionOption("allow_once");
         const result = await runPrompt(client, "Run the approved command.", TIMEOUT);
         const wait = client.hookEvents.find(event => event.type === "wait.start" && event.data.kind === "approval");
-        expect(wait.data.callId).toBe("approved_command_1");
+        expect(wait.data.callId).toBe("approved_command_1:1");
         expect(client.hookEvents.find(event => event.type === "wait.end").data).toMatchObject({ requestId: wait.data.requestId, outcome: "accepted" });
         const permission = result.messages.find(
           (message: any) => message.method === "session/request_permission",
         );
-        expect(permission.params.toolCall.toolCallId).toBe("approved_command_1");
+        expect(permission.params.toolCall.toolCallId).toBe("approved_command_1:1");
         expect(permission.params.toolCall.kind).toBe("execute");
         expect(readFileSync(marker, "utf8")).toBe("approved");
         const statuses = result.messages
@@ -9829,7 +9833,7 @@ describe("acp: model-independent", () => {
           (message: any) => message.method === "session/request_permission",
         );
         expect(permissions).toHaveLength(1);
-        expect(permissions[0]!.params.toolCall.toolCallId).toBe("mode_probe_write");
+        expect(permissions[0]!.params.toolCall.toolCallId).toBe("mode_probe_write:1");
         expect(readFileSync(probePath, "utf8")).toBe("probe");
         expect(client.stderr).toBe("");
       } finally {
@@ -9874,7 +9878,7 @@ describe("acp: model-independent", () => {
         const promptResponse = await readResponse(client, 396);
         expect(promptResponse.result?.stopReason).toBe("cancelled");
 
-        heldReview.resolve(fakeGatewayToolCall("cancelled_review_command", "Bash", {
+        heldReview.resolve(fakeGatewayVerbCall("cancelled_review_command", "Bash", {
           command: `printf cancelled > ${JSON.stringify(marker)}`,
         }));
         await Bun.sleep(100);
@@ -10837,7 +10841,7 @@ test.skipIf(!tmuxAvailable())(
   async () => {
     const root = createIsolatedRoot("fx-acp-compacted-history-");
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("saved-history-effect", "Bash", { command: "printf 'ACP_SAVED_TOOL_OUTPUT\\n' >> replay-effects.txt; printf 'ACP_SAVED_TOOL_OUTPUT\\n'" }),
+      fakeGatewayVerbCall("saved-history-effect", "Bash", { command: "printf 'ACP_SAVED_TOOL_OUTPUT\\n' >> replay-effects.txt; printf 'ACP_SAVED_TOOL_OUTPUT\\n'" }),
       finalText("ACP_EARLIER_VISIBLE_RESPONSE"),
       finalText("ACP_MIDDLE_VISIBLE_RESPONSE"),
       finalText("ACP_LATEST_VISIBLE_RESPONSE"),
@@ -10989,7 +10993,7 @@ test("ACP runs SubagentStart and SubagentStop user hooks around a subagent run",
     ],
   }));
   const gateway = startFakeGateway([
-    fakeGatewayToolCall("acp-agent-child", "Agent", {
+    fakeGatewayVerbCall("acp-agent-child", "Agent", {
       prompt: "CHILD-TASK: reply with the word child-done",
       description: "child task",
       subagent_type: "explore",
@@ -11044,7 +11048,7 @@ test("ACP runs SessionStart, TaskStarted and SessionEnd user hooks and a plugin'
     plugins: [{ id: "hooky", root: pluginRoot, source: pluginRoot, enabled: true }],
   }));
   const gateway = startFakeGateway([
-    fakeGatewayToolCall("acp-agent-child", "Agent", {
+    fakeGatewayVerbCall("acp-agent-child", "Agent", {
       prompt: "CHILD-TASK: reply with the word child-done",
       description: "child task",
       subagent_type: "explore",
