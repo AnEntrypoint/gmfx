@@ -5325,3 +5325,10 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 
 - Passing: tui-terminal-tool "Ctrl-O shows task launch commands in full while the main view trails them" (/workspace/tmp/fx/e2e27/G4/tui-terminal-tool.out; ROWS_G4_DONE 1 counts the other row).
 - Failing: tui-command-permissions "fx ask yolo executes pwd through the default user profile with process-scoped replay". Cause: the test asserts json.tool_calls[0].command_result, but keepCommandResult (src/tools/runcode/run_code.zig) drops successful inner command results by design, so command_result is undefined. Owner decision: carry successful inner command results in the run_code record, or assert their absence.
+
+## Witness from the st29 window (tree bee33a11)
+
+- Build and suite (/workspace/tmp/fx/win_st29.out): ST29_DONE 0. The build passed in 567 s; the suite ran 12260 passed, 27 skipped, 0 failed; the txiki witness reported all checks passed.
+- st28 (tree d55e8eeb) built but failed 2 unit tests in app_input_runtime (kitty Escape and remapped ctrl+c expected a question_resolution row). Caused by removing the question-cancel row in 1063743a; restored in bee33a11.
+- Open: the duplicate "Cancelled" row in the kitty and raw Escape e2e rows is not fixed; the session-replay path (app_session_runtime.zig:3853) is the unconfirmed source.
+- Row groups queued on st29: G5 (tui-resume, 2 rows: zero-output cancelled row, read_file Ctrl-O) at /workspace/tmp/fx/win_rows29_G5.out; G6 (tui-decision-prompts 2 Escape rows, tui-full-transcript-brutal footer row) at win_rows29_G6.out.
