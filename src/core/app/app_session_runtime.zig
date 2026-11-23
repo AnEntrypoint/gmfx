@@ -3915,9 +3915,14 @@ pub fn Runtime(comptime App: type) type {
                 presentation.output_replay,
                 call.id,
             );
+            const detail_call = try run_code_presentation.leadingCall(
+                action_arena.allocator(),
+                app.toolRegistry(agent),
+                call,
+            ) orelse call;
             try sink.attachHistoricalCancelledCommandDetail(
                 entry_id,
-                call,
+                detail_call,
                 presentation.command_artifact_handle,
                 replayed_output,
             );
