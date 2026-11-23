@@ -94,22 +94,22 @@ tmuxTest.each(["SIGTERM", "SIGINT", "SIGHUP"] as const)("a test process ended by
   expect(leftBy(started)).toEqual([]);
 }, 30_000);
 
-tmuxTest("the next test process ends the tmux server a killed test process left running", async () => {
+tmuxTest("a test process killed with SIGKILL has its tmux server and pane ended with no later test process", async () => {
   const killed = await childThatStartsASession("waits");
-  killed.child.kill("SIGKILL");
-  await killed.child.exited;
-  expect(isRunning(killed.started.pane)).toBe(true);
-  expect(ownSockets(killed.started.owner)).toHaveLength(1);
   try {
-    const next = await childThatStartsASession("exits");
-    expect(await next.child.exited).toBe(0);
+    killed.child.kill("SIGKILL");
+    await killed.child.exited;
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && (isRunning(killed.started.pane) || ownSockets(killed.started.owner).length > 0)) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
     expect(isRunning(killed.started.pane)).toBe(false);
     expect(ownSockets(killed.started.owner)).toEqual([]);
-    expect(leftBy(next.started)).toEqual([]);
   } finally {
     rmSync(killed.started.home, { recursive: true, force: true });
   }
 }, 30_000);
+
 const ISOLATED_KEYS = [
   "AI_GATEWAY_API_KEY",
   "VERCEL_OIDC_TOKEN",

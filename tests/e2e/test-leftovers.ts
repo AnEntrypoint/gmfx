@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +27,23 @@ let swept = false;
 export function ownTmuxSession(session: OwnedTmuxSession): void {
   hookProcessEnd();
   tmuxSessions.set(session.name, session);
+  watchOwner(session);
+}
+
+function watchOwner(session: OwnedTmuxSession): void {
+  const socket = session.ownSocketName ?? session.sharedSocketName;
+  const on = socket ? `-L '${socket}'` : "";
+  const end = session.ownSocketName ? "kill-server" : `kill-session -t '${session.name}'`;
+  const script = [
+    "seen=0; waited=0",
+    `while kill -0 ${process.pid} 2>/dev/null; do`,
+    `  if tmux ${on} has-session -t '${session.name}' 2>/dev/null; then seen=1; elif [ $seen = 1 ] || [ $waited -gt 600 ]; then exit 0; fi`,
+    "  waited=$((waited+1)); sleep 1",
+    "done",
+    `tmux ${on} ${end} 2>/dev/null`,
+    ...(session.ownSocketName ? [`rm -f '${join(tmuxSocketDir(), session.ownSocketName)}'`] : []),
+  ].join("\n");
+  spawn("sh", ["-c", script], { detached: true, stdio: "ignore" }).unref();
 }
 
 export function disownTmuxSession(name: string): void {
