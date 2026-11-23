@@ -2856,7 +2856,7 @@ fn innerCallPermissionOutcome(raw: *anyopaque, arena: Allocator, call: ToolCall)
         call,
         review,
         state.mode,
-        state.grants,
+        if (state.local_grants) |local| local.items else state.grants,
         state.live_authority,
         null,
         state.advertised_dynamic_tool_names,
@@ -2909,6 +2909,7 @@ fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!bool {
         .context_limits = state.config.context_limits,
     });
     defer selected.deinit(state.arena);
+    const gathered_content = selected.content != null;
     for (selected.notices) |notice| try state.deps.pushContextNotice(notice);
     try commitContextNote(
         state.arena,
@@ -2919,7 +2920,7 @@ fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!bool {
         state.replaced_sources.items,
         state.remind_sources,
     );
-    return selected.content != null and
+    return gathered_content and
         !runtime_parallel_execution.isReadOnlyCall(state.deps.tool_registry, call);
 }
 
