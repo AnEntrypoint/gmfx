@@ -1,4 +1,8 @@
+#include <unistd.h>
+
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -38,6 +42,20 @@ static napi_value HostCall(napi_env env, napi_callback_info info) {
   return out;
 }
 
+static std::string WritePrelude(const char* prelude) {
+  char path[] = "/tmp/fx-edge-prelude-XXXXXX";
+  const int fd = mkstemp(path);
+  if (fd < 0) return {};
+  const size_t length = std::strlen(prelude);
+  const bool written = write(fd, prelude, length) == static_cast<ssize_t>(length);
+  close(fd);
+  if (!written) {
+    unlink(path);
+    return {};
+  }
+  return path;
+}
+
 static bool InstallHost(napi_env env) {
   napi_value global = nullptr;
   napi_value host = nullptr;
@@ -65,8 +83,15 @@ extern "C" int fx_edge_run(int argc, char** argv, const char* prelude, const cha
       unofficial_napi_configure_runtime(&runtime_options) == napi_ok &&
       unofficial_napi_create_env(8, &create_options, &env, &owner) == napi_ok &&
       EdgeAttachEnvironmentForRuntime(env) && InstallHost(env)) {
-    EdgeSetCurrentScriptPath(script);
-    if (EdgeRunScriptSource(env, prelude, &error) == 0) code = EdgeRunScriptFileWithLoop(env, script, &error, false);
+    const std::string prelude_path = WritePrelude(prelude);
+    if (prelude_path.empty()) {
+      error = "fx could not stage the edge prelude";
+    } else {
+      EdgeSetExecArgv({"--require", prelude_path});
+      EdgeSetCurrentScriptPath(script);
+      code = EdgeRunScriptFileWithLoop(env, script, &error, true);
+      unlink(prelude_path.c_str());
+    }
     EdgeEnvironmentRunCleanup(env);
     EdgeEnvironmentRunAtExitCallbacks(env);
     EdgeEnvironmentDetach(env);
