@@ -186,12 +186,12 @@ fn AppHost(comptime App: type) type {
             return self.startLocked(alloc, request);
         }
 
-        fn startLocked(self: *Self, alloc: Allocator, request: runtime.Request) anyerror!void {
+        fn startLocked(self: *Self, _: Allocator, request: runtime.Request) anyerror!void {
             const app = self.app;
             if (self.roots.get(request.agent)) |root| {
                 if (rootAlive(root)) return;
                 const ended: ?*ChildAgent = if (root.child_gone) null else root.child;
-                self.removeRoot(alloc, request.agent);
+                self.removeRoot(app.alloc, request.agent);
                 if (ended) |child| AgentsRuntime.dropHosted(app, child);
             }
             if (comptime !@hasField(App, "instances")) return error.SuperagentUnavailable;
