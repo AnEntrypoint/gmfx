@@ -137,8 +137,7 @@ test.skipIf(!tmuxAvailable())("a background task killed by its timeout says why 
     expect(holds(waited, NOTICE_HEADER)).toBe(true);
     expect(holds(waited, '"event":"killed"')).toBe(true);
     expect(holds(waited, '"cause":"')).toBe(true);
-    const remedy = new RegExp(`${escaped('"remedy":"').replaceAll("\\", "\\\\")}[^"]*timeout`);
-    expect(remedy.test(waited)).toBe(true);
+    expect(holds(waited, '"remedy":"start it again with a larger timeout"')).toBe(true);
     await shell.quit();
     expect(shell.stderrText()).toBe("");
     passed = true;

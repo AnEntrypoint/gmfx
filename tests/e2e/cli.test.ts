@@ -5278,7 +5278,7 @@ describe("cli: ask success", () => {
           expect(result.stdout).toBe(answer);
         }
         if (toolLoop) {
-          expect(result.stderr).toContain("Working");
+          expect(result.stderr).toContain("Reading file");
           expect(gateway.requests[1]!.body).toContain("usage fixture contents");
         } else {
           expect(result.stderr).toBe("");

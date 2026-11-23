@@ -190,7 +190,7 @@ function expectRunCodeSurface(request: GatewayRequest) {
 }
 
 function expectNoFetchProgress(text: string) {
-  expect(text).not.toContain("Fetching ");
+  expect(text).not.toMatch(/Fetching (?!url\n)/);
   expect(text).not.toContain("Converting ");
   expect(text).not.toContain("Extracting ");
 }

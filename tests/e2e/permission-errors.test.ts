@@ -204,7 +204,7 @@ describe("generic permission typed errors", () => {
           timeoutMs: TIMEOUT,
         });
         const json = parseFxJson(result);
-        expect(result.stderr).toBe("Working \n");
+        expect(result.stderr).toBe("Running command\n");
         expect(json.tool_calls).toContainEqual({
           name: "run_code",
           status: "error",
