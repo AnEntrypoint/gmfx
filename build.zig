@@ -647,10 +647,9 @@ fn linkEdgejs(b: *std.Build, exe: *std.Build.Step.Compile, dir: []const u8) void
     defer handle.close(io);
     var entries = handle.iterate();
     while (entries.next(io) catch |err| std.process.fatal("could not list {s}: {t}", .{ dir, err })) |entry| {
-        if (!std.mem.endsWith(u8, entry.name, ".o") and !std.mem.endsWith(u8, entry.name, ".a")) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".o") and !std.mem.endsWith(u8, entry.name, ".a") and !std.mem.endsWith(u8, entry.name, ".so")) continue;
         exe.root_module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ dir, entry.name }) });
     }
-    exe.root_module.linkSystemLibrary("stdc++", .{});
 }
 
 fn readGitCommit(b: *std.Build) []const u8 {

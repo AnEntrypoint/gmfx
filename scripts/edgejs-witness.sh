@@ -12,6 +12,7 @@ cxx_flags=$(awk '/edge_cli.cc.o:/{f=1;next} f&&/^build/{exit} f' "$BUILD/build.n
 [ -n "$cxx_flags" ] || { echo "no edge_cli compile flags in $BUILD/build.ninja"; echo "EDGE_DONE 1"; exit 1; }
 eval "g++ -c $cxx_flags native/edgejs/fx_edge.cc -o $P/lib/fx_edge.o" || { echo "shim compile failed"; echo "EDGE_DONE 1"; exit 1; }
 find "$BUILD" -name '*.a' -exec ln -sf {} "$P/lib/" \;
+ln -sf "$(g++ -print-file-name=libstdc++.so)" "$P/lib/libstdc++.so"
 echo "LIBS $(ls "$P/lib" | wc -l)"
 timeout 2400 zig build install -Dcpu=baseline -Doptimize=ReleaseSafe -Dupdate-channel=stable -Dedgejs="$P/lib" --prefix "$P/prefix" --cache-dir "$P/cache" > "$P/build.out" 2>&1 & c=$!; echo "CHILD edge_build pid=$c"; wait $c; rc=$?
 echo "RC edge_build = $rc"; grep -a 'error' "$P/build.out" | head -8 | cut -c1-220
