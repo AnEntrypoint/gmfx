@@ -4455,11 +4455,10 @@ pub fn Runtime(comptime App: type) type {
             call: types.ToolCall,
             result: types.PersistedToolResult,
         ) !bool {
-            if (result.status != .success) return false;
             var arena_state = std.heap.ArenaAllocator.init(app.alloc);
             defer mem_utils.deinit_arena(arena_state);
             const arena = arena_state.allocator();
-            const rows = try run_code_presentation.rows(arena, call, result.output);
+            const rows = try run_code_presentation.resultRows(arena, call, result.output, result.status == .success);
             for (rows, 0..) |row, index| {
                 const base = if (row.ok)
                     try app.describeToolActionCompletedWithAdvertised(agent, arena, row.call, row.target, &.{})

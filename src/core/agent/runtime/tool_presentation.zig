@@ -1191,10 +1191,7 @@ pub fn finishExecutedToolStatus(
     advertised_dynamic_tool_names: []const []const u8,
 ) !void {
     if (!status_started) return;
-    const inner_rows: []const run_code_presentation.Row = if (result.status == .success)
-        try run_code_presentation.rows(arena, call, result.model_output)
-    else
-        &.{};
+    const inner_rows = try run_code_presentation.resultRows(arena, call, result.model_output, result.status == .success);
     const activity_kind = activityKindForCall(arena, hooks.tool_registry, call);
     const command_decision = if (activity_kind == .command)
         try commandOutcomeDecision(arena, result_memory.command_process_presentation)
@@ -1233,7 +1230,9 @@ pub fn finishExecutedToolStatus(
                 display_target,
                 advertised_dynamic_tool_names,
             ),
-        .failure => blk: {
+        .failure => if (inner_rows.len > 0)
+            try innerRowLine(hooks, arena, inner_rows[0], advertised_dynamic_tool_names)
+        else blk: {
             const base = try hooks.describe_tool_action_denied(
                 hooks.ctx,
                 arena,
@@ -1306,6 +1305,8 @@ pub fn finishExecutedToolStatus(
             .outcome = .{
                 .kind = if (outcome_decision) |decision|
                     decision.outcome
+                else if (inner_rows.len > 0)
+                    (if (inner_rows[0].ok) .completed else .failed)
                 else if (result.status == .success)
                     .completed
                 else

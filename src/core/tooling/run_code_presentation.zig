@@ -99,6 +99,15 @@ pub fn rows(arena: Allocator, call: ToolCall, output: []const u8) Allocator.Erro
     return out;
 }
 
+pub fn resultRows(arena: Allocator, call: ToolCall, output: []const u8, succeeded: bool) Allocator.Error![]const Row {
+    const all = try rows(arena, call, output);
+    if (succeeded) return all;
+    for (all) |row| {
+        if (!row.ok) return all;
+    }
+    return &.{};
+}
+
 fn mutationTarget(arena: Allocator, inner: InnerCall) Allocator.Error!?[]const u8 {
     if (!file_mutation_contract.isToolName(inner.verb)) return null;
     const args = tool_args.parseToolArgsObject(arena, inner.args) catch |err| switch (err) {
@@ -257,6 +266,16 @@ test "run_code detail shows the notice the result value already carries" {
     const text = (try detail(std.testing.allocator, test_builtin_tools.registry, test_call, output)).?;
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.find(u8, text, "-> ok\n  notice: shell snapshot unavailable\n") != null);
+}
+test "a failed run_code keeps its inner rows only when an inner call failed" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const failed = "{\"ok\":false,\"error\":\"boom\",\"calls\":[{\"verb\":\"read_file\",\"args\":\"{}\",\"ok\":false}],\"calls_dropped\":0}";
+    const thrown = "{\"ok\":false,\"error\":\"boom\",\"calls\":[{\"verb\":\"read_file\",\"args\":\"{}\",\"ok\":true}],\"calls_dropped\":0}";
+    try std.testing.expectEqual(@as(usize, 1), (try resultRows(arena, test_call, failed, false)).len);
+    try std.testing.expectEqual(@as(usize, 0), (try resultRows(arena, test_call, thrown, false)).len);
+    try std.testing.expectEqual(@as(usize, 1), (try resultRows(arena, test_call, thrown, true)).len);
 }
 test "run_code detail lists each inner call with its own presenter's summary and the body as JavaScript" {
     const text = (try detail(std.testing.allocator, test_builtin_tools.registry, test_call, test_output)).?;
