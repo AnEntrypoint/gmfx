@@ -6857,11 +6857,13 @@ fn appendDetailContent(
                         builder.projection_cols,
                     );
                 } else {
+                    const display = try toolResultForDisplay(alloc, detail, result);
+                    defer alloc.free(display);
                     try appendTerminalSafeToolOutputInterruptible(
                         &rendered.writer,
                         alloc,
                         styles,
-                        tool_result_display.contentForDisplay(result),
+                        display,
                         builder.projection_cols,
                         checkpoint,
                     );
@@ -6940,10 +6942,12 @@ fn degradedInlineCommandFallback(
     }
 
     if (detail.result) |result| {
+        const display = try toolResultForDisplay(alloc, detail, result);
+        defer alloc.free(display);
         try appendTerminalSafeIndented(
             &fallback.writer,
             alloc,
-            tool_result_display.contentForDisplay(result),
+            display,
         );
     }
     return fallback.toOwnedSlice();
