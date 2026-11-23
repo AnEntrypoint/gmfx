@@ -1649,7 +1649,7 @@ describe("modern MCP stdio compatibility", () => {
     const loaded = secondRequest.prompt
       .flatMap((message: { content?: unknown[] }) => message.content ?? [])
       .find((part: { type?: string; toolCallId?: string }) => part.type === "tool-result" && part.toolCallId === "load_saved_image");
-    expect(loaded.output.type).toBe("text");
+    expect(loaded.output.type).toBe("content");
     const loadedImageMessage = secondRequest.prompt.find((message: { role?: string; content?: unknown[] }) =>
       message.role === "user" && Array.isArray(message.content) &&
       (message.content as Array<{ type?: string }>).some((entry) => entry.type === "file"));

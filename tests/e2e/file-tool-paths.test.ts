@@ -469,8 +469,8 @@ describe("filesystem path handling", () => {
       const gateway = startFakeGateway(
         [
           sse([
-            { type: "tool-call", toolCallId: "read_a", toolName: "read_file", input: { path: "a.png" } },
-            { type: "tool-call", toolCallId: "read_b", toolName: "read_file", input: { path: "b.png" } },
+            { type: "tool-call", toolCallId: "read_a", toolName: "run_code", input: { body: "return gm.read_file({\"path\":\"a.png\"});" } },
+            { type: "tool-call", toolCallId: "read_b", toolName: "run_code", input: { body: "return gm.read_file({\"path\":\"b.png\"});" } },
             { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
           ]),
           finalText("both images inspected"),
@@ -630,8 +630,8 @@ describe("filesystem path handling", () => {
       const calls = Array.from({ length: 21 }, (_, index) => ({
         type: "tool-call",
         toolCallId: `read_frame_${index + 1}`,
-        toolName: "read_file",
-        input: { path: `frame-${index + 1}.png` },
+        toolName: "run_code",
+        input: { body: `return gm.read_file(${JSON.stringify({ path: `frame-${index + 1}.png` })});` },
       }));
       const gateway = startFakeGateway(
         [
