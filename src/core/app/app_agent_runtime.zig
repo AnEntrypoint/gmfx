@@ -1703,11 +1703,12 @@ const ToolActionState = enum { active, completed, denied };
 fn formatToolAction(
     ctx: tool_runtime.Context,
     arena: Allocator,
-    call: ToolCall,
+    requested: ToolCall,
     display_target: ?[]const u8,
     state: ToolActionState,
     denied_label: ?[]const u8,
 ) ![]const u8 {
+    const call = if (state == .active) try run_code_presentation.leadingCall(arena, ctx.tool_registry, requested) orelse requested else requested;
     if (std.mem.eql(u8, call.name, "WebSearch") or tool_presentation.isProviderSearchAlias(call.name)) {
         return formatWebSearchAction(arena, call, state, denied_label);
     }

@@ -4,6 +4,7 @@ const command_policy = @import("command_policy.zig");
 const managed_execution = @import("../execution/managed_execution.zig");
 const file_mutation_contract = @import("file_mutation_contract.zig");
 const mem_utils = @import("../shared/mem_utils.zig");
+const run_code_presentation = @import("run_code_presentation.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const shared_theme = @import("../shared/theme.zig");
 const tool_args = @import("tool_args.zig");
@@ -612,7 +613,13 @@ pub fn resolvedSkillName(call: ToolCall, presentation: tool_dispatch.CallPresent
 }
 
 pub fn formatPlainAction(alloc: Allocator, input: ToolActionInput) ![]const u8 {
-    const call = input.call;
+    var scratch_state = std.heap.ArenaAllocator.init(alloc);
+    defer mem_utils.deinit_arena(scratch_state);
+    const scratch = scratch_state.allocator();
+    const call = try run_code_presentation.leadingCall(scratch, input.tool_registry, input.call) orelse input.call;
+    if (run_code_presentation.isRunCode(call.name)) {
+        return alloc.print("{s} {s}", .{ run_code_presentation.tool_name, try run_code_presentation.firstBodyLine(scratch, call) });
+    }
     if (input.tool_registry.lookup(call.name) != null) {
         if (try formatSubagentPlainAction(alloc, call, .active)) |line| return line;
     }
@@ -630,10 +637,6 @@ pub fn formatPlainAction(alloc: Allocator, input: ToolActionInput) ![]const u8 {
         const action_label = if (activity.compatibility_tool) |tool| tool.action_label else "Running";
         return alloc.print("{s} {s}", .{ action_label, activity.detail });
     }
-
-    var scratch_state = std.heap.ArenaAllocator.init(alloc);
-    defer mem_utils.deinit_arena(scratch_state);
-    const scratch = scratch_state.allocator();
 
     const spec = input.tool_registry.lookup(call.name) orelse {
         if (isProviderSearchAlias(call.name)) {
@@ -937,6 +940,27 @@ test "tool presentation reads labels from the supplied registry" {
     defer alloc.free(label);
 
     try std.testing.expectEqualStrings("Inspecting registry metadata", label);
+}
+
+test "run_code plain action names the first inner verb's action or else the body line" {
+    const alloc = std.testing.allocator;
+    const registry = test_builtin_tools.registry;
+    const direct = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = .{ .id = "d", .name = "write_file", .arguments_json = "{}" } });
+    defer alloc.free(direct);
+    const writing = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = .{
+        .id = "rc",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"await gm.write_file({path:'a'});\"}",
+    } });
+    defer alloc.free(writing);
+    try std.testing.expectEqualStrings(direct, writing);
+    const plain = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = .{
+        .id = "rc",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"return 1;\\nreturn 2;\"}",
+    } });
+    defer alloc.free(plain);
+    try std.testing.expectEqualStrings("run_code return 1;", plain);
 }
 
 test "tool presentation formats plain web progress variants" {

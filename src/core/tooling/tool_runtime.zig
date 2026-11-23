@@ -1148,7 +1148,16 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
     };
     for (result.context_notices) |notice| try recordContextNoticeForDispatch(state.notices, notice);
     const images = if (result.tool_result_memory) |memory| memory.tool_images else &.{};
-    return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json };
+    const counts = innerDiffCounts(result);
+    return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json, .additions = counts.additions, .deletions = counts.deletions };
+}
+
+fn innerDiffCounts(result: ToolExecutionResult) struct { additions: u32, deletions: u32 } {
+    const handoff = result.committed_file_handoff orelse return .{ .additions = 0, .deletions = 0 };
+    return .{
+        .additions = @intCast(@min(handoff.preview.additions, std.math.maxInt(u32))),
+        .deletions = @intCast(@min(handoff.preview.deletions, std.math.maxInt(u32))),
+    };
 }
 
 fn innerPermissionOutcome(ctx: Context, arena: Allocator, call: ToolCall) !command_admission.PermissionOutcome {

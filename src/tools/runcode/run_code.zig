@@ -138,6 +138,10 @@ const Bridge = struct {
 };
 
 fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror![]u8 {
+    return (try invokeCountedVerb(context, alloc, name, args_json)).reply;
+}
+
+fn invokeCountedVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror!call_ledger.Invoked {
     const bridge: *Bridge = @ptrCast(@alignCast(context));
     bridge.calls += 1;
     var verb_arena = std.heap.ArenaAllocator.init(alloc);
@@ -153,11 +157,11 @@ fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, a
     const host = host_verbs.isHostVerb(name);
     const mcp = !host and bridge.registry.lookup(name) == null and ctx.mcp_ctx != null and ctx.mcp_call_tool != null;
     const admitted = if (host) hostVerbAdmitted(ctx, name) else mcp or toolAdmitted(ctx, name);
-    if (!admitted) return notAdmittedReply(alloc, name);
+    if (!admitted) return .{ .reply = try notAdmittedReply(alloc, name) };
     const proposed: message.ToolCall = .{ .id = id, .name = name, .arguments_json = args_json };
-    const gate = ctx.inner_call_gate orelse return ungatedReply(bridge, ctx, alloc, proposed, host, mcp);
+    const gate = ctx.inner_call_gate orelse return .{ .reply = try ungatedReply(bridge, ctx, alloc, proposed, host, mcp) };
     const verb_call: message.ToolCall = switch (try gate.start_fn(gate.context, verb_alloc, proposed)) {
-        .refuse => |reason| return verbReply(alloc, false, reason),
+        .refuse => |reason| return .{ .reply = try verbReply(alloc, false, reason) },
         .proceed => |arguments_json| .{ .id = id, .name = name, .arguments_json = arguments_json },
     };
     const reply = if (host) try hostVerbReply(ctx, bridge.registry, verb_call) else try gate.run_fn(gate.context, verb_alloc, verb_call);
@@ -165,8 +169,8 @@ fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, a
     try bridge.keepCommandResult(reply.ok, reply.command_result_json);
     bridge.denied = bridge.denied or reply.denied;
     gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
-    if (host) return alloc.dupe(u8, reply.body);
-    return verbReply(alloc, reply.ok, reply.body);
+    if (host) return .{ .reply = try alloc.dupe(u8, reply.body) };
+    return .{ .reply = try verbReply(alloc, reply.ok, reply.body), .additions = reply.additions, .deletions = reply.deletions };
 }
 
 fn ungatedReply(
@@ -359,7 +363,7 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     const catalog = buildCatalog(ctx.allocator, ctx, registry, bodyNeedsMcpCatalog(input.body)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not list its verbs") };
     defer ctx.allocator.free(catalog);
     var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
-    var ledger = call_ledger.Ledger.init(ctx.allocator, &bridge, invokeVerb);
+    var ledger = call_ledger.Ledger.init(ctx.allocator, &bridge, invokeCountedVerb);
     defer ledger.deinit();
     const outcome = runcode.execute(ctx.allocator, input.body, .{
         .format = input.format,

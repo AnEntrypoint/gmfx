@@ -40,6 +40,7 @@ const result_store = @import("../session/result_store.zig");
 const command_replay_store = @import("../session/command_replay_store.zig");
 const command_output_content = @import("../tooling/command_output_content.zig");
 const tooling_presentation = @import("../tooling/tool_presentation.zig");
+const run_code_presentation = @import("../tooling/run_code_presentation.zig");
 const tool_args = @import("../tooling/tool_args.zig");
 const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
@@ -4069,6 +4070,7 @@ pub fn Runtime(comptime App: type) type {
             );
             if (try writeAnsweredQuestionResult(app, sink, call, result)) return;
             if (try writeCommittedFilePresentation(app, agent, sink, call, result)) return;
+            if (try writeRunCodeRows(app, agent, sink, call, result)) return;
 
             const is_command = try captured_command.isToolCall(
                 app.alloc,
@@ -4444,6 +4446,33 @@ pub fn Runtime(comptime App: type) type {
             }
             try sink.attachHistoricalToolDetail(entry_id, call, result);
             return true;
+        }
+
+        fn writeRunCodeRows(
+            app: *App,
+            agent: *AppAgent,
+            sink: anytype,
+            call: types.ToolCall,
+            result: types.PersistedToolResult,
+        ) !bool {
+            if (result.status != .success) return false;
+            var arena_state = std.heap.ArenaAllocator.init(app.alloc);
+            defer mem_utils.deinit_arena(arena_state);
+            const arena = arena_state.allocator();
+            const rows = try run_code_presentation.rows(arena, call, result.output);
+            for (rows, 0..) |row, index| {
+                const base = if (row.ok)
+                    try app.describeToolActionCompletedWithAdvertised(agent, arena, row.call, row.target, &.{})
+                else
+                    try app.describeToolActionDeniedWithAdvertised(agent, arena, row.call, row.target, "Failed", &.{});
+                const line = try tool_presentation.formatToolStatusWithStats(arena, base, row.additions, row.deletions, .{
+                    .added = ui_render.diff_added_marker_style,
+                    .removed = ui_render.diff_removed_marker_style,
+                });
+                const entry_id = try writeCompletedToolStatus(sink, if (row.ok) .completed else .failed, line);
+                if (index == 0) try sink.attachHistoricalToolDetail(entry_id, call, result);
+            }
+            return rows.len > 0;
         }
 
         fn writeAnsweredQuestionResult(
@@ -7987,6 +8016,34 @@ test "historical terminal actions preserve typed return and failure causes" {
         &.{ .completed, .completed, .failed },
         app.completed_tool_outcomes.items,
     );
+}
+
+test "execution replay renders a run_code result as the rows of its inner calls" {
+    const alloc = std.testing.allocator;
+    var app = try TestApp.init(alloc, "/workspace");
+    defer app.deinit();
+
+    var calls = [_]types.ToolCall{.{ .id = "rc", .name = "run_code", .arguments_json = "{\"body\":\"return 1;\"}" }};
+    const output =
+        "{\"ok\":true,\"calls\":[" ++
+        "{\"verb\":\"write_file\",\"args\":\"{\\\"path\\\":\\\"a.txt\\\"}\",\"ok\":true}," ++
+        "{\"verb\":\"read_file\",\"args\":\"{}\",\"ok\":false}],\"calls_dropped\":0}";
+    var results = [_]types.PersistedToolResult{.{
+        .tool_call_id = @constCast("rc"),
+        .tool_name = @constCast("run_code"),
+        .status = .success,
+        .output = @constCast(output),
+        .output_bytes = output.len,
+        .stored_output_bytes = output.len,
+    }};
+    var steps = [_]types.ToolExecutionStep{.{ .tool_calls = calls[0..], .tool_results = results[0..] }};
+
+    try Runtime(TestApp).writeExecutionHistory(&app, (&app).agent(), .{ .tool_steps = steps[0..] });
+
+    try std.testing.expectEqual(@as(usize, 2), app.completed_tool_statuses.items.len);
+    try std.testing.expectEqualStrings("● Completed write_file a.txt\n", app.completed_tool_statuses.items[0]);
+    try std.testing.expectEqualStrings("● Failed read_file\n", app.completed_tool_statuses.items[1]);
+    try std.testing.expectEqualSlices(types.ToolOutcomeKind, &.{ .completed, .failed }, app.completed_tool_outcomes.items);
 }
 
 test "execution replay releases action-formatting scratch allocations" {

@@ -1190,7 +1190,10 @@ pub fn finishExecutedToolStatus(
     advertised_dynamic_tool_names: []const []const u8,
 ) !void {
     if (!status_started) return;
-    const shown_target = try run_code_presentation.calledVerbs(arena, call, result.model_output) orelse display_target;
+    const inner_rows: []const run_code_presentation.Row = if (result.status == .success)
+        try run_code_presentation.rows(arena, call, result.model_output)
+    else
+        &.{};
     const activity_kind = activityKindForCall(arena, hooks.tool_registry, call);
     const command_decision = if (activity_kind == .command)
         try commandOutcomeDecision(arena, result_memory.command_process_presentation)
@@ -1208,7 +1211,7 @@ pub fn finishExecutedToolStatus(
             hooks.ctx,
             arena,
             call,
-            shown_target,
+            display_target,
             decision.label,
             advertised_dynamic_tool_names,
         );
@@ -1217,14 +1220,16 @@ pub fn finishExecutedToolStatus(
         else
             base;
     } else switch (result.status) {
-        .success => if (file_mutation_contract.resultIsNoop(call.name, result.model_output))
+        .success => if (inner_rows.len > 0)
+            try innerRowLine(hooks, arena, inner_rows[0], advertised_dynamic_tool_names)
+        else if (file_mutation_contract.resultIsNoop(call.name, result.model_output))
             result.model_output
         else
             try hooks.describe_tool_action_completed(
                 hooks.ctx,
                 arena,
                 call,
-                shown_target,
+                display_target,
                 advertised_dynamic_tool_names,
             ),
         .failure => blk: {
@@ -1232,7 +1237,7 @@ pub fn finishExecutedToolStatus(
                 hooks.ctx,
                 arena,
                 call,
-                shown_target,
+                display_target,
                 try tooling_presentation.subagentFailureLabel(arena, call, safe_result),
                 advertised_dynamic_tool_names,
             );
@@ -1311,6 +1316,46 @@ pub fn finishExecutedToolStatus(
             .command_artifact_handle = command_artifact_handle,
         },
     });
+    for (inner_rows[@min(1, inner_rows.len)..]) |row| {
+        try pushInnerRow(hooks, arena, turn_id, row, advertised_dynamic_tool_names);
+    }
+}
+
+fn innerRowLine(
+    hooks: *const AgentRuntimeDeps,
+    arena: Allocator,
+    row: run_code_presentation.Row,
+    advertised_dynamic_tool_names: []const []const u8,
+) ![]const u8 {
+    const base = if (row.ok)
+        try hooks.describe_tool_action_completed(hooks.ctx, arena, row.call, row.target, advertised_dynamic_tool_names)
+    else
+        try hooks.describe_tool_action_denied(hooks.ctx, arena, row.call, row.target, "Failed", advertised_dynamic_tool_names);
+    return formatToolStatusWithStats(arena, base, row.additions, row.deletions, hooks.diff_marker_styles);
+}
+
+fn pushInnerRow(
+    hooks: *const AgentRuntimeDeps,
+    arena: Allocator,
+    turn_id: u64,
+    row: run_code_presentation.Row,
+    advertised_dynamic_tool_names: []const []const u8,
+) !void {
+    const id: types.ToolLifecycleId = .{ .turn_id = turn_id, .call_id = row.call.id };
+    try hooks.push_tool_lifecycle(hooks.ctx, .{ .authoritative_started = .{
+        .id = id,
+        .reconciles_provisional_call_id = null,
+        .tool_name = row.call.name,
+        .activity_kind = activityKindForCall(arena, hooks.tool_registry, row.call),
+        .arguments_json = try text_utils.maskSecrets(arena, row.call.arguments_json),
+    } });
+    try hooks.push_tool_lifecycle(hooks.ctx, .{ .terminal = .{
+        .id = id,
+        .outcome = .{
+            .kind = if (row.ok) .completed else .failed,
+            .summary = try innerRowLine(hooks, arena, row, advertised_dynamic_tool_names),
+        },
+    } });
 }
 
 fn presentedToolResult(
@@ -2608,6 +2653,55 @@ test "subagent terminal summary preserves request row before child status" {
     );
     switch (capture.events.items[1]) {
         .terminal => |terminal| try std.testing.expectEqualStrings("started Agent", terminal.outcome.summary),
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "run_code completion shows each inner call as the row its own verb would have had" {
+    const alloc = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var capture = ProvisionalStatusTestCapture{ .alloc = alloc };
+    defer capture.deinit();
+    const hooks = capture.hooks();
+    const call = ToolCall{ .id = "rc", .name = "run_code", .arguments_json = "{\"body\":\"return 1;\"}" };
+    const output = "{\"ok\":true,\"calls\":[" ++
+        "{\"verb\":\"write_file\",\"args\":\"{\\\"path\\\":\\\"a.txt\\\"}\",\"ok\":true,\"additions\":2}," ++
+        "{\"verb\":\"read_file\",\"args\":\"{\\\"path\\\":\\\"b.txt\\\"}\",\"ok\":false}],\"calls_dropped\":0}";
+
+    try finishExecutedToolStatus(&hooks, arena, 4, call, true, null, .{ .model_output = output }, output, .{}, null, &.{});
+
+    try std.testing.expectEqual(@as(usize, 3), capture.events.items.len);
+    switch (capture.events.items[0]) {
+        .terminal => |terminal| {
+            try std.testing.expectEqualStrings("rc", terminal.id.call_id);
+            try std.testing.expect(std.mem.startsWith(u8, terminal.outcome.summary, "started write_file "));
+            try std.testing.expect(std.mem.endsWith(u8, terminal.outcome.summary, "+2\x1b[0m"));
+        },
+        else => return error.TestExpectedEqual,
+    }
+    switch (capture.events.items[1]) {
+        .authoritative_started => |started| {
+            try std.testing.expectEqualStrings("rc:2", started.id.call_id);
+            try std.testing.expectEqualStrings("read_file", started.tool_name);
+        },
+        else => return error.TestExpectedEqual,
+    }
+    switch (capture.events.items[2]) {
+        .terminal => |terminal| {
+            try std.testing.expectEqualStrings("rc:2", terminal.id.call_id);
+            try std.testing.expectEqual(types.ToolOutcomeKind.failed, terminal.outcome.kind);
+            try std.testing.expectEqualStrings("Failed read_file", terminal.outcome.summary);
+        },
+        else => return error.TestExpectedEqual,
+    }
+
+    const bare = "{\"ok\":true,\"calls\":[],\"calls_dropped\":0}";
+    try finishExecutedToolStatus(&hooks, arena, 4, call, true, null, .{ .model_output = bare }, bare, .{}, null, &.{});
+    try std.testing.expectEqual(@as(usize, 4), capture.events.items.len);
+    switch (capture.events.items[3]) {
+        .terminal => |terminal| try std.testing.expectEqualStrings("started run_code", terminal.outcome.summary),
         else => return error.TestExpectedEqual,
     }
 }
