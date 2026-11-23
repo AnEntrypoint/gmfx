@@ -3545,6 +3545,7 @@ test "a cancelled command inside run_code hands its retained replay to the carri
     ctx.cancelled_command_sink = &sink;
 
     try keepCancelledCommand(ctx, verb_arena.allocator(), .{
+        .model_output = "",
         .status = .failure,
         .cancelled = true,
         .command_replay_capture = capture,
