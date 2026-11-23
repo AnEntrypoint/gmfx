@@ -1031,7 +1031,7 @@ function startFakeGrokToolLoop(options: {
   const bodies: string[] = [];
   const accessToken = "grok-tool-loop-token";
   const toolName = options.toolName ?? "run_code";
-  const toolArguments = options.toolArguments ?? runCodeCall("read_file", { path: "README.md" }).input;
+  const toolArguments = options.toolArguments ?? runCodeInput("read_file", { path: "README.md" });
   const finalText = options.finalText ?? "GROK_TOOL_LOOP_OK";
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -5071,7 +5071,7 @@ for (const scenario of ["replace", "conflict", "invalid-index"] as const) {
         if (conflict) expect(resultJson.error).toBe(scenario === "invalid-index" ? (provider === "codex" ? "InvalidOpenAICodexSseEvent" : "InvalidXaiGrokSseEvent") : "ResponsesToolCallConflict");
         else {
           expect(resultJson.output).toBe("FINAL_RECORD_OK");
-          expect(result.stderr).toBe("Working \n");
+          expect(result.stderr).toMatch(/^(?:● Working\x1b\[0m\n)?Writing file\n$/);
         }
         const detail = await runFx(["session", "--json", "--id", resultJson.session_id], { cwd: profile, env });
         expect(detail.code).toBe(0);
@@ -5217,7 +5217,7 @@ test("native reasoning snapshots survive tools and saved resume exactly once", a
         continue;
       }
       expect(result.output).toBe("REASONING_SNAPSHOT_OK");
-      expect(first.stderr).toMatch(/^(?:● Reading\x1b\[0m\n)?Reading notes\.txt\n$/);
+      expect(first.stderr).toMatch(/^(?:● Working\x1b\[0m\n)?Reading file\n$/);
       expect(direct.bodies).toHaveLength(2);
       const saved = savedText(profile, result.session_id);
       expect(saved).toContain(signature);
