@@ -1693,7 +1693,7 @@ describe("effect-aware command permissions", () => {
 
       expect(gateway.requests).toHaveLength(6);
       expect(report).toMatch(
-        /last=\d+ succeeded=\d+ rejected=0 command_failed=2 tool_failed=1 runtime_failed=0/,
+        /last=\d+ succeeded=\d+ rejected=0 command_failed=2 tool_failed=2 runtime_failed=0/,
       );
       const localCalls = report.split("## Tool Calls\n### Local\n")[1]?.split("### Web Search")[0];
       expect(localCalls).toBeDefined();

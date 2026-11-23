@@ -869,9 +869,9 @@ test.skipIf(!tmuxAvailable())(
       tool_calls: Array<{ name: string; status: string }>;
     };
     expect(intrusion.tool_calls).toEqual([
-      { name: "TaskOutput", status: "error" },
-      { name: "TaskStop", status: "error" },
-      { name: "TaskList", status: "success" },
+      { name: "run_code", status: "error" },
+      { name: "run_code", status: "error" },
+      { name: "run_code", status: "success" },
     ]);
     for (const id of ["intruder_read", "intruder_stop"]) {
       const refusal = latestToolResult(intruderGateway, id);

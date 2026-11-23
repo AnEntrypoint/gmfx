@@ -323,7 +323,7 @@ function fileMarkerCount(path: string, marker: string): number {
 }
 
 function createSkillsMenuFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-skills-menu-")));
+  const root = realpathSync(mkdtempSync(join("/tmp", "fx-skills-menu-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");

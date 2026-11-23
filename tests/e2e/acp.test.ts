@@ -9473,7 +9473,7 @@ describe("acp: model-independent", () => {
           (message: any) => message.method === "session/request_permission",
         );
         expect(permissions).toHaveLength(1);
-        expect(permissions[0]!.params.toolCall.toolCallId).toBe(secondCallId);
+        expect(permissions[0]!.params.toolCall.toolCallId).toBe(`${secondCallId}:1`);
         expect(client.stderr).toBe("");
       } finally {
         await client?.close();

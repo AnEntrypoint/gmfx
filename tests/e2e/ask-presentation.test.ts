@@ -470,7 +470,7 @@ describe("fx ask presentation", () => {
       expect(pane.match(/1 tool call · 1 command/g)).toHaveLength(2);
       expect(pane).toContain("Reading fixture.txt");
       expect(pane).toContain("Between groups.");
-      expect(pane).toContain("Failed: Reading file");
+      expect(pane).toContain("Failed: Reading missing.txt");
       expect(pane).toContain("failed");
       expect(pane).toContain("Ask presentation");
       expect(pane).toContain("bold and docs");

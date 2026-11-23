@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { onlySessionId, savedText, sessionDir } from "./saved-sessions";
 
 
@@ -13,7 +13,7 @@ const {
   hasEmptyComposer, tmuxAvailable,
 } = await import("./tmux-helpers");
 
-const binary = resolve(import.meta.dir, "../../zig-out/bin/fx");
+const { FX_BIN: binary } = await import("../evals/eval-helpers");
 const HEAD = "HISTORY_HEAD_29b7";
 const TAIL = "HISTORY_TAIL_16d3";
 

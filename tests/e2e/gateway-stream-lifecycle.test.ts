@@ -3093,7 +3093,7 @@ describe("gateway stream lifecycle", () => {
           await tui.sendText(attached
             ? `$${skillName} read its supporting resource.`
             : "Load streamed-workflow and read its supporting resource.");
-          await tui.waitForPane((pane) => stream !== undefined && /^└ Working$/m.test(pane), 15_000);
+          await tui.waitForPane((pane) => stream !== undefined && /Running \(/.test(pane), 15_000);
           expect(gateway.requestCount()).toBe(heldRequestCount);
           expect(await tui.captureFullScrollback()).not.toContain(resource);
 
@@ -5077,7 +5077,7 @@ describe("gateway stream lifecycle", () => {
       for (const batch of [1, 2, 3]) {
         const invalid = results.find((item: any) => item.tool_call_id === `invalid_${batch}`);
         expect(invalid.status).toBe("failure");
-        expect(invalid.output).toContain('Bash does not take argument \"tty\"');
+        expect(JSON.parse(invalid.output).error).toContain('Bash does not take argument "tty"');
         const neighbor = results.find((item: any) => item.tool_call_id === `neighbor_${batch}`);
         expect(neighbor.status).toBe("success");
         expect(neighbor.output).toContain("NEIGHBOR_OK");
@@ -6746,7 +6746,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           expect(pane).not.toContain("request failed:");
           expect(pane).toContain("RETRIEVAL_TURN_COMPLETE");
 
-          expect(pane).toContain("cat source.txt output for \"RETRIEVAL_MATCH\"");
+          expect(pane).toContain("Searched command output");
           if (trigger === "manual") {
             await compactAndWait(tui, root, 20000);
           }

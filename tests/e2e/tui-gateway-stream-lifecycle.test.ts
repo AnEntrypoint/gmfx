@@ -3810,7 +3810,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const savedSession = readSavedSession();
 
       expect(pane).toContain(finalText);
-      expect(scrollback).toContain("Failed read_tool_result");
+      expect(scrollback).toContain("Failed more output");
       expect(continuation).toContain(expectedFailure);
       expect(savedSession).toContain('"status":"failure"');
       expect(savedSession).toContain(expectedFailure);
