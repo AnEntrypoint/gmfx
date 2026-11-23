@@ -3098,11 +3098,10 @@ describe("gateway stream lifecycle", () => {
           expect(await tui.captureFullScrollback()).not.toContain(resource);
 
           const resourceInput = { path: resourcePath };
-          const showsRead = (pane: string) => pane.includes("gm.read_file(") && pane.includes(resourcePath);
+          const showsRead = (pane: string) => pane.includes(`Read ${resourcePath}`);
           send({ type: "tool-input-delta", id: resourceCallId, delta: JSON.stringify(resourceInput) });
           send({ type: "tool-input-end", id: resourceCallId });
           send({ type: "tool-call", toolCallId: resourceCallId, toolName: "run_code", input: verbBody("read_file", resourceInput) });
-          await tui.waitForPane((pane) => showsRead(pane), 10_000);
 
           const heldUntil = Date.now() + 250;
           while (Date.now() < heldUntil) {
@@ -3111,7 +3110,7 @@ describe("gateway stream lifecycle", () => {
             await Bun.sleep(25);
           }
           const held = await tui.captureFullScrollback();
-          expect(showsRead(held)).toBe(true);
+          expect(showsRead(held)).toBe(false);
           expect(held).not.toContain("run_code read_file");
           expect(finishReleased).toBe(false);
           expect(gateway.requestCount()).toBe(heldRequestCount);

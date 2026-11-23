@@ -6429,7 +6429,7 @@ test.skipIf(!tmuxAvailable())(
       }
       await active.waitForComposer(TIMEOUT);
       await active.sendHexBytes(["07"]);
-      await active.waitForText("upgrade is unavailable while agent-main-solo is working", TIMEOUT);
+      await active.waitForText("upgrade is unavailable while agent-main-solo-1 is working", TIMEOUT);
       expect(relaunched()).toBe(false);
 
 
@@ -7972,9 +7972,9 @@ while :; do sleep 1; done
     const initialGateway = startFakeGateway([
       fakeGatewaySerializedToolCall(
         "resume-cancelled-command",
-        "Bash",
+        "run_code",
         JSON.stringify({
-          command: "./resume-cancel.sh",
+          body: `return gm.Bash(${JSON.stringify({ command: "./resume-cancel.sh" })});`,
         }),
         assistantMarker,
       ),

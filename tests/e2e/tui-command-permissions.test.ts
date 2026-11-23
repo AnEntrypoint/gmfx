@@ -704,8 +704,6 @@ function expectNoCommandArtifacts(root: IsolatedRoot) {
   expect(files.filter((path) => path.endsWith(".log"))).toEqual([]);
 }
 
-/// The command replays the saved sessions keep: each is a blob, named by its
-/// handle wherever a result refers to it (D44).
 function commandReplayFiles(root: IsolatedRoot): string[] {
   if (!existsSync(storeRoot(root.home))) return [];
   return savedSessionIds(root.home).flatMap((id) => commandReplays(root.home, id).map((replay) => replay.name));

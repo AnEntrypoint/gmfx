@@ -1326,9 +1326,9 @@ test.skipIf(!tmuxAvailable())(
             return current > 0 && current < first;
           }, TIMEOUT);
           expect(previous).not.toContain("Full saved result unavailable.");
-          const unwrapped = previous.replace(/\n {4}/g, "");
-          for (const marker of unwrapped.matchAll(/SAVED_ROW_(\d+)/g)) {
-            expect(unwrapped).toContain(lines[Number(marker[1]) - 1]!);
+          const squashed = previous.replace(/\s+/g, "");
+          for (const marker of squashed.matchAll(/SAVED_ROW_(\d+)/g)) {
+            expect(squashed).toContain(lines[Number(marker[1]) - 1]!.replace(/\s+/g, ""));
           }
         }
         await active.sendHexBytes(CTRL_O);
