@@ -5269,3 +5269,10 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - Verified: zig fmt --check and zig ast-check on every touched Zig file, sh -n on the witness, and bun build parse on the changed e2e files. Nothing built.
 - Witness: zig build test (the new Zig tests listed in each stage) and scripts/run-code-only-witness.sh <fx>, last line RUN_CODE_ONLY_DONE <fails>, over 17 e2e files.
 - Red: each added test fails when its fix is reverted, for example by re-adding one subagent opt-out or removing the verb authorizer.
+
+## Commits since st23 (tree 5fab4055), unwitnessed until rebuild ticket fx-st24
+
+- 6a3d53e5 inner row deferred state and target through ledger and task rows (g4 triage; compiles only in fx-st24).
+- 5fab4055 fixture edits from the P1-P4 triage (acp, ask-presentation, gateway-stream-lifecycle, tui-command-permissions, tui-compaction-activity, tui-full-transcript-brutal, tui-gateway-stream-lifecycle, tui-slash-menu, tui-terminal-tool). Covered by fx-st24 for the build and by the re-run parts for the files.
+- Reverted and not witnessed: tests/e2e/tui-permissions.test.ts and tests/e2e/tui-interrupt-recovery.test.ts (back at HEAD; their failures are open).
+- Open owner question: run_code ledger scope, see /workspace/tmp/fx/questions.md.
