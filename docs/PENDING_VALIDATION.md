@@ -5276,3 +5276,11 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - 5fab4055 fixture edits from the P1-P4 triage (acp, ask-presentation, gateway-stream-lifecycle, tui-command-permissions, tui-compaction-activity, tui-full-transcript-brutal, tui-gateway-stream-lifecycle, tui-slash-menu, tui-terminal-tool). Covered by fx-st24 for the build and by the re-run parts for the files.
 - Reverted and not witnessed: tests/e2e/tui-permissions.test.ts and tests/e2e/tui-interrupt-recovery.test.ts (back at HEAD; their failures are open).
 - Open owner question: run_code ledger scope, see /workspace/tmp/fx/questions.md.
+
+## Bounded inner output and replay (0e962248, df514662)
+
+- Witness: fx-st25 (zig build test and the suite) and the TUI resume tests (tui-resume, tui-command-permissions, tui-terminal-tool, tui-full-transcript-brutal) re-run after it.
+- Zig tests: call_ledger.zig inline round-trip; past-cap pointer with byte count and no inline output; inner handle reused without a store call; entries bounded at max_entries; resolveOutput inline and pointer. app_session_runtime.zig replay: inline output shown, pointer resolved, missing pointer falls back to the summary.
+- Red checks (predicted, to confirm in fx-st25): remove the cap check (inline always), ignore output_handle on replay, propagate the reader error instead of the fallback.
+- Cap: max_inline_output_bytes = 8 KiB, reason in commit 0e962248.
+- Open: the live path shows inner rows with summaries only, so replay can show more detail than live (see the replay report).
