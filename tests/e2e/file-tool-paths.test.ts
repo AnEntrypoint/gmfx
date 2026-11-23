@@ -1206,7 +1206,7 @@ describe("filesystem path handling", () => {
             expect(classifiedJson.tool_calls).toEqual([
               { name: "run_code", status: "success" },
             ]);
-            expect(classified.stderr.match(/^Working /gm)).toHaveLength(1);
+            expect(classified.stderr.match(/^Writing /gm)).toHaveLength(1);
             expect(classified.stderr).not.toContain("Auto agent approved this request");
             expect(readFileSync(scenario.target, "utf8")).toBe("CLASSIFIED_CONTENT");
           } finally {
@@ -1311,8 +1311,8 @@ describe("filesystem path handling", () => {
             "committed file read tracker refresh failed",
           );
           expect(result.stderr).toBe(
-            "Working \n" +
-              "Working \n",
+            "Writing file\n" +
+              "Editing file\n",
           );
         } finally {
           gateway.stop();
@@ -1554,7 +1554,8 @@ describe("filesystem path handling", () => {
             { name: "run_code", status: "success" },
             { name: "run_code", status: "success" },
           ]);
-          expect(occurrenceCount(result.stderr, "Working \n")).toBe(2);
+          expect(occurrenceCount(result.stderr, "Reading file\n")).toBe(1);
+          expect(occurrenceCount(result.stderr, "Editing file\n")).toBe(1);
           expect(readFileSync(editTarget, "utf8")).toBe("AFTER_EDIT\n");
         } finally {
           editGateway.stop();

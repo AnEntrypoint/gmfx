@@ -179,7 +179,7 @@ describe("fx ask presentation", () => {
     );
 
     expect(result.code).toBe(0);
-    expect(result.stderr).toContain("Working \nno-final-newline\nWorking \nnext-output\n");
+    expect(result.stderr).toContain("Running command\nno-final-newline\nRunning command\nnext-output\n");
     expect(JSON.parse(result.stdout).output).toBe("Commands complete.\n");
   }, TIMEOUT);
 
@@ -344,7 +344,7 @@ describe("fx ask presentation", () => {
       { name: "run_code", status: "success" },
     ]);
     expect(gateway.requests).toHaveLength(2);
-    expect(result.stderr).toContain("Working");
+    expect(result.stderr).toContain("Reading file");
   }, TIMEOUT);
 
   test("tool recovery keeps progress updates ordered before the final response", async () => {
@@ -416,7 +416,7 @@ describe("fx ask presentation", () => {
     ]);
     expect(gateway.requests[1]!.body).toContain("Path not found: missing.txt");
     expect(gateway.requests[2]!.body).toContain(recovery);
-    expect(result.stderr.match(/Working/g)).toHaveLength(2);
+    expect(result.stderr.match(/Reading file/g)).toHaveLength(2);
   }, TIMEOUT);
 
   test.skipIf(!tmuxAvailable())(
@@ -468,9 +468,9 @@ describe("fx ask presentation", () => {
       const escaped = await session.captureFullScrollbackEscapes();
       expect(scrollback).toContain("Inspect fixture.txt and render the response.");
       expect(pane.match(/1 tool call · 1 command/g)).toHaveLength(2);
-      expect(pane).toContain("Working read_file");
+      expect(pane).toContain("Reading fixture.txt");
       expect(pane).toContain("Between groups.");
-      expect(pane).toContain("Failed: Working read_file");
+      expect(pane).toContain("Failed: Reading file");
       expect(pane).toContain("failed");
       expect(pane).toContain("Ask presentation");
       expect(pane).toContain("bold and docs");

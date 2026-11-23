@@ -298,9 +298,12 @@ function runCodeVerbReply(text: string): string {
   const body = open < 0 ? text : text.slice(0, open);
   try {
     const envelope = JSON.parse(body);
-    const deferred = envelope?.ok === false && typeof envelope.error === "string" &&
-      envelope.error.replace(/^Error: /, "").startsWith("Scoped project instructions");
-    if (deferred) return envelope.error.replace(/^Error: /, "") + text.slice(body.length);
+    const failure = typeof envelope?.error === "string"
+      ? envelope.error.replace(/^Error: /, "").replace(/\n\s+at [\s\S]*$/, "")
+      : "";
+    if (envelope?.ok === false && failure.startsWith("Scoped project instructions")) {
+      return failure + text.slice(body.length);
+    }
     if (envelope?.ok !== true || !("value" in envelope)) return text;
     return (typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value)) + text.slice(body.length);
   } catch {
