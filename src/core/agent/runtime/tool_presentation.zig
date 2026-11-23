@@ -1327,7 +1327,7 @@ pub fn finishExecutedToolStatus(
                 .kind = if (outcome_decision) |decision|
                     decision.outcome
                 else if (inner_rows.len > 0)
-                    (if (inner_rows[0].ok) .completed else .failed)
+                    (if (inner_rows[0].ok) .completed else if (inner_rows[0].deferred) .deferred else .failed)
                 else if (result.status == .success)
                     .completed
                 else

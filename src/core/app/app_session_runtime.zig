@@ -4071,7 +4071,7 @@ pub fn Runtime(comptime App: type) type {
             );
             if (try writeAnsweredQuestionResult(app, sink, call, result)) return;
             if (try writeCommittedFilePresentation(app, agent, sink, call, result)) return;
-            if (try writeRunCodeRows(app, agent, sink, call, result)) return;
+            if (try writeRunCodeRows(app, agent, sink, call, result, labels)) return;
 
             const is_command = try captured_command.isToolCall(
                 app.alloc,
@@ -4455,6 +4455,7 @@ pub fn Runtime(comptime App: type) type {
             sink: anytype,
             call: types.ToolCall,
             result: types.PersistedToolResult,
+            labels: *HistoricalSessionLabels,
         ) !bool {
             var arena_state = std.heap.ArenaAllocator.init(app.alloc);
             defer mem_utils.deinit_arena(arena_state);
@@ -4463,17 +4464,29 @@ pub fn Runtime(comptime App: type) type {
             var stored: RunCodeStoredOutput = .{ .app = app, .agent = agent };
             const reader: call_ledger.PointerReader = .{ .context = &stored, .read = RunCodeStoredOutput.read };
             for (rows, 0..) |row, index| {
+                if (row.ok and std.mem.eql(u8, row.call.name, "AskUserQuestion")) {
+                    if (runCodeRowOutput(arena, reader, row)) |text| {
+                        if (try question_answer.decodeJson(arena, text)) |answers| {
+                            const entry_id = try sink.appendQuestionResolution(answers);
+                            try writeRunCodeRowOutput(arena, sink, row, runCodeRowResult(row, text), entry_id);
+                            continue;
+                        }
+                    }
+                }
+                const target = historicalSessionTarget(arena, labels, row.call) orelse row.target;
                 const base = if (row.ok)
-                    try app.describeToolActionCompletedWithAdvertised(agent, arena, row.call, row.target, &.{})
+                    try app.describeToolActionCompletedWithAdvertised(agent, arena, row.call, target, &.{})
                 else
-                    try app.describeToolActionDeniedWithAdvertised(agent, arena, row.call, row.target, "Failed", &.{});
+                    try app.describeToolActionDeniedWithAdvertised(agent, arena, row.call, target, "Failed", &.{});
                 const line = try tool_presentation.formatToolStatusWithStats(arena, base, row.additions, row.deletions, .{
                     .added = ui_render.diff_added_marker_style,
                     .removed = ui_render.diff_removed_marker_style,
                 });
                 const entry_id = try writeCompletedToolStatus(sink, if (row.ok) .completed else .failed, line);
                 if (runCodeRowOutput(arena, reader, row)) |text| {
-                    try writeRunCodeRowOutput(arena, sink, row, entry_id, text);
+                    const row_result = runCodeRowResult(row, text);
+                    if (row.ok) try recordHistoricalSessionLabel(app, labels, row.call, row_result);
+                    try writeRunCodeRowOutput(arena, sink, row, row_result, entry_id);
                 } else if (index == 0) {
                     try sink.attachHistoricalToolDetail(entry_id, call, result);
                 }
@@ -4502,18 +4515,27 @@ pub fn Runtime(comptime App: type) type {
             };
         }
 
-        fn writeRunCodeRowOutput(arena: Allocator, sink: anytype, row: run_code_presentation.Row, entry_id: u32, text: []u8) !void {
-            const row_result: types.PersistedToolResult = .{
-                .tool_call_id = try arena.dupe(u8, row.call.id),
-                .tool_name = try arena.dupe(u8, row.call.name),
+        fn runCodeRowResult(row: run_code_presentation.Row, text: []u8) types.PersistedToolResult {
+            return .{
+                .tool_call_id = row.call.id,
+                .tool_name = row.call.name,
                 .status = if (row.ok) .success else .failure,
                 .output = text,
                 .output_bytes = text.len,
                 .stored_output_bytes = text.len,
             };
+        }
+
+        fn writeRunCodeRowOutput(
+            arena: Allocator,
+            sink: anytype,
+            row: run_code_presentation.Row,
+            row_result: types.PersistedToolResult,
+            entry_id: u32,
+        ) !void {
             if (sink.materializeCommandReplay() and
                 try captured_command.isToolCall(arena, row.call.name, row.call.arguments_json) and
-                try writeSavedCommandOutput(sink, text))
+                try writeSavedCommandOutput(sink, row_result.output))
             {
                 try sink.attachHistoricalToolDetailAfterCommandOutput(entry_id, row.call, row_result);
                 sink.attachHistoricalCommandOutput(entry_id);

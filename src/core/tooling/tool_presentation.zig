@@ -514,7 +514,7 @@ pub fn resolveTerminalDisplayTarget(
         terminal_client,
         managed_executions,
         call,
-        max_run_command_activity_bytes,
+        max_run_command_reflow_bytes,
     );
 }
 
