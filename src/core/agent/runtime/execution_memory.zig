@@ -910,13 +910,17 @@ pub fn prepareCapturedToolModelOutput(
             arena,
             raw_output,
         );
+        const measured_bytes = if (std.mem.eql(u8, tool_call.name, "run_code"))
+            @min(raw_output.len, result_store.large_result_threshold_bytes)
+        else
+            raw_output.len;
         if (config.session_child_capability != null) {
             return result_store.prepareManaged(
                 arena,
                 config.session_child_capability,
                 tool_call.id,
                 tool_call.name,
-                raw_output.len,
+                measured_bytes,
                 sanitized_output,
                 config.max_tool_result_bytes,
             );
@@ -926,7 +930,7 @@ pub fn prepareCapturedToolModelOutput(
             config.tool_result_dir,
             tool_call.id,
             tool_call.name,
-            raw_output.len,
+            measured_bytes,
             sanitized_output,
             config.max_tool_result_bytes,
         );
