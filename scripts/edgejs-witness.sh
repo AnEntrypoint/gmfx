@@ -19,7 +19,7 @@ echo "RC edge_build = $rc"; grep -a 'error' "$P/build.out" | head -8 | cut -c1-2
 [ $rc -eq 0 ] || { echo "EDGE_DONE 1"; exit 1; }
 FX=$P/prefix/bin/fx
 echo "SIZE before=$(stat -c %s "$BASE") after=$(stat -c %s "$FX")"
-printf '%s\n' "console.log(fxHost.call('fs_write', JSON.stringify({ path: '$P/js/verb.txt', content: 'written' })))" > "$P/js/verb.mjs"
+printf '%s\n' "console.log(fxHost.call('fs_write', JSON.stringify({ path: '$P/js/verb.txt', base64: 'd3JpdHRlbg==' })))" > "$P/js/verb.mjs"
 printf '%s\n' "import('node:child_process').then((m) => console.log('child_process loaded ' + typeof m.spawnSync), (e) => console.log(e.message))" > "$P/js/spawn.mjs"
 printf '%s\n' "import('node:fs').then((m) => { m.writeFileSync('$P/js/fs.txt', 'node'); console.log('fs wrote') }, (e) => console.log(e.message))" > "$P/js/fs.mjs"
 run() { timeout 120 "$FX" run-code --engine edge --file "$1" --permission-mode "$2" 2>&1 | tail -1; }
