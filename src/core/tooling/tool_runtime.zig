@@ -1137,6 +1137,10 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         .presentation_group_id = ctx.output_chunk_presentation_group_id,
     });
     if (result.cancelled) try keepCancelledCommand(ctx, arena, result);
+    if (result.result_commit) |token| token.commit() catch |err| {
+        token.cancel();
+        return err;
+    };
     for (result.context_notices) |notice| try recordContextNoticeForDispatch(state.notices, notice);
     const images = if (result.tool_result_memory) |memory| memory.tool_images else &.{};
     return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json };

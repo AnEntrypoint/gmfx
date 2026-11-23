@@ -67,11 +67,17 @@ pub const Ledger = struct {
 
     pub fn report(self: *const Ledger, alloc: std.mem.Allocator, base: []u8) ![]u8 {
         defer alloc.free(base);
+        const shown = try alloc.dupe(Entry, self.entries.items);
+        defer alloc.free(shown);
+        for (shown) |*entry| {
+            const notice = entry.notice orelse continue;
+            if (std.mem.indexOf(u8, base, notice) != null) entry.notice = null;
+        }
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
         try out.writer.writeAll(base[0 .. base.len - 1]);
         try out.writer.writeAll(",\"calls\":");
-        try std.json.Stringify.value(self.entries.items, .{ .emit_null_optional_fields = false }, &out.writer);
+        try std.json.Stringify.value(shown, .{ .emit_null_optional_fields = false }, &out.writer);
         try out.writer.print(",\"calls_dropped\":{d}}}", .{self.dropped});
         return out.toOwnedSlice();
     }
@@ -107,6 +113,17 @@ test "the ledger carries a notice found in a verb's result body into the report"
     const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true}"));
     defer alloc.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"notice\":\"shell snapshot unavailable\"") != null);
+}
+
+test "the ledger leaves out a notice the result value already carries" {
+    const alloc = std.testing.allocator;
+    var unused: u8 = 0;
+    var ledger = Ledger.init(alloc, &unused, noticeInvoke);
+    defer ledger.deinit();
+    alloc.free(try Ledger.invoke(&ledger, alloc, "Bash", "{}"));
+    const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true,\"value\":\"shell snapshot unavailable\"}"));
+    defer alloc.free(text);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "shell snapshot unavailable"));
 }
 
 test "the ledger records each verb call with a bounded args summary and appends it to the report" {
