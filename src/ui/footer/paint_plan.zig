@@ -1088,6 +1088,7 @@ fn composeTranscriptViewerFooterFrame(
         try row_text.appendSingleLineEllipsized(alloc, &keys_row, keys, width - 2);
         try keys_row.appendSlice(alloc, ui_render.reset_style);
     }
+    try keys_row.appendSlice(alloc, "\x1b[K");
     try pushFooterBandRow(
         alloc,
         &frame,

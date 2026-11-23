@@ -4,6 +4,7 @@ const display_width = @import("../core/shared/display_width.zig");
 const io_mod = @import("../core/shared/io.zig");
 const text_utils = @import("../core/shared/text_utils.zig");
 const tool_result_display = @import("../core/tooling/tool_result_display.zig");
+const run_code_presentation = @import("../core/tooling/run_code_presentation.zig");
 const command_output_content = @import("../core/tooling/command_output_content.zig");
 const command_replay_store = @import("../core/session/command_replay_store.zig");
 const result_store = @import("../core/session/result_store.zig");
@@ -6509,6 +6510,26 @@ fn transcriptHasEntry(
     return false;
 }
 
+fn toolResultForDisplay(
+    alloc: Allocator,
+    detail: *const ToolDetailRecord,
+    result: []const u8,
+) ![]u8 {
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const call: types.ToolCall = .{
+        .id = "",
+        .name = detail.tool_name,
+        .arguments_json = "",
+    };
+    for (try run_code_presentation.rows(arena_state.allocator(), call, result)) |row| {
+        if (!std.mem.eql(u8, row.call.name, "read_file")) continue;
+        const output = row.output orelse continue;
+        return alloc.dupe(u8, tool_result_display.contentForDisplay(output));
+    }
+    return alloc.dupe(u8, tool_result_display.contentForDisplay(result));
+}
+
 fn appendTerminalSafeToolOutput(
     writer: *std.Io.Writer,
     alloc: Allocator,
@@ -6848,7 +6869,8 @@ fn appendDetailContent(
             }
             try out.writer.writeAll(rendered.written());
         } else {
-            const display = tool_result_display.contentForDisplay(result);
+            const display = try toolResultForDisplay(alloc, detail, result);
+            defer alloc.free(display);
             try appendTerminalSafeToolOutputInterruptible(
                 &out.writer,
                 alloc,
