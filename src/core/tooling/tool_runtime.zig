@@ -1100,6 +1100,10 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
     const ctx = state.runtime;
     if (ctx.tool_registry.lookup(call.name) == null) return runInnerMcpCall(ctx, arena, call);
     if (try checkToolAvailability(ctx, arena, call)) |reason| return .{ .ok = false, .body = reason };
+    switch (try validateToolCall(ctx, arena, call)) {
+        .failure => |reason| return .{ .ok = false, .body = reason },
+        else => {},
+    }
     const outcome = try reviewedPermissionOutcome(ctx, arena, call);
     if (try permissionDenial(arena, call.name, outcome)) |text| return .{ .ok = false, .body = text };
     const authority = outcome.execution_authority orelse
