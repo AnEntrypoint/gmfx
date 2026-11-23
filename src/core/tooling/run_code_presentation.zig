@@ -71,6 +71,17 @@ pub fn calledVerbs(arena: Allocator, call: ToolCall, output: []const u8) Allocat
     return if (out.items.len > 0) out.items else null;
 }
 
+pub fn changedFiles(call: ToolCall, output: []const u8, registry: tool_dispatch.Registry, arena: Allocator) Allocator.Error!bool {
+    if (!isRunCode(call.name)) return false;
+    const report = try parseReport(arena, output) orelse return false;
+    for (report.calls) |inner| {
+        if (!inner.ok) continue;
+        const tool = registry.lookup(inner.verb) orelse continue;
+        if (tool.activity_kind == .write or tool.activity_kind == .edit) return true;
+    }
+    return false;
+}
+
 fn calledBefore(earlier: []const InnerCall, verb: []const u8) bool {
     for (earlier) |inner| if (std.mem.eql(u8, inner.verb, verb)) return true;
     return false;
@@ -140,6 +151,19 @@ test "run_code presents its body line before results and the verbs it called aft
     try std.testing.expectEqualStrings("read_file, fs_stat", (try calledVerbs(arena, test_call, test_output)).?);
     try std.testing.expect(try calledVerbs(arena, test_call, "not json") == null);
     try std.testing.expect(try calledVerbs(arena, .{ .id = "r", .name = "read_file", .arguments_json = "{}" }, test_output) == null);
+}
+
+test "run_code reports changed files only for a successful inner write or edit" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const registry = test_builtin_tools.registry;
+    const wrote = "{\"ok\":true,\"calls\":[{\"verb\":\"write_file\",\"args\":\"{}\",\"ok\":true}],\"calls_dropped\":0}";
+    const failed_write = "{\"ok\":false,\"calls\":[{\"verb\":\"write_file\",\"args\":\"{}\",\"ok\":false}],\"calls_dropped\":0}";
+    try std.testing.expect(try changedFiles(test_call, wrote, registry, arena));
+    try std.testing.expect(!try changedFiles(test_call, failed_write, registry, arena));
+    try std.testing.expect(!try changedFiles(test_call, test_output, registry, arena));
+    try std.testing.expect(!try changedFiles(.{ .id = "r", .name = "write_file", .arguments_json = "{}" }, wrote, registry, arena));
 }
 
 test "run_code detail shows the notice an inner call carried under that call" {

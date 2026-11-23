@@ -4,6 +4,7 @@ const types = @import("../../shared/types.zig");
 const debug_trace = @import("../../shared/debug_trace.zig");
 const io_mod = @import("../../shared/io.zig");
 const diff = @import("../../output/diff.zig");
+const run_code_presentation = @import("../../tooling/run_code_presentation.zig");
 const tool_dispatch = @import("../../tooling/tool_dispatch.zig");
 const tool_result_errors = @import("../../tooling/tool_result_errors.zig");
 
@@ -524,6 +525,7 @@ pub fn appendOrdinaryExecutedResult(
         batch.step_changed_files = true;
         try noteEdit(batch, arena, tool_registry, tool_call);
     }
+    if (try run_code_presentation.changedFiles(tool_call, model_output, tool_registry, arena)) batch.step_changed_files = true;
     try appendToolResultContent(
         arena,
         within_turn_suffix,

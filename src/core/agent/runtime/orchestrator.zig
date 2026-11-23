@@ -2837,6 +2837,8 @@ const InnerPermissionState = struct {
     advertised_dynamic_tool_names: []const []const u8,
     advertised_dynamic_tools: []const agent_stream_provider.DynamicFunctionTool,
     step_ctx: TraceContext,
+    local_grants: ?*std.ArrayList(PermissionGrant),
+    grant_arena: Allocator,
 
     fn source(self: *InnerPermissionState) runtime_tool_contracts.InnerPermission {
         return .{ .context = @ptrCast(self), .outcome_fn = innerCallPermissionOutcome };
@@ -2848,7 +2850,7 @@ fn innerCallPermissionOutcome(raw: *anyopaque, arena: Allocator, call: ToolCall)
     var review = state.review_context;
     review.target_call_id = call.id;
     review.pending_assistant = .{ .role = .assistant, .tool_calls = try arena.dupe(ToolCall, &.{call}) };
-    return runtime_tool_admission.requestToolPermissionTraced(
+    const outcome = try runtime_tool_admission.requestToolPermissionTraced(
         state.deps,
         arena,
         call,
@@ -2862,8 +2864,34 @@ fn innerCallPermissionOutcome(raw: *anyopaque, arena: Allocator, call: ToolCall)
         state.config.workspace_root,
         state.step_ctx,
     );
+    try retainInnerSessionGrants(state, arena, call, outcome);
+    return outcome;
 }
 
+<<<<<<< ours
+=======
+fn retainInnerSessionGrants(state: *InnerPermissionState, arena: Allocator, call: ToolCall, outcome: command_admission.PermissionOutcome) !void {
+    const local_grants = state.local_grants orelse return;
+    if (outcome.decision != .always and outcome.decision != .always_tree) return;
+    const file_offer = if (outcome.execution_authority) |authority| switch (authority) {
+        .file_mutation => |file_authority| file_authority.grant_offer,
+        else => null,
+    } else null;
+    if (file_offer) |offer| {
+        try runtime_tool_admission.applyFrozenFileMutationSessionGrants(
+            state.grant_arena,
+            state.deps,
+            local_grants,
+            try runtime_tool_admission.frozenSessionGrantsForDecision(arena, outcome.decision, offer),
+        );
+        return;
+    }
+    if (outcome.decision != .always) return;
+    const target_path = try state.deps.permission_target_for_call(state.deps.ctx, arena, call, state.advertised_dynamic_tool_names);
+    try runtime_tool_admission.applyInitialSessionGrants(state.deps, state.grant_arena, local_grants, state.config.workspace_root, call, target_path);
+}
+
+>>>>>>> theirs
 fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!bool {
     const state: *InnerContextGatherState = @ptrCast(@alignCast(raw));
     const targets = try tool_preparation.innerCallTargets(
@@ -2894,8 +2922,12 @@ fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!bool {
         state.replaced_sources.items,
         state.remind_sources,
     );
+<<<<<<< ours
     return selected.content != null and
         !runtime_parallel_execution.isReadOnlyCall(state.deps.tool_registry, call);
+=======
+    return selected.content != null;
+>>>>>>> theirs
 }
 
 fn candidateHasApplicableContextDelta(
@@ -12118,6 +12150,8 @@ fn processQueuedPromptLoop(
                 .advertised_dynamic_tool_names = advertised_dynamic_tool_names,
                 .advertised_dynamic_tools = advertised_dynamic_tools,
                 .step_ctx = step_ctx,
+                .local_grants = if (live_authority == null) &local_grants else null,
+                .grant_arena = arena,
             };
             var execution = deps.executeToolCall(.{
                 .inner_context = if (inner_context_state) |*state| state.gather() else null,

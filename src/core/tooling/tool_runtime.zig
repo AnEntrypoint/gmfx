@@ -1115,7 +1115,12 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         .failure => |reason| return .{ .ok = false, .body = reason },
         else => {},
     }
+<<<<<<< ours
     if (try gatherInnerCallContext(ctx, call)) return .{ .ok = false, .body = types.context_deferred_tool_result_output };
+=======
+    const context_added = try gatherInnerCallContext(ctx, call);
+    if (innerCallDeferredForContext(ctx.tool_registry, call.name, context_added)) return .{ .ok = false, .body = types.context_deferred_tool_result_output };
+>>>>>>> theirs
     const outcome = try innerPermissionOutcome(ctx, arena, call);
     if (outcome.decision.isDenied() or outcome.tool_failure != null) return deniedInnerReply(arena, call, outcome);
     const authority = outcome.execution_authority orelse
@@ -1165,6 +1170,26 @@ fn deniedInnerReply(arena: Allocator, call: ToolCall, outcome: command_admission
 fn gatherInnerCallContext(ctx: Context, call: ToolCall) !bool {
     const gather = ctx.inner_context orelse return false;
     return gather.gather_fn(gather.context, call);
+<<<<<<< ours
+=======
+}
+
+fn innerCallDeferredForContext(registry: tool_dispatch.Registry, verb: []const u8, context_added: bool) bool {
+    if (!context_added) return false;
+    const tool = registry.lookup(verb) orelse return false;
+    return switch (tool.activity_kind) {
+        .read, .list => false,
+        else => true,
+    };
+}
+
+test "an inner call that changes state is deferred when new context was added and a read is not" {
+    const registry = test_builtin_tools.registry;
+    try std.testing.expect(innerCallDeferredForContext(registry, "write_file", true));
+    try std.testing.expect(!innerCallDeferredForContext(registry, "write_file", false));
+    try std.testing.expect(!innerCallDeferredForContext(registry, "read_file", true));
+    try std.testing.expect(!innerCallDeferredForContext(registry, "unknown_verb", true));
+>>>>>>> theirs
 }
 
 fn keepCancelledCommand(ctx: Context, arena: Allocator, result: ToolExecutionResult) !void {
