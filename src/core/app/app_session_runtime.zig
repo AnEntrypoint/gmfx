@@ -41,6 +41,7 @@ const command_replay_store = @import("../session/command_replay_store.zig");
 const command_output_content = @import("../tooling/command_output_content.zig");
 const tooling_presentation = @import("../tooling/tool_presentation.zig");
 const run_code_presentation = @import("../tooling/run_code_presentation.zig");
+const call_ledger = @import("../../tools/runcode/call_ledger.zig");
 const tool_args = @import("../tooling/tool_args.zig");
 const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
@@ -4459,6 +4460,8 @@ pub fn Runtime(comptime App: type) type {
             defer mem_utils.deinit_arena(arena_state);
             const arena = arena_state.allocator();
             const rows = try run_code_presentation.resultRows(arena, call, result.output, result.status == .success);
+            var stored: RunCodeStoredOutput = .{ .app = app, .agent = agent };
+            const reader: call_ledger.PointerReader = .{ .context = &stored, .read = RunCodeStoredOutput.read };
             for (rows, 0..) |row, index| {
                 const base = if (row.ok)
                     try app.describeToolActionCompletedWithAdvertised(agent, arena, row.call, row.target, &.{})
@@ -4469,9 +4472,54 @@ pub fn Runtime(comptime App: type) type {
                     .removed = ui_render.diff_removed_marker_style,
                 });
                 const entry_id = try writeCompletedToolStatus(sink, if (row.ok) .completed else .failed, line);
-                if (index == 0) try sink.attachHistoricalToolDetail(entry_id, call, result);
+                if (runCodeRowOutput(arena, reader, row)) |text| {
+                    try writeRunCodeRowOutput(arena, sink, row, entry_id, text);
+                } else if (index == 0) {
+                    try sink.attachHistoricalToolDetail(entry_id, call, result);
+                }
             }
             return rows.len > 0;
+        }
+
+        const RunCodeStoredOutput = struct {
+            app: *App,
+            agent: *AppAgent,
+
+            fn read(context: *anyopaque, alloc: std.mem.Allocator, handle: []const u8, bytes: usize) anyerror![]u8 {
+                const self: *RunCodeStoredOutput = @ptrCast(@alignCast(context));
+                if (comptime @hasDecl(App, "readStoredRunCodeOutput")) {
+                    return self.app.readStoredRunCodeOutput(alloc, handle, bytes);
+                }
+                const capability = childCapability(self.agent) orelse return error.ResultStoreUnavailable;
+                return result_store.readForReplayManaged(alloc, capability, handle, bytes);
+            }
+        };
+
+        fn runCodeRowOutput(arena: Allocator, reader: call_ledger.PointerReader, row: run_code_presentation.Row) ?[]u8 {
+            return call_ledger.resolveOutput(arena, row.output, row.output_handle, row.output_bytes, reader) catch |err| {
+                debug_trace.logf("session", "resume run_code row output unavailable call_id={s} err={s}", .{ row.call.id, @errorName(err) });
+                return null;
+            };
+        }
+
+        fn writeRunCodeRowOutput(arena: Allocator, sink: anytype, row: run_code_presentation.Row, entry_id: u32, text: []u8) !void {
+            const row_result: types.PersistedToolResult = .{
+                .tool_call_id = try arena.dupe(u8, row.call.id),
+                .tool_name = try arena.dupe(u8, row.call.name),
+                .status = if (row.ok) .success else .failure,
+                .output = text,
+                .output_bytes = text.len,
+                .stored_output_bytes = text.len,
+            };
+            if (sink.materializeCommandReplay() and
+                try captured_command.isToolCall(arena, row.call.name, row.call.arguments_json) and
+                try writeSavedCommandOutput(sink, text))
+            {
+                try sink.attachHistoricalToolDetailAfterCommandOutput(entry_id, row.call, row_result);
+                sink.attachHistoricalCommandOutput(entry_id);
+                return;
+            }
+            try sink.attachHistoricalToolDetail(entry_id, row.call, row_result);
         }
 
         fn writeAnsweredQuestionResult(
@@ -5629,6 +5677,9 @@ const TestApp = struct {
     historical_question_entry_ids: std.ArrayList(u32) = .empty,
     historical_question_answer_count: usize = 0,
     historical_tool_detail_entry_ids: std.ArrayList(u32) = .empty,
+    historical_tool_detail_outputs: std.ArrayList([]u8) = .empty,
+    stored_run_code_handle: []const u8 = "",
+    stored_run_code_text: []const u8 = "",
     cancelled_command_detail_count: usize = 0,
     cancelled_command_artifact_handle: ?[]u8 = null,
     cancelled_command_replayed_output: bool = false,
@@ -5744,6 +5795,8 @@ const TestApp = struct {
         self.completed_tool_statuses.deinit(self.alloc);
         self.completed_tool_outcomes.deinit(self.alloc);
         self.historical_question_entry_ids.deinit(self.alloc);
+        for (self.historical_tool_detail_outputs.items) |text| self.alloc.free(text);
+        self.historical_tool_detail_outputs.deinit(self.alloc);
         self.historical_tool_detail_entry_ids.deinit(self.alloc);
         if (self.cancelled_command_artifact_handle) |handle| self.alloc.free(handle);
         self.command_stdout.deinit(self.alloc);
@@ -5867,9 +5920,15 @@ const TestApp = struct {
         self: *TestApp,
         entry_id: u32,
         _: types.ToolCall,
-        _: types.PersistedToolResult,
+        result: types.PersistedToolResult,
     ) !void {
         try self.historical_tool_detail_entry_ids.append(self.alloc, entry_id);
+        try self.historical_tool_detail_outputs.append(self.alloc, try self.alloc.dupe(u8, result.output));
+    }
+
+    pub fn readStoredRunCodeOutput(self: *TestApp, alloc: std.mem.Allocator, handle: []const u8, bytes: usize) ![]u8 {
+        if (!std.mem.eql(u8, handle, self.stored_run_code_handle) or bytes != self.stored_run_code_text.len) return error.FileNotFound;
+        return alloc.dupe(u8, self.stored_run_code_text);
     }
 
     pub fn attachHistoricalCancelledCommandDetail(
@@ -8043,6 +8102,59 @@ test "execution replay renders a run_code result as the rows of its inner calls"
     try std.testing.expectEqualStrings("● Completed write_file a.txt\n", app.completed_tool_statuses.items[0]);
     try std.testing.expectEqualStrings("● Failed read_file\n", app.completed_tool_statuses.items[1]);
     try std.testing.expectEqualSlices(types.ToolOutcomeKind, &.{ .completed, .failed }, app.completed_tool_outcomes.items);
+}
+
+fn replayRunCodeOutput(app: *TestApp, output: []const u8) !void {
+    var calls = [_]types.ToolCall{.{ .id = "rc", .name = "run_code", .arguments_json = "{\"body\":\"return 1;\"}" }};
+    var results = [_]types.PersistedToolResult{.{
+        .tool_call_id = @constCast("rc"),
+        .tool_name = @constCast("run_code"),
+        .status = .success,
+        .output = @constCast(output),
+        .output_bytes = output.len,
+        .stored_output_bytes = output.len,
+    }};
+    var steps = [_]types.ToolExecutionStep{.{ .tool_calls = calls[0..], .tool_results = results[0..] }};
+    try Runtime(TestApp).writeExecutionHistory(app, app.agent(), .{ .tool_steps = steps[0..] });
+}
+
+test "a resumed run_code row replays its inline inner output as that row's detail" {
+    const alloc = std.testing.allocator;
+    var app = try TestApp.init(alloc, "/workspace");
+    defer app.deinit();
+
+    try replayRunCodeOutput(&app, "{\"ok\":true,\"calls\":[{\"verb\":\"read_file\",\"args\":\"{}\",\"ok\":true,\"output\":\"line one\\nline two\"}],\"calls_dropped\":0}");
+
+    try std.testing.expectEqual(@as(usize, 1), app.completed_tool_statuses.items.len);
+    try std.testing.expectEqual(@as(usize, 1), app.historical_tool_detail_outputs.items.len);
+    try std.testing.expectEqualStrings("line one\nline two", app.historical_tool_detail_outputs.items[0]);
+}
+
+test "a resumed run_code row whose output is a pointer resolves it from the result store" {
+    const alloc = std.testing.allocator;
+    var app = try TestApp.init(alloc, "/workspace");
+    defer app.deinit();
+    app.stored_run_code_handle = "result-rc-read_file.txt";
+    app.stored_run_code_text = "stored line";
+
+    try replayRunCodeOutput(&app, "{\"ok\":true,\"calls\":[{\"verb\":\"read_file\",\"args\":\"{}\",\"ok\":true,\"output_handle\":\"result-rc-read_file.txt\",\"output_bytes\":11}],\"calls_dropped\":0}");
+
+    try std.testing.expectEqual(@as(usize, 1), app.historical_tool_detail_outputs.items.len);
+    try std.testing.expectEqualStrings("stored line", app.historical_tool_detail_outputs.items[0]);
+}
+
+test "a resumed run_code row with a missing output pointer falls back to its summary" {
+    const alloc = std.testing.allocator;
+    var app = try TestApp.init(alloc, "/workspace");
+    defer app.deinit();
+    const output = "{\"ok\":true,\"calls\":[{\"verb\":\"read_file\",\"args\":\"{}\",\"ok\":true,\"output_handle\":\"result-rc-missing.txt\",\"output_bytes\":11}],\"calls_dropped\":0}";
+
+    try replayRunCodeOutput(&app, output);
+
+    try std.testing.expectEqual(@as(usize, 1), app.completed_tool_statuses.items.len);
+    try std.testing.expect(std.mem.startsWith(u8, app.completed_tool_statuses.items[0], "● Completed read_file"));
+    try std.testing.expectEqual(@as(usize, 1), app.historical_tool_detail_outputs.items.len);
+    try std.testing.expectEqualStrings(output, app.historical_tool_detail_outputs.items[0]);
 }
 
 test "execution replay releases action-formatting scratch allocations" {

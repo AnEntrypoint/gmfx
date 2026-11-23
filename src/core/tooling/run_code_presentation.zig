@@ -25,6 +25,9 @@ const InnerCall = struct {
     notice: ?[]const u8 = null,
     additions: ?u32 = null,
     deletions: ?u32 = null,
+    output: ?[]const u8 = null,
+    output_handle: ?[]const u8 = null,
+    output_bytes: ?usize = null,
 };
 
 pub const Row = struct {
@@ -34,6 +37,9 @@ pub const Row = struct {
     target: ?[]const u8,
     additions: usize,
     deletions: usize,
+    output: ?[]const u8 = null,
+    output_handle: ?[]const u8 = null,
+    output_bytes: ?usize = null,
 };
 
 const Report = struct {
@@ -98,6 +104,9 @@ pub fn rows(arena: Allocator, call: ToolCall, output: []const u8) Allocator.Erro
         .target = try mutationTarget(arena, inner),
         .additions = inner.additions orelse 0,
         .deletions = inner.deletions orelse 0,
+        .output = inner.output,
+        .output_handle = inner.output_handle,
+        .output_bytes = inner.output_bytes,
     };
     return out;
 }
