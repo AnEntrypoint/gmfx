@@ -135,6 +135,11 @@ pub fn unavailableHostToolResult(alloc: Allocator) Allocator.Error!ToolExecution
     };
 }
 
+pub const InnerContextGather = struct {
+    context: *anyopaque,
+    gather_fn: *const fn (context: *anyopaque, call: ToolCall) anyerror!void,
+};
+
 pub const ToolExecutionRequest = struct {
     observer: ?*observation.Observer = null,
     skill_locations: ?*const skill_contract.Locations = null,
@@ -161,6 +166,7 @@ pub const ToolExecutionRequest = struct {
     command_replay_unavailable: bool = false,
     lifecycle_id: ?types.ToolLifecycleId = null,
     presentation_group_id: ?types.ToolPresentationGroupId = null,
+    inner_context: ?InnerContextGather = null,
 };
 
 pub const DiffEntryPayload = diff.DiffEntryPayload;

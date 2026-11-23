@@ -493,14 +493,39 @@ fn freeApplicableTargets(alloc: Allocator, targets: []context_contract.Applicabl
     if (targets.len > 0) alloc.free(targets);
 }
 
-fn testNoClassification(_: ?*anyopaque, _: Allocator, _: ToolCall) anyerror!?CallbackTerminal {
+pub fn innerCallTargets(
+    alloc: Allocator,
+    call: ToolCall,
+    workspace_root: []const u8,
+    access_scope: ?workspace_access.AccessScope,
+    registry: tool_dispatch.Registry,
+) ![]const context_contract.ApplicableTarget {
+    var preparation = prepareReadyCall(alloc, call, .{
+        .tool_registry = registry,
+        .workspace_root = workspace_root,
+        .access_scope = access_scope,
+        .classifiers = no_classifiers,
+    }) catch |err| switch (err) {
+        error.NotLifecycleReady => return &.{},
+        else => return err,
+    };
+    switch (preparation) {
+        .terminal => {
+            preparation.deinit(alloc);
+            return &.{};
+        },
+        .candidate => |candidate| return candidate.applicable_targets,
+    }
+}
+
+fn noClassification(_: ?*anyopaque, _: Allocator, _: ToolCall) anyerror!?CallbackTerminal {
     return null;
 }
 
-const test_classifiers: Classifiers = .{
-    .idempotent = testNoClassification,
-    .validation = testNoClassification,
-    .availability = testNoClassification,
+const no_classifiers: Classifiers = .{
+    .idempotent = noClassification,
+    .validation = noClassification,
+    .availability = noClassification,
 };
 
 test "advertised dynamic calls stay opaque while unsupported calls are terminal" {
@@ -516,7 +541,7 @@ test "advertised dynamic calls stay opaque while unsupported calls are terminal"
         .tool_registry = empty_registry,
         .workspace_root = "/tmp/workspace",
         .advertised_dynamic_tool_names = &advertised,
-        .classifiers = test_classifiers,
+        .classifiers = no_classifiers,
     });
     defer dynamic.deinit(alloc);
     try std.testing.expectEqual(CandidateKind.advertised_dynamic, dynamic.candidate.kind);
@@ -536,7 +561,7 @@ test "advertised dynamic calls stay opaque while unsupported calls are terminal"
     }, .{
         .tool_registry = empty_registry,
         .workspace_root = "/tmp/workspace",
-        .classifiers = test_classifiers,
+        .classifiers = no_classifiers,
     });
     defer unsupported.deinit(alloc);
     try std.testing.expectEqual(TerminalKind.unsupported, unsupported.terminal.kind);
@@ -566,7 +591,7 @@ test "an unadvertised registered tool is unsupported while run_code stays ready"
         .tool_registry = .{ .tools = &tools },
         .workspace_root = "/tmp/workspace",
         .advertised_tool_names = &one_tool,
-        .classifiers = test_classifiers,
+        .classifiers = no_classifiers,
     };
     var open = gated;
     open.advertised_tool_names = &.{};
@@ -602,7 +627,7 @@ test "live deferred dynamic calls reach dispatch while true unknown calls stay t
             return std.mem.eql(u8, call.name, "mcp_reload_tool");
         }
     };
-    var classifiers = test_classifiers;
+    var classifiers = no_classifiers;
     classifiers.deferred_dynamic = Fixture.classify;
     const config = Config{
         .tool_registry = .{ .tools = &.{} },
@@ -714,9 +739,9 @@ test "classifier validation failures remain terminal before execution" {
         .tool_registry = registry,
         .workspace_root = "/tmp/workspace",
         .classifiers = .{
-            .idempotent = testNoClassification,
+            .idempotent = noClassification,
             .validation = Fixture.validation,
-            .availability = testNoClassification,
+            .availability = noClassification,
         },
     });
     defer result.deinit(std.testing.allocator);
@@ -762,7 +787,7 @@ test "registered candidates expose only authoritative canonical targets" {
         .id = "read",
         .name = "read_file",
         .arguments_json = "{\"path\":\"build/pkg/existing.txt\"}",
-    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = test_classifiers });
+    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = no_classifiers });
     defer read.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), read.candidate.applicable_targets.len);
     try std.testing.expectEqual(context_contract.TargetKind.file, read.candidate.applicable_targets[0].kind);
@@ -772,7 +797,7 @@ test "registered candidates expose only authoritative canonical targets" {
         .id = "missing",
         .name = "read_file",
         .arguments_json = "{\"path\":\"build/pkg/missing.txt\"}",
-    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = test_classifiers });
+    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = no_classifiers });
     defer missing.deinit(alloc);
     try std.testing.expectEqual(
         CandidateKind.legacy_target_resolution,
@@ -794,7 +819,7 @@ test "registered candidates expose only authoritative canonical targets" {
         .id = "command",
         .name = "Bash",
         .arguments_json = "{\"command\":\"cat unrelated/AGENTS.md\",\"cwd\":\"build\"}",
-    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = test_classifiers });
+    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = no_classifiers });
     defer command.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), command.candidate.applicable_targets.len);
     try std.testing.expectEqual(context_contract.TargetKind.directory, command.candidate.applicable_targets[0].kind);
@@ -804,7 +829,7 @@ test "registered candidates expose only authoritative canonical targets" {
         .id = "delimiter-command",
         .name = "Bash",
         .arguments_json = "{\"command\":\"pwd\",\"cwd\":\"segment::scope\"}",
-    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = test_classifiers });
+    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = no_classifiers });
     defer delimiter_command.deinit(alloc);
     try std.testing.expectEqual(
         @as(usize, 1),
@@ -823,7 +848,7 @@ test "registered candidates expose only authoritative canonical targets" {
         .id = "write",
         .name = "write_file",
         .arguments_json = "{\"path\":\"build/pkg/new.txt\",\"content\":\"new contents\"}",
-    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = test_classifiers });
+    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = no_classifiers });
     defer write.deinit(alloc);
     try std.testing.expectEqualStrings(new_path, write.candidate.applicable_targets[0].path);
     try std.testing.expectError(error.FileNotFound, std.Io.Dir.accessAbsolute(std.testing.io, new_path, .{}));
@@ -832,7 +857,7 @@ test "registered candidates expose only authoritative canonical targets" {
         .id = "edit",
         .name = "edit_file",
         .arguments_json = "{\"path\":\"build/pkg/existing.txt\",\"old_string\":\"old\",\"new_string\":\"new\"}",
-    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = test_classifiers });
+    }, .{ .tool_registry = registry, .workspace_root = workspace, .classifiers = no_classifiers });
     defer edit.deinit(alloc);
     try std.testing.expectEqualStrings(existing_path, edit.candidate.applicable_targets[0].path);
     var unchanged_file = try std.Io.Dir.openFileAbsolute(std.testing.io, existing_path, .{});
@@ -867,7 +892,7 @@ test "ordinary applicable target freshness detects retarget and resolution failu
     const config: Config = .{
         .tool_registry = .{ .tools = &tools },
         .workspace_root = workspace,
-        .classifiers = test_classifiers,
+        .classifiers = no_classifiers,
     };
 
     var read = try prepareReadyCall(alloc, .{
@@ -940,7 +965,7 @@ test "legacy ordinary applicable target freshness detects newly resolvable scope
     const config: Config = .{
         .tool_registry = .{ .tools = &tools },
         .workspace_root = workspace,
-        .classifiers = test_classifiers,
+        .classifiers = no_classifiers,
     };
     const call: ToolCall = .{
         .id = "missing",
@@ -983,7 +1008,7 @@ fn checkPreparationAllocationFailures(alloc: Allocator, workspace: []const u8) !
     }, .{
         .tool_registry = .{ .tools = &tools },
         .workspace_root = workspace,
-        .classifiers = test_classifiers,
+        .classifiers = no_classifiers,
     });
     defer result.deinit(alloc);
     try std.testing.expect(result == .candidate);
@@ -1002,7 +1027,7 @@ test "preparation cancellation and allocation failures clean owned state" {
         .tool_registry = .{ .tools = &tools },
         .workspace_root = "/tmp/workspace",
         .cancel_flag = &cancelled,
-        .classifiers = test_classifiers,
+        .classifiers = no_classifiers,
     }));
 
     var tmp = std.testing.tmpDir(.{});

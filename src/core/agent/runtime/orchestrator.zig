@@ -2812,6 +2812,53 @@ fn seedNoteSources(
     };
 }
 
+const InnerContextGatherState = struct {
+    deps: *const AgentRuntimeDeps,
+    arena: Allocator,
+    registry: context_contract.Registry,
+    config: Config,
+    delivery_state: *context_contract.DeliveryState,
+    remind_sources: *std.ArrayList([]const u8),
+    pending_notes: *std.ArrayList(ChatMessage),
+    replaced_sources: *const std.ArrayList([]const u8),
+
+    fn gather(self: *InnerContextGatherState) runtime_tool_contracts.InnerContextGather {
+        return .{ .context = @ptrCast(self), .gather_fn = gatherInnerCallContext };
+    }
+};
+
+fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!void {
+    const state: *InnerContextGatherState = @ptrCast(@alignCast(raw));
+    const targets = try tool_preparation.innerCallTargets(
+        state.arena,
+        call,
+        state.config.workspace_root,
+        state.config.access_scope,
+        state.deps.tool_registry,
+    );
+    if (targets.len == 0) return;
+    var selected = try state.registry.selectDefaultApplicableContext(state.arena, .{
+        .workspace_root = state.config.workspace_root,
+        .access_scope = state.config.access_scope,
+        .targets = targets,
+        .delivered_sources = state.delivery_state.delivered_sources.items,
+        .evaluated_endpoints = state.delivery_state.evaluated_endpoints.items,
+        .remind_sources = state.remind_sources.items,
+        .context_limits = state.config.context_limits,
+    });
+    defer selected.deinit(state.arena);
+    for (selected.notices) |notice| try state.deps.pushContextNotice(notice);
+    try commitContextNote(
+        state.arena,
+        state.pending_notes,
+        state.delivery_state,
+        state.registry.instruction_files,
+        &selected,
+        state.replaced_sources.items,
+        state.remind_sources,
+    );
+}
+
 fn candidateHasApplicableContextDelta(
     arena: Allocator,
     context_registry: context_contract.Registry,
@@ -12035,7 +12082,21 @@ fn processQueuedPromptLoop(
             const execution_lifecycle_id = types.ToolLifecycleId{ .turn_id = turn_id, .call_id = execution_call.id };
             const execution_is_command = runtime_tool_presentation.activityKindForCall(arena, deps.tool_registry, tool_call) == .command;
             var execution_error: ?anyerror = null;
+            var inner_context_state: ?InnerContextGatherState = if (deps.context_enabled)
+                if (deps.context_registry) |registry| .{
+                    .deps = deps,
+                    .arena = arena,
+                    .registry = registry,
+                    .config = config,
+                    .delivery_state = &context_delivery_state,
+                    .remind_sources = &remind_sources,
+                    .pending_notes = &pending_context_notes,
+                    .replaced_sources = &replaced_note_sources,
+                } else null
+            else
+                null;
             var execution = deps.executeToolCall(.{
+                .inner_context = if (inner_context_state) |*state| state.gather() else null,
                 .skill_locations = if (skills.catalog) |catalog| &catalog.locations else null,
                 .call_allocator = call_allocator,
                 .result_allocator = arena,

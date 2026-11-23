@@ -172,6 +172,7 @@ pub const Context = struct {
     provider_strict: bool = false,
     first_call_tool_choice: types.ToolChoice = .auto,
     tool_registry: tool_dispatch.Registry = .{},
+    inner_context: ?tool_contracts.InnerContextGather = null,
     host_tool_provider: ?tool_dispatch.HostToolProvider = null,
     subagent_host: ?*subagent_tool_host.Runtime = null,
     subagent_caller_id: ?[]const u8 = null,
@@ -421,6 +422,7 @@ pub fn executeToolCallAuthorized(
     var execution_ctx = ctx;
     execution_ctx.observer = request.observer orelse ctx.observer;
     execution_ctx.skill_locations = request.skill_locations orelse ctx.skill_locations;
+    execution_ctx.inner_context = request.inner_context;
     if (request.permission_mode) |permission_mode| {
         execution_ctx.permission_mode = permission_mode;
     }
@@ -1108,6 +1110,7 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         .failure => |reason| return .{ .ok = false, .body = reason },
         else => {},
     }
+    try gatherInnerCallContext(ctx, call);
     const outcome = try reviewedPermissionOutcome(ctx, arena, call);
     if (try permissionDenial(arena, call.name, outcome)) |text| return .{ .ok = false, .body = text };
     const authority = outcome.execution_authority orelse
@@ -1131,6 +1134,11 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
     for (result.context_notices) |notice| try recordContextNoticeForDispatch(state.notices, notice);
     const images = if (result.tool_result_memory) |memory| memory.tool_images else &.{};
     return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json };
+}
+
+fn gatherInnerCallContext(ctx: Context, call: ToolCall) !void {
+    const gather = ctx.inner_context orelse return;
+    try gather.gather_fn(gather.context, call);
 }
 
 fn runInnerMcpCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_dispatch.InnerCallReply {
