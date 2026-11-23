@@ -4487,6 +4487,8 @@ pub fn Runtime(comptime App: type) type {
                     const row_result = runCodeRowResult(row, text);
                     if (row.ok) try recordHistoricalSessionLabel(app, labels, row.call, row_result);
                     try writeRunCodeRowOutput(arena, sink, row, row_result, entry_id);
+                } else if (row.output == null and row.output_handle == null) {
+                    try sink.attachHistoricalToolDetail(entry_id, row.call, runCodeRowResult(row, &.{}));
                 } else if (index == 0) {
                     try sink.attachHistoricalToolDetail(entry_id, call, result);
                 }
