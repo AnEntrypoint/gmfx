@@ -289,7 +289,7 @@ describe("ReadMediaFile on a configured vision model", () => {
         if (JSON.stringify(body.messages).includes("image attached")) {
           return completion(body.model, "png attached");
         }
-        return toolCompletion(body.model, "ReadMediaFile", { path: "image.png" }, "call-png");
+        return toolCompletion(body.model, "run_code", { body: `return gm.ReadMediaFile(${JSON.stringify({ path: "image.png" })});` }, "call-png");
       });
       try {
         f.settings.providers.local.model_metadata = {

@@ -27,7 +27,7 @@ import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewaySse,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   heldFakeGatewayFinalText,
   startFakeGateway,
   TmuxSession,
@@ -189,8 +189,8 @@ function startFakeProviderCompaction(provider: "codex" | "grok") {
 
       if (!compacting && workingRequests === 1) {
         return new Response(
-          `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: "call_provider_facts", name: "read_file" } })}\n\n` +
-            `data: ${JSON.stringify({ type: "response.function_call_arguments.done", output_index: 0, arguments: JSON.stringify({ path: "provider-facts.txt" }) })}\n\n` +
+          `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: "call_provider_facts", name: "run_code" } })}\n\n` +
+            `data: ${JSON.stringify({ type: "response.function_call_arguments.done", output_index: 0, arguments: runCodeCall("read_file", { path: "provider-facts.txt" }).arguments })}\n\n` +
             `data: ${JSON.stringify({ type: "response.completed", response: { id: `response-${bodies.length}`, status: "completed", usage: { input_tokens: 7, output_tokens: 3 } } })}\n\n`,
           { headers: { "content-type": "text/event-stream" } },
         );
@@ -997,8 +997,8 @@ function startFakeCodexCapacityLoop() {
       const call = bodies.length;
       if (call <= 64) {
         return new Response(
-          `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: `call_capacity_${call}`, name: "read_file" } })}\n\n` +
-            `data: ${JSON.stringify({ type: "response.function_call_arguments.done", output_index: 0, arguments: JSON.stringify({ path: "README.md", start_line: call, line_count: 1 }) })}\n\n` +
+          `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: `call_capacity_${call}`, name: "run_code" } })}\n\n` +
+            `data: ${JSON.stringify({ type: "response.function_call_arguments.done", output_index: 0, arguments: runCodeCall("read_file", { path: "README.md", start_line: call, line_count: 1 }).arguments })}\n\n` +
             `data: ${JSON.stringify({ type: "response.completed", response: { id: `resp_capacity_${call}`, status: "completed", usage: { input_tokens: 5, output_tokens: 2 } } })}\n\n`,
           { headers: { "content-type": "text/event-stream" } },
         );
@@ -5011,8 +5011,8 @@ for (const scenario of ["replace", "conflict", "invalid-index"] as const) {
       const testGateway = startFakeGateway([]);
       const completed = { type: "response.completed", response: { status: "completed" } };
       const item = (id: string, path: string) => ({
-        type: "function_call", id: "fc_" + id, call_id: id, name: "write_file",
-        arguments: JSON.stringify({ path, content: "saved" }),
+        type: "function_call", id: "fc_" + id, call_id: id,
+        ...runCodeCall("write_file", { path, content: "saved" }),
       });
       const prior = item("prior", "prior.txt");
       const pending = item("pending", "preview.txt");
@@ -5071,7 +5071,7 @@ for (const scenario of ["replace", "conflict", "invalid-index"] as const) {
         if (conflict) expect(resultJson.error).toBe(scenario === "invalid-index" ? (provider === "codex" ? "InvalidOpenAICodexSseEvent" : "InvalidXaiGrokSseEvent") : "ResponsesToolCallConflict");
         else {
           expect(resultJson.output).toBe("FINAL_RECORD_OK");
-          expect(result.stderr).toBe("Writing final.txt\n");
+          expect(result.stderr).toBe("Working \n");
         }
         const detail = await runFx(["session", "--json", "--id", resultJson.session_id], { cwd: profile, env });
         expect(detail.code).toBe(0);
@@ -6711,7 +6711,7 @@ tmuxTest(
 
     writeFileSync(join(home, "compact-auth-notes.txt"), "notes\n");
     gateway = startFakeGateway([
-      fakeGatewayToolCall("compact-auth-read", "read_file", { path: "compact-auth-notes.txt" }),
+      fakeGatewayVerbCall("compact-auth-read", "read_file", { path: "compact-auth-notes.txt" }),
       fakeGatewayFinalText("COMPACT_AUTH_FIRST_REPLY"),
       fakeGatewayFinalText("COMPACT_AUTH_SECOND_REPLY"),
       fakeGatewayFinalText("The conversation established COMPACT_AUTH_FIRST and COMPACT_AUTH_SECOND."),

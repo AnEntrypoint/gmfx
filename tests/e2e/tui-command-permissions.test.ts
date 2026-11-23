@@ -743,14 +743,12 @@ async function expectSavedShellRun(
   const detail = JSON.parse(result.stdout) as any;
   const step = detail.history
     .flatMap((turn: any) => turn.execution?.tool_steps ?? [])
-    .find((entry: any) => entry.tool_calls?.some((call: any) => call.name === "Bash"));
+    .find((entry: any) => entry.tool_calls?.some((call: any) => call.name === "run_code"));
   expect(step).toBeDefined();
-  const call = step.tool_calls.find((entry: any) => entry.name === "Bash");
-  expect(JSON.parse(call.arguments_json)).toEqual(
-    expect.objectContaining({ command }),
-  );
+  const call = step.tool_calls.find((entry: any) => entry.name === "run_code");
+  expect(JSON.parse(call.arguments_json).body).toContain(JSON.stringify(command));
   expect(step.tool_results).toContainEqual(
-    expect.objectContaining({ tool_call_id: call.id, tool_name: "Bash", status }),
+    expect.objectContaining({ tool_call_id: call.id, tool_name: "run_code", status }),
   );
 }
 
@@ -2555,7 +2553,7 @@ describe("effect-aware command permissions", () => {
       });
       const json = JSON.parse(result.stdout.trim()) as any;
       expect(json.tool_calls).toHaveLength(1);
-      expect(json.tool_calls[0].name).toBe("Bash");
+      expect(json.tool_calls[0].name).toBe("run_code");
       expect(json.tool_calls[0].status).toBe("success");
       expect(json.tool_calls[0].command_result.command).toBe("pwd");
       expect(json.tool_calls[0].command_result.cwd).toBe(root.workspace);

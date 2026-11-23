@@ -23,7 +23,7 @@ import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeShellRun,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -388,7 +388,7 @@ async function setupScenario(
       gateway = startFakeGateway([
         async () => {
           await gate.promise;
-          return fakeGatewayToolCall("observer_write", "write_file", {
+          return fakeGatewayVerbCall("observer_write", "write_file", {
             path: "observer-full-diff.txt",
             content: Array.from(
               { length: 32 },
@@ -411,7 +411,7 @@ async function setupScenario(
       gateway = startFakeGateway([
         async () => {
           await gate.promise;
-          return fakeGatewayToolCall("observer_question", "AskUserQuestion", {
+          return fakeGatewayVerbCall("observer_question", "AskUserQuestion", {
             questions: [
               {
                 question: "Observer question checkpoint?",
@@ -551,7 +551,7 @@ async function setupScenario(
       gateway = startFakeGateway([
         async () => {
           await gate.promise;
-          return fakeGatewayToolCall("observer_denied", "write_file", {
+          return fakeGatewayVerbCall("observer_denied", "write_file", {
             path: "observer-denied.txt",
             content: "denied\n",
           });
@@ -578,7 +578,7 @@ async function setupScenario(
       gateway = startFakeGateway([
         async () => {
           await gate.promise;
-          return fakeGatewayToolCall("observer_cancelled", "write_file", {
+          return fakeGatewayVerbCall("observer_cancelled", "write_file", {
             path: "observer-cancelled.txt",
             content: "cancelled\n",
           });

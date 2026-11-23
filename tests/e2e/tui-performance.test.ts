@@ -20,6 +20,8 @@ import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewayToolCall,
+  fakeGatewayVerbCall,
+  fakeShellRun,
   hasEmptyComposer,
   startFakeGateway,
   TmuxSession,
@@ -645,7 +647,7 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
     let hostedTerminalSessionId = "";
     const gateway = startFakeGateway([
       fakeGatewayFinalText(fixture.transcript),
-      fakeGatewayToolCall("performance-question", "AskUserQuestion", {
+      fakeGatewayVerbCall("performance-question", "AskUserQuestion", {
         questions: [{
           question: "Which performance path should I use?",
           options: [
@@ -655,14 +657,7 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
         }],
       }),
       fakeGatewayFinalText("PERF_QUESTION_DONE"),
-      fakeGatewayToolCall("performance-approval", "shell", {
-        request: {
-          action: "run",
-          command: "touch performance-approval.txt",
-          profile: "clean",
-          timeout_ms: 600_000,
-        },
-      }),
+      fakeShellRun("performance-approval", "touch performance-approval.txt", { timeout_ms: 600_000 }),
       fakeGatewayFinalText("PERF_APPROVAL_DONE"),
       fakeGatewayToolCall("performance-terminal", "shell", {
         request: {

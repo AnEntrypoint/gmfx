@@ -132,7 +132,7 @@ describe("yolo permission mode", () => {
       };
       expect(output.output).toContain("YOLO_HEADLESS_DONE");
       expect(output.tool_calls).toEqual([
-        { name: "Bash", status: "error", error: { category: "rejected", code: "rejected" } },
+        { name: "run_code", status: "error", error: { category: "rejected", code: "rejected" } },
       ]);
       expect(existsSync(markerPath)).toBe(false);
       expect(fake.classifierRequests).toHaveLength(0);
