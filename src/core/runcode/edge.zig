@@ -12,7 +12,7 @@ export fn fx_edge_host_call(name: [*:0]const u8, args: [*:0]const u8) ?[*:0]u8 {
     const alloc = std.heap.c_allocator;
     const reply = verbs.invoke(verbs.context, alloc, std.mem.span(name), std.mem.span(args)) catch return null;
     defer alloc.free(reply);
-    return (alloc.dupeZ(u8, reply) catch return null).ptr;
+    return (alloc.dupeSentinel(u8, reply, 0) catch return null).ptr;
 }
 
 export fn fx_edge_host_free(reply: ?[*:0]u8) void {
@@ -25,7 +25,7 @@ pub fn prelude(alloc: std.mem.Allocator, deny_node_io: bool) ![:0]u8 {
 
 pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: runcode.Verbs, deny_node_io: bool) !u8 {
     const cli = try runcode.parseCliArgs(args);
-    const script = try alloc.dupeZ(u8, cli.file);
+    const script = try alloc.dupeSentinel(u8, cli.file, 0);
     defer alloc.free(script);
     const source = try prelude(alloc, deny_node_io);
     defer alloc.free(source);
