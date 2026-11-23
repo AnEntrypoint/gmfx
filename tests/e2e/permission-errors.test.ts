@@ -53,7 +53,7 @@ function parseFxJson(result: { stdout: string; stderr: string; code: number | nu
   return JSON.parse(result.stdout.trim()) as FxJson;
 }
 
-function executionDeniedReason(body: string, toolCallId: string): string {
+function deniedEchoJson(body: string, toolCallId: string): string {
   const request = JSON.parse(body) as {
     prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
   };
@@ -62,10 +62,10 @@ function executionDeniedReason(body: string, toolCallId: string): string {
     .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
   expect(result).toBeDefined();
   const output = result!.output as Record<string, unknown>;
-  expect(output.type).toBe("execution-denied");
-  expect(typeof output.reason).toBe("string");
-  expect(output.value).toBeUndefined();
-  return output.reason as string;
+  expect(output.type).toBe("error-text");
+  const report = JSON.parse(output.value as string) as { ok: boolean; error: string };
+  expect(report.ok).toBe(false);
+  return report.error.replace(/^Error: /, "").split("\n")[0]!;
 }
 
 function permissionEnv(
@@ -144,7 +144,7 @@ async function runTtyPromptPermissionsCase(
       expect(json.exit_code).toBe(0);
       expect(json.tool_calls).toContainEqual(
         expect.objectContaining({
-          name: "Bash",
+          name: "run_code",
           status: decision === "approve" ? "success" : "error",
         }),
       );
@@ -217,7 +217,7 @@ describe("generic permission typed errors", () => {
         expect(gateway.requests).toHaveLength(2);
 
         const toolResult = JSON.parse(
-          executionDeniedReason(gateway.requests[1]!.body, toolCallId),
+          deniedEchoJson(gateway.requests[1]!.body, toolCallId),
         ) as { error: PermissionEcho };
         const echo = toolResult.error;
         expect(echo.type).toBe("tool_permission_denied");
@@ -366,7 +366,7 @@ describe("generic permission typed errors", () => {
           expect(gateway.requests).toHaveLength(2);
           const echo = (
             JSON.parse(
-              executionDeniedReason(gateway.requests[1]!.body, "non_tty_call"),
+              deniedEchoJson(gateway.requests[1]!.body, "non_tty_call"),
             ) as { error: PermissionEcho }
           ).error;
           expect(echo.type).toBe("tool_permission_denied");

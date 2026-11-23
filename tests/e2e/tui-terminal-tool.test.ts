@@ -15,7 +15,7 @@ import { rootSessionIds } from "./saved-sessions";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
   terminalFixtureShell,
   TmuxSession,
@@ -104,6 +104,19 @@ async function launch(
   return session;
 }
 
+function runCodeValue(text: string): string {
+  const open = text.indexOf("\n\n<fx-context-update>");
+  const body = open < 0 ? text : text.slice(0, open);
+  try {
+    const reply = JSON.parse(body);
+    if (typeof reply?.ok !== "boolean") return text;
+    const inner = reply.ok ? reply.value : reply.error;
+    return (typeof inner === "string" ? inner : JSON.stringify(inner)) + text.slice(body.length);
+  } catch {
+    return text;
+  }
+}
+
 function toolResultTexts(body: string, toolCallId: string): string[] {
   const texts: string[] = [];
   const visit = (value: unknown): void => {
@@ -115,7 +128,7 @@ function toolResultTexts(body: string, toolCallId: string): string[] {
     const object = value as Record<string, unknown>;
     if (object.type === "tool-result" && object.toolCallId === toolCallId) {
       const output = object.output as { value?: unknown } | undefined;
-      texts.push(typeof output?.value === "string" ? output.value : JSON.stringify(object.output));
+      texts.push(runCodeValue(typeof output?.value === "string" ? output.value : JSON.stringify(object.output)));
     }
     for (const child of Object.values(object)) visit(child);
   };
@@ -144,7 +157,7 @@ function startedTaskId(body: string, toolCallId: string): string {
 }
 
 function background(id: string, command: string, extra: Record<string, unknown> = {}) {
-  return fakeGatewayToolCall(id, "Bash", {
+  return fakeGatewayVerbCall(id, "Bash", {
     command,
     run_in_background: true,
     description: "Run in the background",
@@ -214,7 +227,7 @@ test.skipIf(!tmuxAvailable())(
       background("task_run", command),
       (body) => {
         taskId = startedTaskId(body, "task_run");
-        return fakeGatewayToolCall("task_read", "TaskOutput", { task_id: taskId });
+        return fakeGatewayVerbCall("task_read", "TaskOutput", { task_id: taskId });
       },
       fakeGatewayFinalText("TASK_READ_OK"),
     ]);
@@ -259,7 +272,7 @@ test.skipIf(!tmuxAvailable())(
         taskId = startedTaskId(body, "task_cross_turn_run");
         return fakeGatewayFinalText("PHASE_ONE_READY");
       },
-      () => fakeGatewayToolCall("task_cross_turn_stop", "TaskStop", { task_id: taskId }),
+      () => fakeGatewayVerbCall("task_cross_turn_stop", "TaskStop", { task_id: taskId }),
       fakeGatewayFinalText("PHASE_TWO_READY"),
     ]);
     gateways.push(gateway);
@@ -304,9 +317,9 @@ test.skipIf(!tmuxAvailable())(
       async (body) => {
         taskId = startedTaskId(body, "task_stubborn_run");
         await recordedPid(pidPath);
-        return fakeGatewayToolCall("task_stubborn_stop", "TaskStop", { task_id: taskId });
+        return fakeGatewayVerbCall("task_stubborn_stop", "TaskStop", { task_id: taskId });
       },
-      fakeGatewayToolCall("task_after_stop", "Bash", { command: "printf AFTER_STOP" }),
+      fakeGatewayVerbCall("task_after_stop", "Bash", { command: "printf AFTER_STOP" }),
       fakeGatewayFinalText("TASK_FORCE_STOP_OK"),
     ]);
     gateways.push(gateway);
@@ -395,12 +408,12 @@ test.skipIf(!tmuxAvailable())(
       },
       (body) => {
         secondTaskId = startedTaskId(body, "task_overlap_second");
-        return fakeGatewayToolCall("task_overlap_wait_first", "WaitFor", {
+        return fakeGatewayVerbCall("task_overlap_wait_first", "WaitFor", {
           timeout: 20,
           task_id: firstTaskId,
         });
       },
-      () => fakeGatewayToolCall("task_overlap_wait_second", "WaitFor", {
+      () => fakeGatewayVerbCall("task_overlap_wait_second", "WaitFor", {
         timeout: 20,
         task_id: secondTaskId,
       }),
@@ -436,9 +449,9 @@ function observedTaskFlow(prefix: string, launchCommand: string, done: string) {
     background(`${prefix}_run`, launchCommand),
     (body) => {
       taskId = startedTaskId(body, `${prefix}_run`);
-      return fakeGatewayToolCall(`${prefix}_observe`, "TaskOutput", { task_id: taskId });
+      return fakeGatewayVerbCall(`${prefix}_observe`, "TaskOutput", { task_id: taskId });
     },
-    () => fakeGatewayToolCall(`${prefix}_stop`, "TaskStop", { task_id: taskId }),
+    () => fakeGatewayVerbCall(`${prefix}_stop`, "TaskStop", { task_id: taskId }),
     fakeGatewayFinalText(done),
   ]);
 }
@@ -595,13 +608,13 @@ test.skipIf(!tmuxAvailable())(
       async (body) => {
         taskId = startedTaskId(body, "task_cursor_run");
         await waitForFile(firstPrinted);
-        return fakeGatewayToolCall("task_cursor_read", "TaskOutput", { task_id: taskId, wait: 1 });
+        return fakeGatewayVerbCall("task_cursor_read", "TaskOutput", { task_id: taskId, wait: 1 });
       },
       () => {
         writeFileSync(gate, "");
-        return fakeGatewayToolCall("task_cursor_read_two", "TaskOutput", { task_id: taskId, wait: 20 });
+        return fakeGatewayVerbCall("task_cursor_read_two", "TaskOutput", { task_id: taskId, wait: 20 });
       },
-      () => fakeGatewayToolCall("task_cursor_read_three", "TaskOutput", { task_id: taskId }),
+      () => fakeGatewayVerbCall("task_cursor_read_three", "TaskOutput", { task_id: taskId }),
       fakeGatewayFinalText("TASK_CURSOR_OK"),
     ]);
     gateways.push(gateway);
@@ -632,7 +645,7 @@ test.skipIf(!tmuxAvailable())(
     const fixture = createFixture("fx-bash-timeout-");
     const pidPath = join(fixture.root, "timeout.pid");
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("bash_timeout_run", "Bash", {
+      fakeGatewayVerbCall("bash_timeout_run", "Bash", {
         command: `printf '%s' "$$" > ${JSON.stringify(pidPath)}; printf 'TIMEOUT_READY\\n'; sleep 30`,
         timeout: 1,
       }),
@@ -664,7 +677,7 @@ test("a foreground timeout stops a nested interactive shell before its next comm
   const pidFile = join(fixture.root, "nested-shell.pid");
   const marker = join(fixture.root, "after-timeout");
   const gateway = startFakeGateway([
-    fakeGatewayToolCall("bash_tree_timeout_run", "Bash", {
+    fakeGatewayVerbCall("bash_tree_timeout_run", "Bash", {
       command: `bash --norc --noprofile -i -c 'printf %s $$ > ${pidFile}; sleep 3; touch ${marker}'`,
       timeout: 1,
     }),
@@ -707,9 +720,9 @@ test.skipIf(!tmuxAvailable())(
         taskId = startedTaskId(body, "task_resume_run");
         return fakeGatewayFinalText("TASK_RESUME_STARTED");
       },
-      () => fakeGatewayToolCall("task_resume_read", "TaskOutput", { task_id: taskId }),
-      () => fakeGatewayToolCall("task_resume_stop", "TaskStop", { task_id: taskId }),
-      () => fakeGatewayToolCall("task_resume_list", "TaskList", {}),
+      () => fakeGatewayVerbCall("task_resume_read", "TaskOutput", { task_id: taskId }),
+      () => fakeGatewayVerbCall("task_resume_stop", "TaskStop", { task_id: taskId }),
+      () => fakeGatewayVerbCall("task_resume_list", "TaskList", {}),
       fakeGatewayFinalText("TASK_RESUME_OK"),
     ]);
     gateways.push(gateway);
@@ -783,7 +796,7 @@ test("Bash runs in the requested cwd and reports the exact exit", async () => {
   const nested = join(fixture.workspace, "nested");
   mkdirSync(nested);
   const gateway = startFakeGateway([
-    fakeGatewayToolCall("bash_cwd_run", "Bash", {
+    fakeGatewayVerbCall("bash_cwd_run", "Bash", {
       command: "printf 'CWD:%s\\n' \"$PWD\"; exit 7",
       cwd: nested,
     }),
@@ -840,9 +853,9 @@ test.skipIf(!tmuxAvailable())(
     const shellPid = await recordedPid(pidPath);
 
     const intruderGateway = startFakeGateway([
-      () => fakeGatewayToolCall("intruder_read", "TaskOutput", { task_id: ownerTask }),
-      () => fakeGatewayToolCall("intruder_stop", "TaskStop", { task_id: ownerTask }),
-      () => fakeGatewayToolCall("intruder_list", "TaskList", {}),
+      () => fakeGatewayVerbCall("intruder_read", "TaskOutput", { task_id: ownerTask }),
+      () => fakeGatewayVerbCall("intruder_stop", "TaskStop", { task_id: ownerTask }),
+      () => fakeGatewayVerbCall("intruder_list", "TaskList", {}),
       fakeGatewayFinalText("INTRUDER_DONE"),
     ]);
     gateways.push(intruderGateway);
@@ -890,7 +903,7 @@ test("TaskStop reaches a background job the task started", async () => {
     async (body) => {
       taskId = startedTaskId(body, "task_signal_run");
       await recordedPid(pidFile);
-      return fakeGatewayToolCall("task_signal_stop", "TaskStop", { task_id: taskId });
+      return fakeGatewayVerbCall("task_signal_stop", "TaskStop", { task_id: taskId });
     },
     async () => {
       const backgroundPid = await recordedPid(pidFile);

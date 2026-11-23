@@ -18,7 +18,7 @@ import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText as finalText,
   fakeGatewaySse,
-  fakeGatewayToolCall as toolCall,
+  fakeGatewayVerbCall as toolCall,
   type FakeGatewayResponse,
   isVolatileTokenStatusRow,
   startFakeGateway as startGateway,
@@ -28,6 +28,10 @@ import {
 import { findActiveFileApprovalBlock } from "./tui-render-assertions";
 import { stdoutFrames } from "./render-lab/tape";
 import { onlySessionId, savedText } from "./saved-sessions";
+
+const verbBody = (verb: string, input: object | string) => ({
+  body: `return gm.${verb}(${typeof input === "string" ? input : JSON.stringify(input)});`,
+});
 
 const TIMEOUT = 30_000;
 const MAXIMUM_WRITE_TIMEOUT = 120_000;
@@ -265,7 +269,7 @@ function expectApprovalControls(
 }
 
 function chunkedWriteToolCall(id: string, path: string, content: string) {
-  const argumentsJson = JSON.stringify({ path, content });
+  const argumentsJson = JSON.stringify(verbBody("write_file", { path, content }));
   const chunkBytes = 32 * 1024;
   const deltas = Array.from(
     { length: Math.ceil(argumentsJson.length / chunkBytes) },
@@ -279,7 +283,7 @@ function chunkedWriteToolCall(id: string, path: string, content: string) {
     {
       type: "tool-input-start",
       id,
-      toolName: "write_file",
+      toolName: "run_code",
     },
     ...deltas,
     {
@@ -289,7 +293,7 @@ function chunkedWriteToolCall(id: string, path: string, content: string) {
     {
       type: "tool-call",
       toolCallId: id,
-      toolName: "write_file",
+      toolName: "run_code",
     },
     {
       type: "finish",
@@ -497,11 +501,11 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
           {
             type: "tool-call",
             toolCallId: "pacer_gate_write",
-            toolName: "write_file",
-            input: {
+            toolName: "run_code",
+            input: verbBody("write_file", {
               path: "pacer-gate.txt",
               content: "must not be written\n",
-            },
+            }),
           },
           {
             type: "finish",

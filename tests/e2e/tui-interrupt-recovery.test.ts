@@ -17,7 +17,7 @@ import { savedSessionIds, sessionDir, storeRoot } from "./saved-sessions";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   fakeShellRun,
   heldFakeGatewayFinalText,
   startFakeGateway,
@@ -233,7 +233,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       const followUp: HoldState = { started: false, cancelled: false, cancelCount: 0, released: false };
       gateway = startFakeGateway([
         () => heldUntilReleasedResponse(held, ""),
-        fakeGatewayToolCall("read-probe", "read_file", { path: "probe.txt" }),
+        fakeGatewayVerbCall("read-probe", "read_file", { path: "probe.txt" }),
         () => heldUntilReleasedResponse(followUp, ""),
         fakeGatewayFinalText("CANCEL_NEXT_PROMPT_COMPLETE"),
       ]);
@@ -266,7 +266,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await waitForCondition(() => followUp.started, "follow-up request after tool completion");
       await session.waitForText("Thinking", TIMEOUT);
       const activeGrid = await session.capturePaneGrid();
-      expect(activeGrid.join("\n")).toContain("Read probe.txt");
+      expect(activeGrid.join("\n")).toContain("run_code read_file");
       expect(activeGrid.join("\n")).toContain("Thinking");
       expect(gateway.requests[1]!.body).toContain("<turn_aborted>");
       expect(gateway.requests[1]!.body).not.toContain("<user_steering>");
@@ -289,7 +289,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
         "final prompt completion",
       );
       const scrollback = await session.captureFullScrollback();
-      expect(scrollback).toContain("Read probe.txt");
+      expect(scrollback).toContain("run_code read_file");
       expect(countOccurrences(scrollback, "What can fx do differently?")).toBe(2);
       expect((await session.capturePaneGrid()).join("\n")).not.toContain("Thinking");
       expect(gateway.requests).toHaveLength(4);
@@ -767,7 +767,7 @@ while :; do sleep 1; done
 
       await waitForTrace(tracePath, "finish processing queued=0", TIMEOUT);
       await session.waitForText(
-        "Cancelled ./hold-workspace-cancel.sh · What can fx do differently?",
+        'Cancelled return gm.Bash({"command":"./hold-workspace-cancel.sh","timeout":300}); · What can fx do differently?',
         TIMEOUT,
       );
       await session.sendText("/workspace list");
@@ -882,7 +882,7 @@ while :; do sleep 1; done
       }
 
       gateway = startFakeGateway([
-        fakeGatewayToolCall(callId, "grep_files", {
+        fakeGatewayVerbCall(callId, "grep_files", {
           path: "corpus",
           pattern,
           head_limit: 5,
@@ -912,7 +912,7 @@ while :; do sleep 1; done
       await session.waitForComposer(TIMEOUT);
 
       await session.sendText("Search the prepared corpus.");
-      await session.waitForText(`Searching ${pattern}`, TIMEOUT);
+      await session.waitForText(`run_code return gm.grep_files({"path":"corpus","pattern":"${pattern}"`, TIMEOUT);
       expect(readTrace(tracePath)).not.toContain(
         `event=after_tool_execution call_id=${callId}`,
       );
@@ -936,16 +936,16 @@ while :; do sleep 1; done
       const completedToolIndex = traceLines.findIndex((line) =>
         line.includes("event=after_tool_execution") &&
         line.includes(`call_id=${callId}`) &&
-        line.includes("name=grep_files") &&
+        line.includes("name=run_code") &&
         line.includes("result_kind=model_output")
       );
       expect(completedToolIndex).toBeGreaterThanOrEqual(0);
       const cancelIndex = traceLines.findIndex((line) => line.includes("event=cancel_requested"));
       expect(cancelIndex).toBeGreaterThanOrEqual(0);
       expect(cancelIndex).toBeLessThan(completedToolIndex);
-      await session.waitForText(`Searched ${pattern}`, TIMEOUT);
+      await session.waitForText("run_code grep_files", TIMEOUT);
       const scrollback = await session.captureFullScrollback();
-      expect(scrollback).toContain(`Searched ${pattern}`);
+      expect(scrollback).toContain("run_code grep_files");
       expect(countOccurrences(scrollback, "What can fx do differently?")).toBe(1);
       expect(scrollback).not.toContain("system: cancelled");
       expect(scrollback).not.toContain("Cancelling");

@@ -18,7 +18,7 @@ import {
   composerContains,
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   fakeGatewaySse,
   fakeShellRun,
   startDynamicFakeGateway,
@@ -28,6 +28,10 @@ import {
 } from "./tmux-helpers";
 import { stdoutFrames } from "./render-lab/tape";
 import { logLines, savedSessionIds, storeRoot } from "./saved-sessions";
+
+const verbBody = (verb: string, input: object | string) => ({
+  body: `return gm.${verb}(${typeof input === "string" ? input : JSON.stringify(input)});`,
+});
 
 const TIMEOUT = 30_000;
 const INPUT_SANITY_BUDGET_MS = 5_000;
@@ -220,30 +224,30 @@ function toolEvent(index: number, fileLines: number): object {
   switch (index % 5) {
     case 0:
     case 1:
-      return { ...common, toolName: "read_file", input: { path, line_count: fileLines } };
+      return { ...common, toolName: "run_code", input: verbBody("read_file", { path, line_count: fileLines })};
     case 2:
       return {
         ...common,
-        toolName: "grep_files",
-        input: {
+        toolName: "run_code",
+        input: verbBody("grep_files", {
           pattern: marker,
           path,
           mode: "matches",
           head_limit: 20,
           context_lines: 1,
-        },
+        }),
       };
     case 3:
       return {
         ...common,
-        toolName: "glob_files",
-        input: { pattern: path, mode: "matches" },
+        toolName: "run_code",
+        input: verbBody("glob_files", { pattern: path, mode: "matches" }),
       };
     default:
       return {
         ...common,
-        toolName: "read_file",
-        input: { path: `missing-${marker}.txt`, line_count: fileLines },
+        toolName: "run_code",
+        input: verbBody("read_file", { path: `missing-${marker}.txt`, line_count: fileLines }),
       };
   }
 }
@@ -1291,7 +1295,7 @@ test.skipIf(!tmuxAvailable())(
     );
     writeFileSync(join(paths.workspace, "saved.txt"), lines.join("\n") + "\n");
     const savedGateway = startFakeGateway([
-      fakeGatewayToolCall("saved-read", "read_file", { path: "saved.txt", line_count: 300 }),
+      fakeGatewayVerbCall("saved-read", "read_file", { path: "saved.txt", line_count: 300 }),
       fakeGatewayFinalText("Saved read complete."),
     ]);
     let active: TmuxSession | null = null;

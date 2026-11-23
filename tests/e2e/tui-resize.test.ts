@@ -21,7 +21,7 @@ import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewaySse,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   fakeShellRun,
   hasEmptyComposer,
   paneExitMatches,
@@ -40,6 +40,10 @@ import {
 } from "./tui-render-assertions";
 import { readTapeFrames, stdoutFrames } from "./render-lab/tape";
 import { logLines, onlySessionId, sessionDir } from "./saved-sessions";
+
+const verbBody = (verb: string, input: object | string) => ({
+  body: `return gm.${verb}(${typeof input === "string" ? input : JSON.stringify(input)});`,
+});
 
 const SKIP = !tmuxAvailable();
 const TIMEOUT = 30_000;
@@ -976,7 +980,7 @@ function sendRawTmuxBytes(
 
 function startFileApprovalGateway() {
   const gateway = startFakeGateway([
-    fakeGatewayToolCall(
+    fakeGatewayVerbCall(
       "resize_file_1",
       "write_file",
       {
@@ -1883,7 +1887,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         if (requestIndex++ === 1) return fakeGatewaySse([
           ...children.map((path, index) => ({
             type: "tool-call", toolCallId: `retention-read-${index}`,
-            toolName: "read_file", input: JSON.stringify({ path }),
+            toolName: "run_code", input: verbBody("read_file", { path }),
           })),
           { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
         ]);
@@ -2057,12 +2061,12 @@ describe.skipIf(SKIP)("tui: resize", () => {
           writeFileSync(join(root, `request-${requestCount}.json`), body);
           if (requestCount === 1 || requestCount === 3) return fakeGatewaySse([
             {
-              type: "tool-call", toolCallId: `retention-${requestCount}`, toolName: "Bash",
-              input: { command: requestCount === 1 ? "cat old.txt" : "sh probe.sh" },
+              type: "tool-call", toolCallId: `retention-${requestCount}`, toolName: "run_code",
+              input: verbBody("Bash", { command: requestCount === 1 ? "cat old.txt" : "sh probe.sh" }),
             },
             ...(requestCount === 3 ? [{
-              type: "tool-call", toolCallId: "retention-second-admission", toolName: "Bash",
-              input: { command: "printf finished > sibling-finished; printf 'small sibling output\\n'" },
+              type: "tool-call", toolCallId: "retention-second-admission", toolName: "run_code",
+              input: verbBody("Bash", { command: "printf finished > sibling-finished; printf 'small sibling output\\n'" }),
             }] : []),
             { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
           ]);
@@ -3885,7 +3889,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         "",
       ].join("\n");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("resize_gate_1", "write_file", {
+        fakeGatewayVerbCall("resize_gate_1", "write_file", {
           path: "resize-gated.txt",
           content,
         }),
@@ -3967,7 +3971,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         releaseFinalResponse = () => resolve();
       });
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("resize_after_approval_1", "write_file", {
+        fakeGatewayVerbCall("resize_after_approval_1", "write_file", {
           path: "resize-after-approval.txt",
           content,
         }),

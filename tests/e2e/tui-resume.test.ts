@@ -25,7 +25,7 @@ import {
   fakeGatewayFinalText,
   fakeGatewaySerializedToolCall,
   fakeGatewaySse,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   fakeShellRun,
   hasEmptyComposer,
   isEmptyComposerLine,
@@ -40,6 +40,10 @@ import {
 } from "./tmux-helpers";
 import { readTapeFrames } from "./render-lab/tape";
 import { commandReplays, logLines, onlySessionId, savedSessionIds, savedText, sessionDir, storeRoot } from "./saved-sessions";
+
+const verbBody = (verb: string, input: object | string) => ({
+  body: `return gm.${verb}(${typeof input === "string" ? input : JSON.stringify(input)});`,
+});
 
 const TIMEOUT = 30_000;
 const FIXTURE_SHELL = terminalFixtureShell();
@@ -1384,7 +1388,7 @@ test.skipIf(!tmuxAvailable())(
 
     const doneMarker = "LARGE_EDIT_DONE";
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("edit_large_1", "edit_file", {
+      fakeGatewayVerbCall("edit_large_1", "edit_file", {
         path: "big.txt",
         old_string: oldBlock,
         new_string: newBlock,
@@ -1482,7 +1486,7 @@ test.skipIf(!tmuxAvailable())(
 
     const doneMarker = "HOSTILE_EDIT_DONE";
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("edit_hostile_1", "edit_file", {
+      fakeGatewayVerbCall("edit_hostile_1", "edit_file", {
         path: "hostile.txt",
         old_string: "edit-me",
         new_string: "edited-row",
@@ -1567,9 +1571,9 @@ test.skipIf(!tmuxAvailable())(
 
     const command = "cat <<'EOF'\nlaunch marker line\nEOF\nsleep 300";
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("call-run", "Bash", { command, description: "Run the watcher", run_in_background: true }),
-      fakeGatewayToolCall("call-observe", "TaskOutput", { task_id: "shell-1" }),
-      fakeGatewayToolCall("call-stop", "TaskStop", { task_id: "shell-1" }),
+      fakeGatewayVerbCall("call-run", "Bash", { command, description: "Run the watcher", run_in_background: true }),
+      fakeGatewayVerbCall("call-observe", "TaskOutput", { task_id: "shell-1" }),
+      fakeGatewayVerbCall("call-stop", "TaskStop", { task_id: "shell-1" }),
       fakeGatewayFinalText("SESSION_LABEL_DONE"),
     ]);
     let active: TmuxSession | null = null;
@@ -1656,7 +1660,7 @@ test.skipIf(!tmuxAvailable())(
     );
 
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("call-run", "Bash", { command: "sleep 300", description: "Run the watcher", run_in_background: true }),
+      fakeGatewayVerbCall("call-run", "Bash", { command: "sleep 300", description: "Run the watcher", run_in_background: true }),
       fakeGatewayFinalText("STALE_NOTE_PHASE1_DONE"),
     ]);
     let active: TmuxSession | null = null;
@@ -1737,7 +1741,7 @@ test.skipIf(!tmuxAvailable())(
     );
 
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("call-run", "Bash", { command: "sleep 300", description: "Run the watcher", run_in_background: true }),
+      fakeGatewayVerbCall("call-run", "Bash", { command: "sleep 300", description: "Run the watcher", run_in_background: true }),
       fakeGatewayFinalText("LIVE_HANDLE_S1_DONE"),
       fakeGatewayFinalText("LIVE_HANDLE_FOLLOWUP_DONE"),
     ]);
@@ -3462,7 +3466,7 @@ test.skipIf(!tmuxAvailable())(
         "ctrl-o-question-command",
         `sh -c 'printf "${commandMarker}\\n"; sleep 1'`,
       ),
-      fakeGatewayToolCall("ctrl-o-question", "AskUserQuestion", {
+      fakeGatewayVerbCall("ctrl-o-question", "AskUserQuestion", {
         questions: [
           {
             question: questionMarker,
@@ -3808,7 +3812,7 @@ test.skipIf(!tmuxAvailable())(
     writeFileSync(stderrPath, "");
 
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("ctrl-o-read", "read_file", { path: "README.md" }),
+      fakeGatewayVerbCall("ctrl-o-read", "read_file", { path: "README.md" }),
       fakeGatewayFinalText("CTRL_O_READ_DONE"),
     ]);
     let active: TmuxSession | null = null;
@@ -3868,8 +3872,8 @@ test.skipIf(!tmuxAvailable())(
 
     const gateway = startFakeGateway([
       fakeGatewaySse([
-        { type: "tool-call", toolCallId: "parallel-glob", toolName: "glob_files", input: { pattern: "*" } },
-        { type: "tool-call", toolCallId: "parallel-read", toolName: "read_file", input: { path: "README.md" } },
+        { type: "tool-call", toolCallId: "parallel-glob", toolName: "run_code", input: verbBody("glob_files", { pattern: "*" })},
+        { type: "tool-call", toolCallId: "parallel-read", toolName: "run_code", input: verbBody("read_file", { path: "README.md" })},
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
       fakeGatewayFinalText("PARALLEL_DETAIL_DONE"),
@@ -3951,19 +3955,19 @@ test.skipIf(!tmuxAvailable())(
         {
           type: "tool-call",
           toolCallId: "ctrl-o-handoff-command",
-          toolName: "Bash",
-          input: {
+          toolName: "run_code",
+          input: verbBody("Bash", {
             command: "sh -c 'sleep 5; printf \"CTRL_O_HANDOFF_READY\\n\"'",
-          },
+          }),
         },
         {
           type: "tool-call",
           toolCallId: "ctrl-o-handoff-write",
-          toolName: "write_file",
-          input: {
+          toolName: "run_code",
+          input: verbBody("write_file", {
             path: "ctrl-o-handoff.txt",
             content: fileContent,
-          },
+          }),
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
@@ -4189,18 +4193,18 @@ test.skipIf(!tmuxAvailable())(
         {
           type: "tool-call",
           toolCallId: "ctrl-o-handoff-first",
-          toolName: "Bash",
-          input: {
+          toolName: "run_code",
+          input: verbBody("Bash", {
             command: "sh -c 'touch ctrl-o-handoff-first; printf \"CTRL_O_HANDOFF_FIRST_RUNNING\\n\"; sleep 1; printf \"CTRL_O_HANDOFF_FIRST_DONE\\n\"'",
-          },
+          }),
         },
         {
           type: "tool-call",
           toolCallId: "ctrl-o-handoff-second",
-          toolName: "Bash",
-          input: {
+          toolName: "run_code",
+          input: verbBody("Bash", {
             command: "touch ctrl-o-handoff-second && printf 'CTRL_O_HANDOFF_SECOND_DONE\\n'",
-          },
+          }),
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
@@ -4334,7 +4338,7 @@ test.skipIf(!tmuxAvailable())(
     });
     const gatedQuestion = async () => {
       await questionGate;
-      return fakeGatewayToolCall("ctrl-o-pressure-question", "AskUserQuestion", {
+      return fakeGatewayVerbCall("ctrl-o-pressure-question", "AskUserQuestion", {
         questions: [
           {
             question: questionMarker,
@@ -4353,16 +4357,16 @@ test.skipIf(!tmuxAvailable())(
         {
           type: "tool-call",
           toolCallId: "ctrl-o-pressure-command",
-          toolName: "Bash",
-          input: {
+          toolName: "run_code",
+          input: verbBody("Bash", {
             command: activeCommand,
-          },
+          }),
         },
         {
           type: "tool-call",
           toolCallId: "ctrl-o-pressure-write",
-          toolName: "write_file",
-          input: { path: "ctrl-o-pressure.txt", content: fileContent },
+          toolName: "run_code",
+          input: verbBody("write_file", { path: "ctrl-o-pressure.txt", content: fileContent }),
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
@@ -4919,14 +4923,14 @@ test.skipIf(!tmuxAvailable())(
     const finalMarker = "DEFERRED_TOOL_RESUME_COMPLETE";
     const gateway = startFakeGateway([
       fakeGatewaySse([
-        { type: "tool-input-start", id: "deferred-read", toolName: "read_file" },
+        { type: "tool-input-start", id: "deferred-read", toolName: "run_code" },
         {
           type: "tool-input-delta",
           id: "deferred-read",
           delta: JSON.stringify({ path: "nested/input.txt" }),
         },
         { type: "tool-input-end", id: "deferred-read" },
-        { type: "tool-input-start", id: "deferred-command", toolName: "Bash" },
+        { type: "tool-input-start", id: "deferred-command", toolName: "run_code" },
         {
           type: "tool-input-delta",
           id: "deferred-command",
@@ -4939,17 +4943,17 @@ test.skipIf(!tmuxAvailable())(
         {
           type: "tool-call",
           toolCallId: "deferred-read",
-          toolName: "read_file",
-          input: { path: "nested/input.txt" },
+          toolName: "run_code",
+          input: verbBody("read_file", { path: "nested/input.txt" }),
         },
         {
           type: "tool-call",
           toolCallId: "deferred-command",
-          toolName: "Bash",
-          input: {
+          toolName: "run_code",
+          input: verbBody("Bash", {
             command,
             cwd: "nested",
-          },
+          }),
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
@@ -4957,25 +4961,25 @@ test.skipIf(!tmuxAvailable())(
         {
           type: "tool-call",
           toolCallId: "reissued-read",
-          toolName: "read_file",
-          input: { path: "nested/input.txt" },
+          toolName: "run_code",
+          input: verbBody("read_file", { path: "nested/input.txt" }),
         },
         {
           type: "tool-call",
           toolCallId: "reissued-command",
-          toolName: "Bash",
-          input: {
+          toolName: "run_code",
+          input: verbBody("Bash", {
             command,
             cwd: "nested",
-          },
+          }),
         },
         {
           type: "tool-call",
           toolCallId: "ordinary-failure",
-          toolName: "Bash",
-          input: {
+          toolName: "run_code",
+          input: verbBody("Bash", {
             command: failureCommand,
-          },
+          }),
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
@@ -6388,7 +6392,7 @@ test.skipIf(!tmuxAvailable())(
 
       if (body.includes("SOLO_DONE")) return fakeGatewayFinalText("MAIN_SAW_REPORT");
       if (!body.includes('"main_solo"')) {
-        return fakeGatewayToolCall("main_solo", "Agent", {
+        return fakeGatewayVerbCall("main_solo", "Agent", {
           description: "Run the solo task",
           prompt: "SOLO_TASK",
           run_in_background: true,
@@ -6604,7 +6608,7 @@ test.skipIf(!tmuxAvailable())(
 
     try {
       const initialGateway = startFakeGateway([
-        fakeGatewayToolCall("resume_question", "AskUserQuestion", {
+        fakeGatewayVerbCall("resume_question", "AskUserQuestion", {
           questions: [
             {
               question: questionMarker,
@@ -6733,7 +6737,7 @@ test.skipIf(!tmuxAvailable())(
 
     try {
       const initialGateway = startFakeGateway([
-        fakeGatewayToolCall("resume_question_batch", "AskUserQuestion", {
+        fakeGatewayVerbCall("resume_question_batch", "AskUserQuestion", {
           questions: Array.from({ length: batchSize }, (_, index) => ({
             question: question(index),
             options: [
@@ -6844,12 +6848,12 @@ test.skipIf(!tmuxAvailable())(
     writeFileSync(stderrPath, "");
 
     const initialGateway = startFakeGateway([
-      fakeGatewayToolCall("resume_file_diff", "write_file", {
+      fakeGatewayVerbCall("resume_file_diff", "write_file", {
         path: "first-large.md",
         content: `${firstLines.join("\n")}\n`,
       }),
       fakeGatewayFinalText(firstCompletion),
-      fakeGatewayToolCall("resume_second_file_diff", "write_file", {
+      fakeGatewayVerbCall("resume_second_file_diff", "write_file", {
         path: "second-large.md",
         content: `${secondLines.join("\n")}\n`,
       }),
@@ -6989,7 +6993,7 @@ test.skipIf(!tmuxAvailable())(
     );
     const completion = "SPILLED_DIFF_COMPLETE";
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("write-spilled-diff", "write_file", {
+      fakeGatewayVerbCall("write-spilled-diff", "write_file", {
         path: "spilled-diff.md",
         content: `${spilledLines.join("\n")}\n`,
       }),
@@ -8397,7 +8401,7 @@ test.skipIf(!tmuxAvailable())(
     ).join("\n") + "\n");
     const tail = "CONVERSATION_AFTER_SAVED_RESULT";
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("read-saved-result", "read_file", { path: "result.txt", line_count: 400 }),
+      fakeGatewayVerbCall("read-saved-result", "read_file", { path: "result.txt", line_count: 400 }),
       fakeGatewayFinalText(tail),
     ]);
     let active: TmuxSession | null = null;
@@ -8452,14 +8456,14 @@ for (const inspectDetails of [false, true]) {
       writeFileSync(join(workspace, "ledger.txt"), ledger);
       const savedReply = "Created receipt.txt with:\n\nRECEIVED\n\nledger.txt was not changed.";
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("read-ledger", "read_file", { path: "ledger.txt", line_count: 420 }),
+        fakeGatewayVerbCall("read-ledger", "read_file", { path: "ledger.txt", line_count: 420 }),
         fakeGatewayFinalText("ledger.txt contains 420 rows."),
-        fakeGatewayToolCall("write-receipt", "write_file", { path: "receipt.txt", content: "RECEIVED\n" }),
+        fakeGatewayVerbCall("write-receipt", "write_file", { path: "receipt.txt", content: "RECEIVED\n" }),
         fakeGatewayFinalText(savedReply),
-        fakeGatewayToolCall("read-missing", "read_file", { path: "missing.txt" }),
+        fakeGatewayVerbCall("read-missing", "read_file", { path: "missing.txt" }),
         fakeGatewayFinalText("missing.txt does not exist."),
         fakeGatewayFinalText("I created receipt.txt and left ledger.txt unchanged."),
-        fakeGatewayToolCall("write-second", "write_file", { path: "second.txt", content: "AFTER\n" }),
+        fakeGatewayVerbCall("write-second", "write_file", { path: "second.txt", content: "AFTER\n" }),
         fakeGatewayFinalText("Created second.txt once."),
       ]);
       let active: TmuxSession | null = null;

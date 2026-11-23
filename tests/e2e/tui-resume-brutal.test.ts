@@ -27,6 +27,10 @@ import {
   tmuxAvailable,
 } from "./tmux-helpers";
 
+const verbBody = (verb: string, input: object | string) => ({
+  body: `return gm.${verb}(${typeof input === "string" ? input : JSON.stringify(input)});`,
+});
+
 const TIMEOUT = 30_000;
 const REAL_TITLE = "RESUME_REAL_SESSION_FIRST_PROMPT";
 const FOREIGN_TITLE = "RESUME_FOREIGN_NEWEST";
@@ -195,12 +199,12 @@ function historyBatch(batch: number, config: Config): Response {
     events.push({
       type: "tool-call",
       toolCallId: `resume-tool-${batch}-${tool}`,
-      toolName: "read_file",
-      input: {
+      toolName: "run_code",
+      input: verbBody("read_file", {
         path: "resume-tool-payload.txt",
         line_start: (tool * 73) % 600,
         line_count: 200,
-      },
+      }),
     });
   }
   events.push({
