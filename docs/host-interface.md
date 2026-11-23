@@ -14,9 +14,9 @@ Status: specification, written against fx source at the checkout in /workspace/f
 - `fx:host` exists in its first form (section 1.0). Not present anywhere in the tree (grep for js-root, FX_JS_ROOT, import.meta.hot, rollback, .fx/js): JS root resolution, import map, hot reload, last-known-good. All planned.
 - txiki network, TLS, websocket, http server, hashing, miniz are stubs: native/txiki/glue/txiki_stubs.c defines empty tjs__mod_tls_init, tjs__mod_httpclient_init, tjs__mod_httpserver_init, tjs__mod_ws_init, tjs__mod_hashing_init, tjs__mod_miniz_init. exists (as stubs).
 
-## 0.1 On edgejs (specs/edgejs-swap.md, pending the go decision)
+## 0.1 On edgejs (specs/edgejs-swap.md; docs/edgejs-engine.md)
 
-edgejs is Node's own library code over N-API, so on that route fx:host shrinks to what Node does not provide. Until the go decision the txiki route below stays the contract; the sections marked "txiki route" are removed on edgejs.
+Decision 2026-11-23: edgejs is go behind a flag for fx only (`fx run-code --engine edge`, opt-in, policy gate, +59 MB). The txiki route below stays the contract and the default; the sections marked "txiki route" describe what edgejs would make Node provide instead, and are not removed.
 
 What stays in fx:host on edgejs:
 - `version` and `capabilities` (section 1), so a host can omit what it lacks.
