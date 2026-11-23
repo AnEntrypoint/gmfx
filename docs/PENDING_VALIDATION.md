@@ -5346,3 +5346,7 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Build and suite (/workspace/tmp/fx/win_st30.out): ST30_DONE 0. The build passed in 556 s; the suite ran 12260 passed, 27 skipped, 0 failed; the txiki witness reported all checks passed.
 - The tree includes the read_file Ctrl-O fix (8df5c1ae): both render paths in src/ui/full_transcript_screen.zig unwrap the inner read_file output.
 - Row re-run queued on st30: G7 (tui-resume "Ctrl-O renders read_file results as readable content") at /workspace/tmp/fx/win_rows30_G7.out, ending ROWS_G7_DONE. The zero-output row stays an owner decision and is not re-run.
+
+## G7 row on the st30 binary (tree 5485d2c0)
+
+- Failing: tui-resume "Ctrl-O renders read_file results as readable content" (/workspace/tmp/fx/e2e30/G7/tui-resume.out; ROWS_G7_DONE 1). First error: expect(received).not.toContain("<path>") at tui-resume.test.ts:3837. Cause: the Ctrl-O full view still prints the raw run_code JSON envelope for the resumed read_file ({"ok":true,"value":"<path>README.md</path>…"}). The toolResultForDisplay edits (8df5c1ae) are not on that path. A fix agent is tracing the printing branch in src/ui/full_transcript_screen.zig.
