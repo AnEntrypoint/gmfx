@@ -289,6 +289,7 @@ pub const InnerCallStart = union(enum) {
 pub const InnerCallReply = struct {
     ok: bool,
     body: []const u8,
+    images: []const core_types.ToolImage = &.{},
 };
 
 pub const InnerCallGate = struct {

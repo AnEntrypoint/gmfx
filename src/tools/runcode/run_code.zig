@@ -5,6 +5,7 @@ const model_tool_schema = @import("../../core/tooling/model_tool_schema.zig");
 const runcode = @import("../../core/runcode/runcode.zig");
 const tool_admission = @import("../../core/tooling/tool_admission.zig");
 const message = @import("../../core/shared/message.zig");
+const core_types = @import("../../core/shared/types.zig");
 const permission_gate = @import("../../core/permissions/permission_gate.zig");
 const command_admission = @import("../../core/permissions/command_admission.zig");
 const host_verbs = @import("../../core/runcode/host_verbs.zig");
@@ -117,6 +118,13 @@ const Bridge = struct {
     ctx: tool_dispatch.DispatchContext,
     registry: tool_dispatch.Registry,
     calls: usize = 0,
+    images: std.ArrayList(core_types.ToolImage) = .empty,
+
+    fn keepImages(self: *Bridge, images: []const core_types.ToolImage) !void {
+        const copies = try core_types.dupeToolImages(self.ctx.allocator, images);
+        defer self.ctx.allocator.free(copies);
+        try self.images.appendSlice(self.ctx.allocator, copies);
+    }
 };
 
 fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror![]u8 {
@@ -137,28 +145,30 @@ fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, a
     const admitted = if (host) hostVerbAdmitted(ctx, name) else mcp or toolAdmitted(ctx, name);
     if (!admitted) return notAdmittedReply(alloc, name);
     const proposed: message.ToolCall = .{ .id = id, .name = name, .arguments_json = args_json };
-    const gate = ctx.inner_call_gate orelse return ungatedReply(ctx, bridge.registry, alloc, proposed, host, mcp);
+    const gate = ctx.inner_call_gate orelse return ungatedReply(bridge, ctx, alloc, proposed, host, mcp);
     const verb_call: message.ToolCall = switch (try gate.start_fn(gate.context, verb_alloc, proposed)) {
         .refuse => |reason| return verbReply(alloc, false, reason),
         .proceed => |arguments_json| .{ .id = id, .name = name, .arguments_json = arguments_json },
     };
     const reply = if (host) try hostVerbReply(ctx, bridge.registry, verb_call) else try gate.run_fn(gate.context, verb_alloc, verb_call);
+    try bridge.keepImages(reply.images);
     gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
     if (host) return alloc.dupe(u8, reply.body);
     return verbReply(alloc, reply.ok, reply.body);
 }
 
 fn ungatedReply(
+    bridge: *Bridge,
     base: tool_dispatch.DispatchContext,
-    registry: tool_dispatch.Registry,
     alloc: std.mem.Allocator,
     verb_call: message.ToolCall,
     host: bool,
     mcp: bool,
 ) ![]u8 {
-    if (host) return alloc.dupe(u8, (try hostVerbReply(base, registry, verb_call)).body);
+    if (host) return alloc.dupe(u8, (try hostVerbReply(base, bridge.registry, verb_call)).body);
     if (!mcp) {
-        const result = try tool_dispatch.dispatchToolCall(base, registry, verb_call);
+        const result = try tool_dispatch.dispatchToolCall(base, bridge.registry, verb_call);
+        try bridge.keepImages(result.images);
         return verbReply(alloc, result.status == .success, result.body);
     }
     var ctx = base;
@@ -342,6 +352,11 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     defer outcome.deinit(ctx.allocator);
     const base = runcode.reportJson(ctx.allocator, outcome, batchingNotice(ctx.single_verb_bodies, bridge.calls)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     const report = ledger.report(ctx.allocator, base) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
+    if (bridge.images.items.len > 0) return .{ .rich = .{
+        .text = report,
+        .images = bridge.images.toOwnedSlice(ctx.allocator) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not attach its images") },
+        .is_error = !outcome.ok,
+    } };
     if (outcome.ok) return .{ .success = report };
     return .{ .failure = report };
 }
@@ -450,6 +465,7 @@ test "run_code refuses an argument it does not take by name" {
 
 const RecordingGate = struct {
     alloc: std.mem.Allocator,
+    images: []const core_types.ToolImage = &.{},
     ids: std.ArrayList([]const u8) = .empty,
 
     fn gate(self: *RecordingGate) tool_dispatch.InnerCallGate {
@@ -466,8 +482,9 @@ const RecordingGate = struct {
         return null;
     }
 
-    fn run(_: *anyopaque, _: std.mem.Allocator, _: message.ToolCall) anyerror!tool_dispatch.InnerCallReply {
-        return .{ .ok = true, .body = "done" };
+    fn run(raw: *anyopaque, _: std.mem.Allocator, _: message.ToolCall) anyerror!tool_dispatch.InnerCallReply {
+        const self: *RecordingGate = @ptrCast(@alignCast(raw));
+        return .{ .ok = true, .body = "done", .images = self.images };
     }
 
     fn finish(_: *anyopaque, _: std.mem.Allocator, _: message.ToolCall, _: tool_dispatch.InnerCallReply) void {}
@@ -498,6 +515,34 @@ test "inner call ids carry the parent call id, so two bodies never repeat one" {
     try std.testing.expectEqual(@as(usize, 4), recorder.ids.items.len);
     const expected = [_][]const u8{ "call-a:1", "call-a:2", "call-b:1", "call-b:2" };
     for (expected, recorder.ids.items) |want, got| try std.testing.expectEqualStrings(want, got);
+}
+
+test "an image an inner verb returns reaches the run_code result's attachments" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var data = [_]u8{ 1, 2, 3 };
+    var mime = "image/png".*;
+    const images = [_]core_types.ToolImage{.{ .data = &data, .mime_type = &mime }};
+    var recorder = RecordingGate{ .alloc = alloc, .images = &images };
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = alloc,
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+        .tool_call_id = "call-image",
+        .inner_call_gate = recorder.gate(),
+    };
+    const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+        .id = "call-image",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"gm.glob_files({ pattern: 'a' }); gm.glob_files({ pattern: 'b' }); return 1;\"}",
+    });
+    try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.success, result.status);
+    try std.testing.expectEqual(@as(usize, 2), result.images.len);
+    try std.testing.expectEqualSlices(u8, &data, result.images[0].data);
+    try std.testing.expectEqualStrings("image/png", result.images[1].mime_type);
 }
 
 test "the batching notice follows the third consecutive single-verb body and not the second" {

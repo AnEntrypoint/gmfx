@@ -165,7 +165,7 @@ fn readTextReply(alloc: std.mem.Allocator, root: []const u8, args_json: []const 
 }
 
 fn clampTimeout(alloc: std.mem.Allocator, name: []const u8, args_json: []const u8, remaining_ms: u64) ![]u8 {
-    const seconds_key: ?[]const u8 = if (std.mem.eql(u8, name, "Bash") or std.mem.eql(u8, name, "FetchURL")) "timeout" else null;
+    const seconds_key: ?[]const u8 = if (std.mem.eql(u8, name, "Bash")) "timeout" else null;
     const ms_key: ?[]const u8 = if (std.mem.eql(u8, name, "run_command")) "timeout_ms" else null;
     if (seconds_key == null and ms_key == null) return alloc.dupe(u8, args_json);
     var parsed = std.json.parseFromSlice(std.json.Value, alloc, args_json, .{}) catch return alloc.dupe(u8, args_json);
@@ -183,6 +183,16 @@ fn clampTimeout(alloc: std.mem.Allocator, name: []const u8, args_json: []const u
     defer out.deinit();
     try std.json.Stringify.value(parsed.value, .{}, &out.writer);
     return out.toOwnedSlice();
+}
+
+test "FetchURL keeps the timeout the model gave so the tool can refuse it, while Bash still clamps" {
+    const alloc = std.testing.allocator;
+    const fetch = try clampTimeout(alloc, "FetchURL", "{\"url\":\"https://example.com\",\"timeout\":600}", 120_000);
+    defer alloc.free(fetch);
+    try std.testing.expectEqualStrings("{\"url\":\"https://example.com\",\"timeout\":600}", fetch);
+    const bash = try clampTimeout(alloc, "Bash", "{\"command\":\"true\",\"timeout\":600}", 120_000);
+    defer alloc.free(bash);
+    try std.testing.expect(std.mem.indexOf(u8, bash, "\"timeout\":120") != null);
 }
 
 fn wrapBody(alloc: std.mem.Allocator, body: []const u8, format: Format) ![:0]u8 {

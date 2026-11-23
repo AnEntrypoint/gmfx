@@ -1129,7 +1129,8 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         .presentation_group_id = ctx.output_chunk_presentation_group_id,
     });
     for (result.context_notices) |notice| try recordContextNoticeForDispatch(state.notices, notice);
-    return .{ .ok = result.status == .success, .body = result.model_output };
+    const images = if (result.tool_result_memory) |memory| memory.tool_images else &.{};
+    return .{ .ok = result.status == .success, .body = result.model_output, .images = images };
 }
 
 fn runInnerMcpCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_dispatch.InnerCallReply {
