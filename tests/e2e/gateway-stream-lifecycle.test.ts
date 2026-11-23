@@ -1794,7 +1794,7 @@ describe("gateway stream lifecycle", () => {
         );
 
         expect(result.code).toBe(0);
-        expect(result.stderr).toBe("Working \n");
+        expect(result.stderr).toBe("Reading file\n");
         expect(gateway.requests).toHaveLength(2);
         for (const request of gateway.requests) {
           expectPermissionModeContext(request.body, mode);
@@ -2884,7 +2884,7 @@ describe("gateway stream lifecycle", () => {
       const json = parseAskJson(result.stdout);
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toBe("Working \nWorking \n");
+      expect(result.stderr).toBe("Loading skill Skill\nReading file\n");
       expect(json.exit_code).toBe(0);
       expect(json.tool_calls).toEqual([
         { name: "run_code", status: "success" },
@@ -2950,8 +2950,11 @@ describe("gateway stream lifecycle", () => {
       await tui.sendText("Read the workflow and its supporting rules.");
       await tui.waitForPane((pane) => pane.includes("SKILL_LABEL_CHECK_COMPLETE") && hasEmptyComposer(pane), 15_000);
       const scrollback = await tui.captureFullScrollback();
-      expect(scrollback.match(/run_code Skill/g)).toHaveLength(3);
-      expect(scrollback).toContain("run_code read_file");
+      expect(scrollback).toContain(`Loaded skill ${skillName}`);
+      expect(scrollback).toContain(`Read ${join(skillDirectory, "references", "rules.md")}`);
+      expect(scrollback).not.toContain("Loaded skill Skill");
+      expect(scrollback).not.toContain("Loaded skill different-directory");
+      for (const name of additionalSkills) expect(scrollback).toContain(`Loaded skill ${name}`);
       expect(scrollback).not.toContain("Failed");
       await tui.sendText("/quit");
       expect(await tui.waitForSessionEnd(10_000)).toBe(true);
@@ -3126,9 +3129,9 @@ describe("gateway stream lifecycle", () => {
             await tui.waitForText("HELD_SKILL_RESOURCE_COMPLETE", 15_000);
             await tui.waitForStableComposer(10_000);
             const completed = await tui.captureFullScrollback();
-            expect(completed).toContain("run_code read_file");
+            expect(completed).toContain(`Read ${resourcePath}`);
             expect(completed).not.toContain("Working return gm.read_file(");
-            if (!attached) expect(completed).toContain("run_code Skill");
+            if (!attached) expect(completed).toContain("Loaded skill streamed-workflow");
             expect(gateway.requestCount()).toBe(heldRequestCount + 1);
           }
           await tui.sendText("Confirm later input still works.");
@@ -3222,7 +3225,7 @@ describe("gateway stream lifecycle", () => {
       const json = parseAskJson(result.stdout);
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toBe("Working \nWorking \n");
+      expect(result.stderr).toBe("Loading skill Skill\nLoading skill Skill\n");
       expect(json.exit_code).toBe(0);
       expect(json.error).toBeUndefined();
       expect(json.output).toContain("Dynamic context stayed data.");
@@ -3662,7 +3665,7 @@ describe("gateway stream lifecycle", () => {
         );
 
         expect(result.code).toBe(0);
-        expect(variant.json ? result.stderr : withoutResumeHint(result.stderr)).toBe("Working \nWorking \n");
+        expect(variant.json ? result.stderr : withoutResumeHint(result.stderr)).toBe("Writing file\nWriting file\n");
         const assistantOutput = variant.json
           ? JSON.parse(result.stdout).output
           : result.stdout;
@@ -3916,7 +3919,7 @@ describe("gateway stream lifecycle", () => {
       const output = runCodeValue(contentText(resultPart?.output));
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toBe("Working \nWorking \n");
+      expect(result.stderr).toBe("Matching pattern\nMatching pattern\n");
       expect(json.error).toBeUndefined();
       expect(gateway.requestCount()).toBe(3);
       expect(output).toContain("tool_execution_failed");
@@ -3975,7 +3978,7 @@ describe("gateway stream lifecycle", () => {
         },
       );
       expect(first.code).toBe(0);
-      expect(first.stderr).toBe("Working \n");
+      expect(first.stderr).toBe("Reading file\n");
       const firstJson = parseAskJson(first.stdout) as ReturnType<typeof parseAskJson> & {
         model: string;
         session_id: string;
@@ -4290,7 +4293,7 @@ describe("gateway stream lifecycle", () => {
             });
             const result = parseAskJson(first.stdout);
             expect(first.code).toBe(0);
-            expect(first.stderr).toContain("Working \n");
+            expect(first.stderr).toContain("Reading file\n");
             expect(result.final_output).toBe("The notes were read.");
             expect(result.tool_calls.filter((call) => call.name === "run_code")).toEqual([{ name: "run_code", status: "success" }]);
             expect(gateway.requestCount()).toBe(2);
@@ -4811,9 +4814,7 @@ describe("gateway stream lifecycle", () => {
         case 2: {
           const output = toolResultOutput(body, readResultCallId);
           expect(output).toContain(needle);
-          expect(output).toContain(
-            `<tool_result_query handle="${canonicalHandle}">`,
-          );
+          expect(output).toContain(canonicalHandle);
           const request = JSON.parse(body) as {
             prompt: Array<{ content?: Array<Record<string, unknown>> }>;
           };
@@ -5076,7 +5077,7 @@ describe("gateway stream lifecycle", () => {
       for (const batch of [1, 2, 3]) {
         const invalid = results.find((item: any) => item.tool_call_id === `invalid_${batch}`);
         expect(invalid.status).toBe("failure");
-        expect(invalid.output).toContain('Bash does not take argument "tty"');
+        expect(invalid.output).toContain('Bash does not take argument \"tty\"');
         const neighbor = results.find((item: any) => item.tool_call_id === `neighbor_${batch}`);
         expect(neighbor.status).toBe("success");
         expect(neighbor.output).toContain("NEIGHBOR_OK");
@@ -6459,7 +6460,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           };
           expect(result.code).toBe(0);
           if (turn === 1) {
-            expect(result.stderr).toContain("Working \n");
+            expect(result.stderr).toContain("Reading file\n");
           } else {
             expect(result.stderr).toBe("");
           }
@@ -6672,7 +6673,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         const prefix = `RETRIEVAL_MATCH ${token} `;
         const tail = "RETRIEVAL_EDGE_SENTINEL";
         const replaySignature = "RETAINED_COMPACTION_SIGNATURE";
-        writeFileSync(join(root.workspace, "source.txt"), prefix + "x".repeat(65480 - prefix.length) + tail + "x".repeat(1024) + "\n");
+        writeFileSync(join(root.workspace, "source.txt"), prefix + "x".repeat(65600 - prefix.length) + tail + "x".repeat(1024) + "\n");
         writeFileSync(join(root.workspace, "small.txt"), "small follow-up\n");
         let step = 0;
         let compactions = 0;
@@ -6782,7 +6783,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           expect(resumed.code).toBe(0);
 
 
-          expect(resumed.stderr).toBe("Working \n");
+          expect(resumed.stderr).toBe("Reading saved output\n");
           expect(JSON.parse(resumed.stdout).final_output).toBe("RETRIEVAL_RESTART_COMPLETE");
           expect(gateway.requests).toHaveLength(8);
           expect(readFileSync(join(root.workspace, "effects.txt"), "utf8")).toBe("once\n");
@@ -9496,7 +9497,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         const pid = Number.parseInt(readFileSync(mcp.pidPath, "utf8"), 10);
 
         expect(result.code).toBe(0);
-        expect(result.stderr).toContain("Working \n");
+        expect(result.stderr).toContain("Selecting MCP tool dynamic tool\n");
         expect(json.output).toContain("MCP argument handling complete.");
         expect(json.tool_calls).toContainEqual({
           name: FIXTURE_MCP_ECHO_TOOL,
@@ -10687,7 +10688,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       );
       expect(result.code).toBe(0);
       expect(result.signal).toBeNull();
-      expect(result.stderr).toBe("Working \nWorking \n");
+      expect(result.stderr).toBe("Reading file\nReading file\n");
       const json = parseAskJson(result.stdout);
       expect(json.output).toContain("Finished reading the fixture.");
       expect(json.tool_calls).toEqual([
