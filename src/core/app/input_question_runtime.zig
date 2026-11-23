@@ -66,6 +66,7 @@ pub fn QuestionRuntime(comptime App: type) type {
                 if (try app.answerLentQuestion(cancelQuestionPrompt)) return;
             }
             const route_recovery = isRouteRecoveryPrompt(agent);
+            const mcp_elicitation = isMcpElicitationPrompt(agent);
             interrupt.traceInterruptRequested(app, agent, "input_question");
             if (!route_recovery) {
                 if (comptime @hasDecl(App, "noteUserStop")) app.noteUserStop(agent);
@@ -76,6 +77,7 @@ pub fn QuestionRuntime(comptime App: type) type {
                 }
             }
             app.pacer.clear(app.alloc);
+            if (!route_recovery and !mcp_elicitation) try finalizeQuestionTranscript(app, agent, true);
             try agent.worker.submitQuestionBatchAnswer(std.heap.c_allocator, null, null);
             agent.question_prompt.discard(app.alloc, "cancelled");
             app.input_runtime.input_limit_rejection = input_limit_rejection.clear();
