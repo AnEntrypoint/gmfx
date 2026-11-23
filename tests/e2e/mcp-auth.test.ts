@@ -24,7 +24,7 @@ import { startModernMcpHttpFixture } from "./fixtures/mcp-modern-http";
 import { stdoutFrames } from "./render-lab/tape";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   isComposerLine,
   startFakeGateway,
   TmuxSession,
@@ -655,8 +655,8 @@ function releaseProcess(pid: number | null) {
 
 function startToolGateway() {
   return startFakeGateway([
-    fakeGatewayToolCall("select_mcp", "select_tools", { names: [TOOL_NAME] }),
-    fakeGatewayToolCall("call_mcp", TOOL_NAME, { text: "authenticated" }),
+    fakeGatewayVerbCall("select_mcp", "select_tools", { names: [TOOL_NAME] }),
+    fakeGatewayVerbCall("call_mcp", TOOL_NAME, { text: "authenticated" }),
     fakeGatewayFinalText("Authenticated MCP call complete."),
   ], {
     models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
@@ -666,10 +666,10 @@ function startToolGateway() {
 /// Holds the call to the protected tool until `callAt`, a wall-clock time in ms.
 function startDelayedToolGateway(callAt: number, finalText: string) {
   return startFakeGateway([
-    fakeGatewayToolCall("select_mcp", "select_tools", { names: [TOOL_NAME] }),
+    fakeGatewayVerbCall("select_mcp", "select_tools", { names: [TOOL_NAME] }),
     async () => {
       await Bun.sleep(Math.max(0, callAt - Date.now()));
-      return fakeGatewayToolCall("call_mcp", TOOL_NAME, {
+      return fakeGatewayVerbCall("call_mcp", TOOL_NAME, {
         text: "authenticated",
       });
     },
@@ -683,23 +683,23 @@ function startDelayedToolGateway(callAt: number, finalText: string) {
 /// time in ms.
 function startRefreshRecoveryGateway(callAt: () => number) {
   return startFakeGateway([
-    fakeGatewayToolCall("select_cancel", "select_tools", {
+    fakeGatewayVerbCall("select_cancel", "select_tools", {
       names: [TOOL_NAME] }),
     async () => {
       await Bun.sleep(Math.max(0, callAt() - Date.now()));
-      return fakeGatewayToolCall("call_cancel", TOOL_NAME, {
+      return fakeGatewayVerbCall("call_cancel", TOOL_NAME, {
         text: "cancelled",
       });
     },
-    fakeGatewayToolCall("select_retry", "select_tools", {
+    fakeGatewayVerbCall("select_retry", "select_tools", {
       names: [TOOL_NAME] }),
-    fakeGatewayToolCall("call_retry", TOOL_NAME, {
+    fakeGatewayVerbCall("call_retry", TOOL_NAME, {
       text: "retried",
     }),
     fakeGatewayFinalText("Retry ended."),
-    fakeGatewayToolCall("select_recovery", "select_tools", {
+    fakeGatewayVerbCall("select_recovery", "select_tools", {
       names: [TOOL_NAME] }),
-    fakeGatewayToolCall("call_recovery", TOOL_NAME, {
+    fakeGatewayVerbCall("call_recovery", TOOL_NAME, {
       text: "recovered",
     }),
     fakeGatewayFinalText("Refresh recovery complete."),
@@ -740,7 +740,17 @@ function toolResultText(
   if (output.type !== outputType || typeof output.value !== "string") {
     throw new Error(`Invalid tool result for ${toolCallId}`);
   }
-  return output.value;
+  return runCodeVerbReply(output.value);
+}
+
+function runCodeVerbReply(text: string): string {
+  try {
+    const envelope = JSON.parse(text);
+    if (envelope?.ok !== true || !("value" in envelope)) return text;
+    return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
+  } catch {
+    return text;
+  }
 }
 
 describe("MCP login", () => {
@@ -774,19 +784,19 @@ describe("MCP login", () => {
         }),
       );
       gateway = startFakeGateway([
-        fakeGatewayToolCall("search_exact", "capability_search", {
+        fakeGatewayVerbCall("search_exact", "capability_search", {
           query: "Please use mcp__linear__echo for this request",
         }),
-        fakeGatewayToolCall("search_noisy", "capability_search", {
+        fakeGatewayVerbCall("search_noisy", "capability_search", {
           query: "linear issue",
         }),
-        fakeGatewayToolCall("search_auth_collision", "capability_search", {
+        fakeGatewayVerbCall("search_auth_collision", "capability_search", {
           query: "slack data",
         }),
-        fakeGatewayToolCall("search_targeted", "capability_search", {
+        fakeGatewayVerbCall("search_targeted", "capability_search", {
           query: "authenticate slack now",
         }),
-        fakeGatewayToolCall("search_healthy", "capability_search", {
+        fakeGatewayVerbCall("search_healthy", "capability_search", {
           query: "linear echo",
         }),
         fakeGatewayFinalText("MCP search isolation observed."),
@@ -846,7 +856,7 @@ describe("MCP login", () => {
   };
 
   const searchNeedingLogin = () => startFakeGateway([
-    fakeGatewayToolCall("search_auth", "capability_search", { query: "fixture", server: "fixture" }),
+    fakeGatewayVerbCall("search_auth", "capability_search", { query: "fixture", server: "fixture" }),
     fakeGatewayFinalText("Sign in first."),
   ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
 
@@ -874,8 +884,8 @@ describe("MCP login", () => {
     const env = v2Env(root);
     expect(await statusOf(root)).toBe("not_started");
     gateway = startFakeGateway([
-      fakeGatewayToolCall("call_auth", "mcp__fixture__authenticate", {}),
-      fakeGatewayToolCall("call_mcp", TOOL_NAME, { text: "after authenticate" }),
+      fakeGatewayVerbCall("call_auth", "mcp__fixture__authenticate", {}),
+      fakeGatewayVerbCall("call_mcp", TOOL_NAME, { text: "after authenticate" }),
       fakeGatewayFinalText("Signed in and called."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     const offered = (index: number) =>
@@ -911,7 +921,7 @@ describe("MCP login", () => {
     config.mcp.broken = { type: "local", command: ["false"], startupTimeoutMs: 5_000 };
     writeFileSync(profile, JSON.stringify(config));
     gateway = startFakeGateway([
-      fakeGatewayToolCall("search_open", "capability_search", { query: "weather forecast" }),
+      fakeGatewayVerbCall("search_open", "capability_search", { query: "weather forecast" }),
       fakeGatewayFinalText("Nothing found."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     const result = await runFx(["ask", "--json", "--auto", "--no-save", "What's the weather?"], {
@@ -955,8 +965,8 @@ describe("MCP login", () => {
     auth = startAuthFixture(upstream.url);
     const root = createRoot(auth);
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select_auth", "select_tools", { names: ["mcp__fixture__authenticate"] }),
-      fakeGatewayToolCall("call_auth", "mcp__fixture__authenticate", {}),
+      fakeGatewayVerbCall("select_auth", "select_tools", { names: ["mcp__fixture__authenticate"] }),
+      fakeGatewayVerbCall("call_auth", "mcp__fixture__authenticate", {}),
       fakeGatewayFinalText("The fixture login is complete."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     tui = await TmuxSession.create({
@@ -1946,15 +1956,15 @@ describe("MCP login", () => {
     const env = v2Env(root);
     expectExit0(await runFx(["mcp", "login", "fixture"], { cwd: root.workspace, env, timeoutMs: 20_000 }));
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("first", "mcp__fixture__echo", { text: "first" }),
+      fakeGatewayVerbCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("first", "mcp__fixture__echo", { text: "first" }),
       fakeGatewayFinalText("First call done."),
 
-      fakeGatewayToolCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("second", "mcp__fixture__echo", { text: "second" }),
+      fakeGatewayVerbCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("second", "mcp__fixture__echo", { text: "second" }),
       fakeGatewayFinalText("It needs a login."),
-      fakeGatewayToolCall("select3", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("third", "mcp__fixture__echo", { text: "third" }),
+      fakeGatewayVerbCall("select3", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("third", "mcp__fixture__echo", { text: "third" }),
       fakeGatewayFinalText("Third call done."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     tui = await TmuxSession.create({
@@ -1992,14 +2002,14 @@ describe("MCP login", () => {
     const storePath = join(root.home, ".fx", "mcp-credentials", "credentials-v3.json");
     expectExit0(await runFx(["mcp", "login", "fixture"], { cwd: root.workspace, env, timeoutMs: 20_000 }));
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("first", "mcp__fixture__echo", { text: "first" }),
+      fakeGatewayVerbCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("first", "mcp__fixture__echo", { text: "first" }),
       fakeGatewayFinalText("First call done."),
-      fakeGatewayToolCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("second", "mcp__fixture__echo", { text: "second" }),
+      fakeGatewayVerbCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("second", "mcp__fixture__echo", { text: "second" }),
       fakeGatewayFinalText("Second call done."),
-      fakeGatewayToolCall("select3", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("third", "mcp__fixture__echo", { text: "third" }),
+      fakeGatewayVerbCall("select3", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("third", "mcp__fixture__echo", { text: "third" }),
       fakeGatewayFinalText("Third call done."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     tui = await TmuxSession.create({
@@ -2037,11 +2047,11 @@ describe("MCP login", () => {
     const storePath = join(root.home, ".fx", "mcp-credentials", "credentials-v3.json");
     expectExit0(await runFx(["mcp", "login", "fixture"], { cwd: root.workspace, env, timeoutMs: 20_000 }));
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("first", "mcp__fixture__echo", { text: "first" }),
+      fakeGatewayVerbCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("first", "mcp__fixture__echo", { text: "first" }),
       fakeGatewayFinalText("First call done."),
-      fakeGatewayToolCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("second", "mcp__fixture__echo", { text: "second" }),
+      fakeGatewayVerbCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("second", "mcp__fixture__echo", { text: "second" }),
       fakeGatewayFinalText("Second call done."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     tui = await TmuxSession.create({
@@ -2094,14 +2104,14 @@ describe("MCP login", () => {
     const storePath = join(root.home, ".fx", "mcp-credentials", "credentials-v3.json");
     expectExit0(await runFx(["mcp", "login", "fixture"], { cwd: root.workspace, env, timeoutMs: 20_000 }));
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("first", "mcp__fixture__echo", { text: "first" }),
+      fakeGatewayVerbCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("first", "mcp__fixture__echo", { text: "first" }),
       fakeGatewayFinalText("First call done."),
-      fakeGatewayToolCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("second", "mcp__fixture__echo", { text: "second" }),
+      fakeGatewayVerbCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("second", "mcp__fixture__echo", { text: "second" }),
       fakeGatewayFinalText("Second call done."),
-      fakeGatewayToolCall("select3", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("third", "mcp__fixture__echo", { text: "third" }),
+      fakeGatewayVerbCall("select3", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("third", "mcp__fixture__echo", { text: "third" }),
       fakeGatewayFinalText("Third call done."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     tui = await TmuxSession.create({
@@ -2168,20 +2178,20 @@ describe("MCP login", () => {
 
     let second: ReturnType<typeof startFakeGateway> | null = null;
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select_first", "select_tools", { names: [TOOL_NAME] }),
+      fakeGatewayVerbCall("select_first", "select_tools", { names: [TOOL_NAME] }),
       async () => {
         await until("the second fx to connect", () => (second?.requests.length ?? 0) >= 2);
         activeAuth.validTokens.delete(ACCESS_INITIAL);
-        return fakeGatewayToolCall("first", TOOL_NAME, { text: "first" });
+        return fakeGatewayVerbCall("first", TOOL_NAME, { text: "first" });
       },
       fakeGatewayFinalText("First call done."),
     ], models);
     const first = gateway;
     second = startFakeGateway([
-      fakeGatewayToolCall("select_second", "select_tools", { names: [TOOL_NAME] }),
+      fakeGatewayVerbCall("select_second", "select_tools", { names: [TOOL_NAME] }),
       async () => {
         await until("the first fx's refresh", () => activeAuth.refreshes >= 1);
-        return fakeGatewayToolCall("second", TOOL_NAME, { text: "second" });
+        return fakeGatewayVerbCall("second", TOOL_NAME, { text: "second" });
       },
       fakeGatewayFinalText("Second call done."),
     ], models);
@@ -2226,10 +2236,10 @@ describe("MCP login", () => {
     const renewed = (withdrawn: string, id: string, waitMs: number) => async () => {
       await Bun.sleep(waitMs);
       activeAuth.validTokens.delete(withdrawn);
-      return fakeGatewayToolCall(id, TOOL_NAME, { text: id });
+      return fakeGatewayVerbCall(id, TOOL_NAME, { text: id });
     };
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select_mcp", "select_tools", { names: [TOOL_NAME] }),
+      fakeGatewayVerbCall("select_mcp", "select_tools", { names: [TOOL_NAME] }),
       renewed(ACCESS_INITIAL, "first", 0),
       renewed(`${ACCESS_REFRESHED}-1`, "second", 600),
       fakeGatewayFinalText("Renewed twice."),
@@ -2346,14 +2356,14 @@ describe("MCP login", () => {
     const storePath = join(root.home, ".fx", "mcp-credentials", "credentials-v3.json");
     expectExit0(await runFx(["mcp", "login", "fixture"], { cwd: root.workspace, env, timeoutMs: 20_000 }));
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("first", "mcp__fixture__echo", { text: "first" }),
+      fakeGatewayVerbCall("select", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("first", "mcp__fixture__echo", { text: "first" }),
       fakeGatewayFinalText("First call done."),
-      fakeGatewayToolCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("second", "mcp__fixture__echo", { text: "second" }),
+      fakeGatewayVerbCall("select2", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("second", "mcp__fixture__echo", { text: "second" }),
       fakeGatewayFinalText("Second call done."),
-      fakeGatewayToolCall("select3", "select_tools", { names: ["mcp__fixture__echo"] }),
-      fakeGatewayToolCall("third", "mcp__fixture__echo", { text: "third" }),
+      fakeGatewayVerbCall("select3", "select_tools", { names: ["mcp__fixture__echo"] }),
+      fakeGatewayVerbCall("third", "mcp__fixture__echo", { text: "third" }),
       fakeGatewayFinalText("Third call done."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     tui = await TmuxSession.create({
@@ -2410,8 +2420,8 @@ describe("MCP login", () => {
       FX_NO_OPEN_BROWSER: undefined, FX_TRACE_SCOPES: "mcp,keychain",
     };
     const call = (id: string, done: string) => [
-      fakeGatewayToolCall(`select_${id}`, "select_tools", { names: [TOOL_NAME] }),
-      fakeGatewayToolCall(`call_${id}`, TOOL_NAME, { text: id }),
+      fakeGatewayVerbCall(`select_${id}`, "select_tools", { names: [TOOL_NAME] }),
+      fakeGatewayVerbCall(`call_${id}`, TOOL_NAME, { text: id }),
       fakeGatewayFinalText(done),
     ];
     const models = [{ id: MODEL, type: "language", tags: ["tool-use"] }];
@@ -2632,11 +2642,11 @@ describe("MCP login", () => {
     const listens = () => upstream!.requests.filter((request) => request.message.method === "subscriptions/listen");
     const calls = () => upstream!.requests.filter((request) => request.message.method === "tools/call");
     gateway = startFakeGateway([
-      fakeGatewayToolCall("select_first", "select_tools", { names: [TOOL_NAME] }),
-      fakeGatewayToolCall("call_first", TOOL_NAME, { text: "first" }),
+      fakeGatewayVerbCall("select_first", "select_tools", { names: [TOOL_NAME] }),
+      fakeGatewayVerbCall("call_first", TOOL_NAME, { text: "first" }),
       fakeGatewayFinalText("First call complete."),
-      fakeGatewayToolCall("select_second", "select_tools", { names: [TOOL_NAME] }),
-      fakeGatewayToolCall("call_second", TOOL_NAME, { text: "second" }),
+      fakeGatewayVerbCall("select_second", "select_tools", { names: [TOOL_NAME] }),
+      fakeGatewayVerbCall("call_second", TOOL_NAME, { text: "second" }),
       fakeGatewayFinalText("Second call complete."),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     tui = await TmuxSession.create({

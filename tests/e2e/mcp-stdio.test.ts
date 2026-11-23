@@ -15,6 +15,7 @@ import { contentText } from "./conditional-guidance-oracle";
 import { pngPixelSize, solidPng } from "./fixtures/image-encoding";
 import {
   fakeGatewayFinalText,
+  fakeGatewayVerbCall,
   fakeGatewayToolCall,
   startDynamicFakeGateway,
   startFakeGateway,
@@ -246,6 +247,16 @@ function moveProfileFixtureToWorkspace(root: FixtureRoot): void {
   writeFileSync(profilePath, JSON.stringify({ mcp: {} }));
 }
 
+
+function runCodeVerbReply(text: string): string {
+  try {
+    const envelope = JSON.parse(text);
+    if (envelope?.ok !== true || !("value" in envelope)) return text;
+    return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
+  } catch {
+    return text;
+  }
+}
 
 function toolResultText(body: string, callId: string): string {
   const prompt = (JSON.parse(body) as { prompt: Array<{ content?: unknown }> }).prompt;
@@ -697,7 +708,7 @@ describe("modern MCP stdio compatibility", () => {
           const handle = /<tool_result_handle>([^<]+)<\/tool_result_handle>/.exec(stored)?.[1] ?? "missing";
 
           const size = Number(/stored_bytes="(\d+)"/.exec(stored)?.[1] ?? 0);
-          return fakeGatewayToolCall("read_tail", "read_tool_result", { request: { handle, start_byte: Math.max(size - 255, 1), byte_count: 256 } });
+          return fakeGatewayVerbCall("read_tail", "read_tool_result", { request: { handle, start_byte: Math.max(size - 255, 1), byte_count: 256 } });
         },
         (body: string) => {
           read = toolResultText(body, "read_tail");
@@ -1284,13 +1295,13 @@ describe("modern MCP stdio compatibility", () => {
           return fakeGatewayFinalText("SCOPED_REFRESH_PARENT_READY");
         }
         if (body.includes(parentPrompt)) {
-          return fakeGatewayToolCall("create_scoped_refresh_child", "Agent", {
+          return fakeGatewayVerbCall("create_scoped_refresh_child", "Agent", {
             prompt: childPrompt,
             description: "search the MCP tools",
           });
         }
         if (body.includes(childPrompt)) {
-          return fakeGatewayToolCall("scoped_refresh_search", "capability_search", {
+          return fakeGatewayVerbCall("scoped_refresh_search", "capability_search", {
             query: "echo",
           });
         }
@@ -1345,12 +1356,12 @@ describe("modern MCP stdio compatibility", () => {
     });
     const freshTool = "mcp__fixture__fresh";
     gateway = startFakeGateway([
-      fakeGatewayToolCall("search_initial", "capability_search", {
+      fakeGatewayVerbCall("search_initial", "capability_search", {
         query: "echo",
       }),
       async () => {
         await Bun.sleep(200);
-        return fakeGatewayToolCall("search_fresh", "capability_search", {
+        return fakeGatewayVerbCall("search_fresh", "capability_search", {
           query: "fresh",
         });
       },
@@ -1396,13 +1407,13 @@ describe("modern MCP stdio compatibility", () => {
     });
     const freshTool = "mcp__fixture__fresh";
     gateway = startFakeGateway([
-      fakeGatewayToolCall("search_initial", "capability_search", {
+      fakeGatewayVerbCall("search_initial", "capability_search", {
         query: "echo",
       }),
       async () => {
         writeFileSync(root.invalidationReleasePath, "ready");
         await Bun.sleep(100);
-        return fakeGatewayToolCall("search_fresh", "capability_search", {
+        return fakeGatewayVerbCall("search_fresh", "capability_search", {
           query: "fresh",
         });
       },
@@ -1619,7 +1630,7 @@ describe("modern MCP stdio compatibility", () => {
     expect(imageHandle).toBeDefined();
     gateway.stop();
     gateway = startFakeGateway([
-      fakeGatewayToolCall("load_saved_image", "read_tool_result", { request: { handle: imageHandle } }),
+      fakeGatewayVerbCall("load_saved_image", "read_tool_result", { request: { handle: imageHandle } }),
       fakeGatewayFinalText("The saved screenshot is visible."),
     ], { models });
     const resumed = await runFx(["ask", "--json", "--auto", "--resume", sessionId, "Describe the earlier screenshot"], {
@@ -1638,7 +1649,7 @@ describe("modern MCP stdio compatibility", () => {
     const loaded = secondRequest.prompt
       .flatMap((message: { content?: unknown[] }) => message.content ?? [])
       .find((part: { type?: string; toolCallId?: string }) => part.type === "tool-result" && part.toolCallId === "load_saved_image");
-    expect(loaded.output.type).toBe("content");
+    expect(loaded.output.type).toBe("text");
     const loadedImageMessage = secondRequest.prompt.find((message: { role?: string; content?: unknown[] }) =>
       message.role === "user" && Array.isArray(message.content) &&
       (message.content as Array<{ type?: string }>).some((entry) => entry.type === "file"));
@@ -1810,7 +1821,7 @@ describe("modern MCP stdio compatibility", () => {
       recordLaunchAttempts: true,
     });
     const activeGateway = startFakeGateway([
-      fakeGatewayToolCall("search_failed", "capability_search", {
+      fakeGatewayVerbCall("search_failed", "capability_search", {
         kind: "mcp",
         server: "fixture",
         query: "fixture tools",
@@ -1930,7 +1941,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"`,
         mode: malformed.mode,
       });
       gateway = startFakeGateway([
-        fakeGatewayToolCall("search_malformed", "capability_search", {
+        fakeGatewayVerbCall("search_malformed", "capability_search", {
           query: "fixture",
         }),
         fakeGatewayFinalText("Malformed stdio fixture isolated."),
@@ -2097,7 +2108,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"`,
       gateway = startFakeGateway([
         discovery === "select"
           ? fakeGatewayToolCall("target_select", "select_tools", { names: [TOOL_NAME] })
-          : fakeGatewayToolCall("target_search", "capability_search", { server: "fixture", query: "echo" }),
+          : fakeGatewayVerbCall("target_search", "capability_search", { server: "fixture", query: "echo" }),
         fakeGatewayToolCall("target_call", TOOL_NAME, { text: "hello" }),
         fakeGatewayFinalText("Targeted server works."),
       ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
@@ -3570,7 +3581,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"`,
       });
       if (loading === "deferred") deferProfileServers(root);
       gateway = startFakeGateway([
-        fakeGatewayToolCall("cancel_startup", "capability_search", { server: "fixture", query: "echo" }),
+        fakeGatewayVerbCall("cancel_startup", "capability_search", { server: "fixture", query: "echo" }),
         fakeGatewayFinalText("Unexpected continuation."),
       ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
       const proc = Bun.spawn([join(REPO_ROOT, "zig-out", "bin", "fx"), "ask", "--json", "--auto", "--no-save", "Find the fixture tool"], {
@@ -3875,7 +3886,10 @@ describe("MCP stdio servers", () => {
 
   test("a server that only speaks 2024-11-05 is reported, not waited on", async () => {
     const root = createRoot("v2-2024", LEGACY_FIXTURE, { legacyVersion: "2024-11-05" });
-    gateway = startToolGateway("V2_2024_SEEN");
+    gateway = startFakeGateway([
+      fakeGatewayVerbCall("select_mcp", "select_tools", { names: [TOOL_NAME] }),
+      fakeGatewayFinalText("V2_2024_SEEN"),
+    ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     const started = Date.now();
     const result = await ask(root, "Use the stdio MCP echo tool.");
     expect(result.code).toBe(0);
@@ -3889,14 +3903,14 @@ describe("MCP stdio servers", () => {
   test("capability_search finds the tool under its fx name and the model calls it", async () => {
     const root = createRoot("v2-search", MODERN_FIXTURE);
     gateway = startFakeGateway([
-      fakeGatewayToolCall("search", "capability_search", { query: "echo", server: "fixture" }),
+      fakeGatewayVerbCall("search", "capability_search", { query: "echo", server: "fixture" }),
       fakeGatewayToolCall("call", TOOL_NAME, { text: "hello" }),
       fakeGatewayFinalText("V2_SEARCH_DONE"),
     ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
     const result = await ask(root, "Find the echo tool and use it.");
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("V2_SEARCH_DONE");
-    expect(modelSaw()).toContain(`\\"name\\":\\"${TOOL_NAME}\\",\\"server\\":\\"fixture\\"`);
+    expect(modelSaw()).toContain(JSON.stringify(JSON.stringify(`"name":"${TOOL_NAME}","server":"fixture"`).slice(1, -1)).slice(1, -1));
     expect(modelSaw()).toContain(MODERN_RESULT);
     expect(calls(root)).toHaveLength(1);
   }, 25_000);
@@ -4009,7 +4023,7 @@ describe("MCP stdio servers", () => {
       const root = createRoot(`v2-not-found-${loading}`, MODERN_FIXTURE);
       if (loading === "deferred") deferProfileServers(root);
       gateway = startFakeGateway([
-        fakeGatewayToolCall("search", "capability_search", { query: "echo", server: "nope" }),
+        fakeGatewayVerbCall("search", "capability_search", { query: "echo", server: "nope" }),
         fakeGatewayFinalText("V2_NOT_FOUND_SEEN"),
       ], { models: [{ id: MODEL, type: "language", tags: ["tool-use"] }] });
       const result = await runFx(["ask", "--json", "--auto", "--no-save", "Find a tool on nope."], {
@@ -4050,7 +4064,7 @@ describe("fx mcp call", () => {
     const root = bridgeRoot("bridge-file");
     let seen = "";
     gateway = startFakeGateway([
-      fakeGatewayToolCall("run_call", "Bash", { command }),
+      fakeGatewayVerbCall("run_call", "Bash", { command }),
       (body: string) => {
         seen = toolResultText(body, "run_call");
         return fakeGatewayFinalText("BRIDGE_DONE");
@@ -4084,7 +4098,7 @@ describe("fx mcp call", () => {
       const stderrPath = join(root.root, "stderr.log");
       let seen = "";
       const activeGateway = startFakeGateway([
-        fakeGatewayToolCall("run_call", "Bash", { command }),
+        fakeGatewayVerbCall("run_call", "Bash", { command }),
         (body: string) => {
           seen = toolResultText(body, "run_call");
           return fakeGatewayFinalText("BRIDGE_TUI_DONE");
@@ -4129,7 +4143,7 @@ describe("fx mcp call", () => {
     const root = bridgeRoot("bridge-denied", { permission: { bash: { "*": "allow" }, [TOOL_NAME]: "deny" } });
     let seen = "";
     gateway = startFakeGateway([
-      fakeGatewayToolCall("run_call", "Bash", { command }),
+      fakeGatewayVerbCall("run_call", "Bash", { command }),
       (body: string) => {
         seen = toolResultText(body, "run_call");
         return fakeGatewayFinalText("BRIDGE_DENIED");
@@ -4153,7 +4167,7 @@ describe("fx mcp call", () => {
   const runBridgeCommand = async (root: FixtureRoot, shellCommand: string) => {
     let seen = "";
     gateway = startFakeGateway([
-      fakeGatewayToolCall("run_call", "Bash", { command: shellCommand }),
+      fakeGatewayVerbCall("run_call", "Bash", { command: shellCommand }),
       (body: string) => {
         seen = toolResultText(body, "run_call");
         return fakeGatewayFinalText("BRIDGE_OUTCOME_DONE");
@@ -4293,10 +4307,10 @@ describe("fx mcp call", () => {
         return fakeGatewayFinalText("BRIDGE_CHILD_DONE");
       }
       if (body.includes("BRIDGE_CHILD_TASK")) {
-        return fakeGatewayToolCall("child_call", "Bash", { command });
+        return fakeGatewayVerbCall("child_call", "Bash", { command });
       }
       if (body.includes("BRIDGE_PARENT_TASK")) {
-        return fakeGatewayToolCall("create_bridge_child", "Agent", {
+        return fakeGatewayVerbCall("create_bridge_child", "Agent", {
           prompt: "BRIDGE_CHILD_TASK",
           description: "run the bridge command",
         });
@@ -4341,7 +4355,7 @@ describe("fx mcp call", () => {
 
   const shellOutput = (result: string): string => {
     const contextUpdate = result.indexOf("<fx-context-update>");
-    return JSON.parse(contextUpdate < 0 ? result : result.slice(0, contextUpdate)).output_delta;
+    return JSON.parse(runCodeVerbReply(contextUpdate < 0 ? result : result.slice(0, contextUpdate))).output_delta;
   };
 
 
@@ -4468,7 +4482,7 @@ describe("fx mcp call", () => {
       const stderrPath = join(root.root, "stderr.log");
       let seen = "";
       const activeGateway = startFakeGateway([
-        fakeGatewayToolCall("run_call", "Bash", { command: pageLoop }),
+        fakeGatewayVerbCall("run_call", "Bash", { command: pageLoop }),
         (body: string) => {
           seen = toolResultText(body, "run_call");
           return fakeGatewayFinalText("BRIDGE_ROWS_DONE");
@@ -4509,7 +4523,7 @@ describe("fx mcp call", () => {
       const root = bridgeRoot("bridge-tui-cancel", {}, { mode: "stall_operation", operationTimeoutMs: 30_000, expectedElicitation: "both" });
       const stderrPath = join(root.root, "stderr.log");
       const activeGateway = startFakeGateway([
-        fakeGatewayToolCall("run_call", "Bash", { command }),
+        fakeGatewayVerbCall("run_call", "Bash", { command }),
         fakeGatewayFinalText("BRIDGE_AFTER_CANCEL"),
       ], {
         models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],

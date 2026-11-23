@@ -5216,8 +5216,8 @@ describe("cli: ask success", () => {
             ? {
                 type: "tool-call",
                 toolCallId: "read_usage_fixture",
-                toolName: "read_file",
-                input: JSON.stringify({ path: "fixture.txt" }),
+                toolName: "run_code",
+                input: JSON.stringify({ body: `return gm.read_file(${JSON.stringify({ path: "fixture.txt" })});` }),
               }
             : { type: "text-delta", id: "answer_1", delta: answer },
           {
@@ -5272,13 +5272,13 @@ describe("cli: ask success", () => {
           expect(output.session_id).toBe("");
           expect(output.usage).toEqual(expectedUsage);
           expect(output.tool_calls).toEqual(
-            toolLoop ? [{ name: "read_file", status: "success" }] : [],
+            toolLoop ? [{ name: "run_code", status: "success" }] : [],
           );
         } else {
           expect(result.stdout).toBe(answer);
         }
         if (toolLoop) {
-          expect(result.stderr).toContain("Reading fixture.txt");
+          expect(result.stderr).toContain("Working");
           expect(gateway.requests[1]!.body).toContain("usage fixture contents");
         } else {
           expect(result.stderr).toBe("");

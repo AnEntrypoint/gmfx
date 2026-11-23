@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
-import { fakeGatewayFinalText, fakeGatewayToolCall, serveFakeGateway } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, serveFakeGateway } from "./tmux-helpers";
 
 const TIMEOUT = 60_000;
 const MODEL = "openai/gpt-5";
@@ -82,7 +82,7 @@ function routeTool(body: string): Response {
   const results = resultsSinceLastUser(body);
   if (user.includes(TOOL_PROMPT)) {
     if (results.length === 0) {
-      return fakeGatewayToolCall("write-note", "write_file", { path: "note.txt", content: "note" });
+      return fakeGatewayVerbCall("write-note", "write_file", { path: "note.txt", content: "note" });
     }
     return fakeGatewayFinalText("tool-done");
   }

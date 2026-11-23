@@ -14,7 +14,7 @@ import { runFx } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
   type FakeGatewayResponse,
 } from "./tmux-helpers";
@@ -102,7 +102,7 @@ describe("external file permissions", () => {
               `Use only the write_file tool to create ${target} with exactly this content: FX_E2E_YOLO.`,
             ],
             [
-              fakeGatewayToolCall("yolo_write_1", "write_file", {
+              fakeGatewayVerbCall("yolo_write_1", "write_file", {
                 path: target,
                 content: "FX_E2E_YOLO",
               }),
@@ -128,7 +128,7 @@ describe("external file permissions", () => {
           "Full access enabled: fx permission checks disabled",
         );
         const denied = parseFxJson(deniedResult);
-        expect(denied.tool_calls).toEqual([{ name: "write_file", status: "error" }]);
+        expect(denied.tool_calls).toEqual([{ name: "run_code", status: "error" }]);
         expect(existsSync(target)).toBe(false);
         expect(deniedGateway.requests[1]!.body).toContain("policy_denied");
         expect(readFileSync(tracePath, "utf8")).toContain(
@@ -153,7 +153,7 @@ describe("external file permissions", () => {
         const { result: allowedResult } = await yoloWrite();
         expect(allowedResult.stderr).not.toContain("Full access enabled");
         const allowed = parseFxJson(allowedResult);
-        expect(allowed.tool_calls).toEqual([{ name: "write_file", status: "success" }]);
+        expect(allowed.tool_calls).toEqual([{ name: "run_code", status: "success" }]);
         expect(readFileSync(target, "utf8")).toBe("FX_E2E_YOLO");
         expect(readFileSync(tracePath, "utf8")).toContain(
           "tool_name=write_file permission_mode=yolo decision=once approval_source=file_mutation",
@@ -189,12 +189,12 @@ describe("external file permissions", () => {
             `Use only the read_file tool to read ${readTarget}, then reply with exactly the file content and nothing else.`,
           ],
           [
-            fakeGatewayToolCall("external_read_1", "read_file", { path: readTarget }),
+            fakeGatewayVerbCall("external_read_1", "read_file", { path: readTarget }),
             fakeGatewayFinalText("FX_E2E_EXTERNAL_READ"),
           ],
         );
         const read = parseFxJson(readResult);
-        expect(read.tool_calls).toContainEqual({ name: "read_file", status: "success" });
+        expect(read.tool_calls).toContainEqual({ name: "run_code", status: "success" });
         expect(read.output).toContain("FX_E2E_EXTERNAL_READ");
 
         const { gateway: overwriteGateway, result: overwriteResult } =
@@ -208,7 +208,7 @@ describe("external file permissions", () => {
               `Use only the write_file tool to overwrite ${overwriteTarget} with exactly this content: FX_E2E_EXTERNAL_OVERWRITE.`,
             ],
             [
-              fakeGatewayToolCall("external_overwrite_1", "write_file", {
+              fakeGatewayVerbCall("external_overwrite_1", "write_file", {
                 path: overwriteTarget,
                 content: "FX_E2E_EXTERNAL_OVERWRITE",
               }),
@@ -226,7 +226,7 @@ describe("external file permissions", () => {
         expect(trace).not.toContain("event=auto_review_start");
         expect(overwriteGateway.requests).toHaveLength(2);
         const overwritten = parseFxJson(overwriteResult);
-        expect(overwritten.tool_calls).toContainEqual({ name: "write_file", status: "success" });
+        expect(overwritten.tool_calls).toContainEqual({ name: "run_code", status: "success" });
         expect(readFileSync(overwriteTarget, "utf-8")).toBe("FX_E2E_EXTERNAL_OVERWRITE");
 
         writeFileSync(
@@ -250,11 +250,11 @@ describe("external file permissions", () => {
             `Use only the write_file tool to create ${deniedTarget} and ${siblingTarget}.`,
           ],
           [
-            fakeGatewayToolCall("denied_write_1", "write_file", {
+            fakeGatewayVerbCall("denied_write_1", "write_file", {
               path: deniedTarget,
               content: "FX_E2E_EXTERNAL_DENIED",
             }),
-            fakeGatewayToolCall("sibling_write_1", "write_file", {
+            fakeGatewayVerbCall("sibling_write_1", "write_file", {
               path: siblingTarget,
               content: "FX_E2E_EXTERNAL_SIBLING",
             }),
@@ -263,8 +263,8 @@ describe("external file permissions", () => {
         );
         const gated = parseFxJson(deniedResult);
         expect(gated.tool_calls).toEqual([
-          { name: "write_file", status: "error" },
-          { name: "write_file", status: "success" },
+          { name: "run_code", status: "error" },
+          { name: "run_code", status: "success" },
         ]);
         expect(deniedGateway.requests[1]!.body).toContain("policy_denied");
         expect(existsSync(deniedTarget)).toBe(false);

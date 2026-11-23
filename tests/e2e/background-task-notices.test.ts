@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Profile } from "./shell-sessions";
-import { fakeGatewayFinalText, fakeGatewayToolCall, tmuxAvailable } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, tmuxAvailable } from "./tmux-helpers";
 
 const TIMEOUT = 180_000;
 const STEP = 60_000;
@@ -10,17 +10,23 @@ function escaped(text: string): string {
   return JSON.stringify(text).slice(1, -1);
 }
 
+function escapeLevels(text: string): string[] {
+  const levels = [text];
+  for (let depth = 0; depth < 3; depth += 1) levels.push(escaped(levels[depth]!));
+  return levels;
+}
+
 function holds(body: string, text: string): boolean {
-  return body.includes(text) || body.includes(escaped(text));
+  return escapeLevels(text).some((level) => body.includes(level));
 }
 
 function occurrences(body: string, text: string): number {
-  return body.split(escaped(text)).length - 1;
+  return escapeLevels(text).slice(1).reduce((sum, level) => sum + body.split(level).length - 1, 0);
 }
 
 function background(id: string, command: string, extra: object = {}) {
   return () =>
-    fakeGatewayToolCall(id, "Bash", {
+    fakeGatewayVerbCall(id, "Bash", {
       command,
       run_in_background: true,
       description: "Run in the background",
@@ -64,7 +70,7 @@ test.skipIf(!tmuxAvailable())("WaitFor returns the completion notice as its resu
   try {
     profile.script("Start the awaited build and wait.", [
       background("awaited-build", "sleep 1; echo awaited-$((40 + 2))"),
-      () => fakeGatewayToolCall("wait-for-build", "WaitFor", { timeout: 20 }),
+      () => fakeGatewayVerbCall("wait-for-build", "WaitFor", { timeout: 20 }),
       () => fakeGatewayFinalText("The awaited build ended."),
     ]);
     const shell = await profile.launch();
@@ -93,7 +99,7 @@ test.skipIf(!tmuxAvailable())("a silent background task posts one stuck notice",
   try {
     profile.script("Start the silent task and wait.", [
       background("silent-task", "sleep 8"),
-      () => fakeGatewayToolCall("wait-for-silence", "WaitFor", { timeout: 20 }),
+      () => fakeGatewayVerbCall("wait-for-silence", "WaitFor", { timeout: 20 }),
       () => fakeGatewayFinalText("The silent task is stuck."),
     ]);
     const shell = await profile.launch({ env: { FX_TASK_STUCK_AFTER_MS: "1500" } });
@@ -119,7 +125,7 @@ test.skipIf(!tmuxAvailable())("a background task killed by its timeout says why 
   try {
     profile.script("Start the slow task and wait.", [
       background("slow-task", "sleep 30", { timeout: 1 }),
-      () => fakeGatewayToolCall("wait-for-kill", "WaitFor", { timeout: 20 }),
+      () => fakeGatewayVerbCall("wait-for-kill", "WaitFor", { timeout: 20 }),
       () => fakeGatewayFinalText("The slow task was killed."),
     ]);
     const shell = await profile.launch();
@@ -148,7 +154,7 @@ test.skipIf(!tmuxAvailable())("a task name is the task id and cannot be reused w
     profile.script("Start two tasks named build-1.", [
       background("named-first", "sleep 20", { name: "build-1" }),
       background("named-second", "sleep 21", { name: "build-1" }),
-      () => fakeGatewayToolCall("stop-named", "TaskStop", { task_id: "build-1" }),
+      () => fakeGatewayVerbCall("stop-named", "TaskStop", { task_id: "build-1" }),
       () => fakeGatewayFinalText("The name was taken."),
     ]);
     const shell = await profile.launch();
@@ -173,7 +179,7 @@ test.skipIf(!tmuxAvailable())("TaskList shows elapsed and idle time", async () =
   try {
     profile.script("Start a sleep and list the tasks.", [
       background("listed-sleep", "sleep 5", { name: "listed-sleep" }),
-      () => fakeGatewayToolCall("list-tasks", "TaskList", {}),
+      () => fakeGatewayVerbCall("list-tasks", "TaskList", {}),
       () => fakeGatewayFinalText("Listed the tasks."),
     ]);
     const shell = await profile.launch();

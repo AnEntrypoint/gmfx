@@ -20,7 +20,7 @@ import { FX_BIN, runFx } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -570,7 +570,7 @@ describe("session recovery", () => {
         }
 
         responses.push(
-          fakeGatewayToolCall("read-recovered", "read_tool_result", { request: { handle: stored.artifact_ref, query: "12760" } }),
+          fakeGatewayVerbCall("read-recovered", "read_tool_result", { request: { handle: stored.artifact_ref, query: "12760" } }),
           fakeGatewayFinalText("RECOVERED_CONTINUATION_SAVED"),
         );
         const tracePath = join(fixture.root, "continue.trace.log");
@@ -580,13 +580,13 @@ describe("session recovery", () => {
           timeoutMs: TIMEOUT,
         });
         expect(continued.code).toBe(0);
-        expect(JSON.parse(continued.stdout)).toMatchObject({ output: "RECOVERED_CONTINUATION_SAVED", tool_calls: [{ name: "read_tool_result", status: "success" }] });
+        expect(JSON.parse(continued.stdout)).toMatchObject({ output: "RECOVERED_CONTINUATION_SAVED", tool_calls: [{ name: "run_code", status: "success" }] });
         expect(gateway.requests).toHaveLength(2);
 
         const executionStarts = readFileSync(tracePath, "utf8").split("\n")
           .filter((line) => line.includes("[tool] event=execution_start "));
         expect(executionStarts).toHaveLength(1);
-        expect(executionStarts[0]).toContain("call_id=read-recovered name=read_tool_result");
+        expect(executionStarts[0]).toContain("call_id=read-recovered name=run_code");
         const read = savedToolResults((await savedSession(fixture.home, result.recovered_id)).history)
           .find((entry) => entry.tool_call_id === "read-recovered");
         expect(read?.status).toBe("success");

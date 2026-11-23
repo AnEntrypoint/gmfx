@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   heldFakeGatewayFinalText,
   serveFakeGateway,
   TmuxSession,
@@ -91,7 +91,7 @@ function route(body: string): Response {
   if (user.includes(CHILD_TASK)) return fakeGatewayFinalText("child-done");
   if (user.includes(BACKGROUND_AGENT_PROMPT)) {
     if (toolResultCountSinceLastUser(body) === 0) {
-      return fakeGatewayToolCall("agent-background-child", "Agent", {
+      return fakeGatewayVerbCall("agent-background-child", "Agent", {
         prompt: CHILD_TASK,
         description: "child task",
         subagent_type: "explore",
@@ -102,7 +102,7 @@ function route(body: string): Response {
   }
   if (user.includes(AGENT_PROMPT)) {
     if (toolResultCountSinceLastUser(body) === 0) {
-      return fakeGatewayToolCall("agent-child", "Agent", {
+      return fakeGatewayVerbCall("agent-child", "Agent", {
         prompt: CHILD_TASK,
         description: "child task",
         subagent_type: "explore",
@@ -112,7 +112,7 @@ function route(body: string): Response {
   }
   if (user.includes(BACKGROUND_PROMPT)) {
     if (toolResultCountSinceLastUser(body) === 0) {
-      return fakeGatewayToolCall("background-sleep", "Bash", {
+      return fakeGatewayVerbCall("background-sleep", "Bash", {
         command: "sleep 1",
         description: "detached sleep",
         run_in_background: true,
@@ -122,7 +122,7 @@ function route(body: string): Response {
   }
   if (user.includes(BLOCKED_PROMPT)) {
     if (toolResultCountSinceLastUser(body) === 0) {
-      return fakeGatewayToolCall("blocked-write", "write_file", { path: "note.txt", content: "note" });
+      return fakeGatewayVerbCall("blocked-write", "write_file", { path: "note.txt", content: "note" });
     }
     return fakeGatewayFinalText("blocked-done");
   }

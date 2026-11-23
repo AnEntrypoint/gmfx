@@ -23,7 +23,7 @@ import {
   composerContains,
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   hasEmptyComposer,
   startFakeGateway,
   TmuxSession,
@@ -2682,7 +2682,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
 
         const gateway = startFakeGateway([
-          fakeGatewayToolCall("restored-root-read", "read_file", {
+          fakeGatewayVerbCall("restored-root-read", "read_file", {
             path: join(source, "fixture.txt"),
             line_count: 10,
           }),

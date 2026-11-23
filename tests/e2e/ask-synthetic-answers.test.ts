@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
 } from "./tmux-helpers";
 
@@ -62,7 +62,12 @@ function toolResultText(body: string, toolCallId: string): string {
   const output = result!.output as Record<string, unknown>;
   expect(output.type).toBe("text");
   expect(typeof output.value).toBe("string");
-  return output.value as string;
+  return runCodeVerbReply(output.value as string);
+}
+
+function runCodeVerbReply(text: string): string {
+  const envelope = JSON.parse(text);
+  return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
 }
 
 const CONTINUE_QUESTION = {
@@ -80,7 +85,7 @@ describe("AskUserQuestion with no human channel in full access", () => {
     async () => {
       const root = createIsolatedRoot();
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("ask_continue", "AskUserQuestion", CONTINUE_QUESTION),
+        fakeGatewayVerbCall("ask_continue", "AskUserQuestion", CONTINUE_QUESTION),
         (body) => {
           const answer = toolResultText(body, "ask_continue");
           expect(answer).toBe(
@@ -111,7 +116,7 @@ describe("AskUserQuestion with no human channel in full access", () => {
     async () => {
       const root = createIsolatedRoot();
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("ask_continue", "AskUserQuestion", CONTINUE_QUESTION),
+        fakeGatewayVerbCall("ask_continue", "AskUserQuestion", CONTINUE_QUESTION),
         (body) => {
           const reply = toolResultText(body, "ask_continue");
           expect(reply).toContain("only available in the interactive shell");
