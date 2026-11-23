@@ -3838,13 +3838,17 @@ describe("MCP stdio servers", () => {
     test(`fx ask selects and calls a ${era} stdio tool`, async () => {
 
       const root = createRoot(`v2-call-${era}`, fixture, { legacyVersion: "2025-11-25" });
-      gateway = startToolGateway(`V2_${era}_DONE`);
+      gateway = startFakeGateway([
+        fakeGatewayToolCall("call_mcp", "run_code", { body: `return await gm.${TOOL_NAME}({ text: "hello" });` }),
+        fakeGatewayFinalText(`V2_${era}_DONE`),
+      ], {
+        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
+      });
       const result = await ask(root, "Use the stdio MCP echo tool.");
       expect(result.code).toBe(0);
       expect(result.stdout).toContain(`V2_${era}_DONE`);
       expect(modelSaw()).toContain(resultText);
-
-      if (era === "2026") expect(modelSaw()).toContain("Use the modern echo tool.");
+      expect(JSON.parse(gateway.requests[0]!.body).tools.map((tool: { name: string }) => tool.name)).toEqual(["run_code"]);
       expect(calls(root)).toHaveLength(1);
       await expectFixtureProcessesExited(readWire(root.wireLogPath));
     }, 25_000);

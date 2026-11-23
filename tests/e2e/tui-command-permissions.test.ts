@@ -2949,7 +2949,7 @@ class AcpClient {
   }
 }
 
-async function startAcpSession(client: AcpClient, modeId: "ask" | "auto" = "ask") {
+async function startAcpSession(client: AcpClient, modeId: "default" | "auto" = "default") {
   await client.request("initialize", { protocolVersion: 1 }, 1);
   await client.request("session/new", { mcpServers: [] }, 2);
   await client.readLine();

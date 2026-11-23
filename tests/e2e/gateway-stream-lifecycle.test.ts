@@ -8010,8 +8010,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
             server: "fixture",
           });
         case 1:
-          return fakeGatewayToolCall("mcp_call_lazy_1", FIXTURE_MCP_ECHO_TOOL, {
-            text: "lazy MCP proof",
+          return fakeGatewayToolCall("mcp_call_lazy_1", "run_code", {
+            body: `return [gm.verbs({ name: "${FIXTURE_MCP_ECHO_TOOL}" }), await gm.${FIXTURE_MCP_ECHO_TOOL}({ text: "lazy MCP proof" })];`,
           });
         case 2:
           return fakeGatewayFinalText("MCP lazy context complete.");
@@ -8076,12 +8076,9 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
       const selectedRequest = gatewayRequest(gateway.requests[1]!.body);
       expect(selectedRequest.tools.map((tool) => tool.name)).toEqual(["run_code"]);
-      expect(gateway.requests[1]!.body).toContain(
-        "SECRET_SERVER_INSTRUCTION_SENTINEL",
-      );
-      expect(toolResultOutput(gateway.requests[2]!.body, "mcp_call_lazy_1")).toContain(
-        "unexpected MCP call",
-      );
+      const lazyResult = toolResultOutput(gateway.requests[2]!.body, "mcp_call_lazy_1");
+      expect(lazyResult).toContain("SECRET_SERVER_INSTRUCTION_SENTINEL");
+      expect(lazyResult).toContain("unexpected MCP call");
       expect(readFileSync(mcp.callLogPath, "utf8").trim().split("\n")).toHaveLength(1);
       await waitForProcessExit(pid);
     } finally {
@@ -8188,16 +8185,6 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         childCompleted = true;
         return fakeGatewayFinalText("Child MCP execution complete.");
       }
-      if (body.includes('"toolCallId":"child_mcp_select_1"')) {
-        expect(toolResultOutput(body, "child_mcp_select_1")).toContain(
-          FIXTURE_MCP_ECHO_TOOL,
-        );
-        return fakeGatewayToolCall(
-          "child_mcp_call_1",
-          FIXTURE_MCP_ECHO_TOOL,
-          { text: "subagent MCP proof" },
-        );
-      }
       if (body.includes('"toolCallId":"parent_subagent_create_1"')) {
         parentResult = toolResultOutput(body, "parent_subagent_create_1");
         return fakeGatewayFinalText("Parent observed child MCP completion.");
@@ -8207,8 +8194,9 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           '<server name="fixture" state="available_on_demand" />',
         );
         expect(body).not.toContain(FIXTURE_MCP_ECHO_TOOL);
-        return fakeGatewayToolCall("child_mcp_select_1", "select_tools", {
-          names: [FIXTURE_MCP_ECHO_TOOL] });
+        return fakeGatewayToolCall("child_mcp_call_1", "run_code", {
+          body: `return await gm.${FIXTURE_MCP_ECHO_TOOL}({ text: "subagent MCP proof" });`,
+        });
       }
       return fakeGatewayToolCall("parent_subagent_create_1", "Agent", {
         description: "Call MCP echo",
@@ -8249,7 +8237,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(json.output).toContain("Parent observed child MCP completion.");
       expect(childCompleted).toBe(true);
       expect(gateway.requests.some((request) => latestUserIsReport(request.body))).toBe(false);
-      expect(gateway.requestCount()).toBe(5);
+      expect(gateway.requestCount()).toBe(4);
       expect(readFileSync(mcp.callLogPath, "utf8").trim().split("\n"))
         .toHaveLength(1);
       for (const request of gateway.requests) {
@@ -9524,7 +9512,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           status: "error",
         });
         expect(gateway.requestCount()).toBe(3);
-        expect(gateway.requests[1].body).toContain(`"name":"${FIXTURE_MCP_ECHO_TOOL}"`);
+        expect(gatewayRequest(gateway.requests[1].body).tools.map((tool) => tool.name)).toEqual(["run_code"]);
         if (serialized === '{"text":7}') {
           expect(gateway.requests[2].body).toContain("server requires string text");
           expect(readFileSync(mcp.callLogPath, "utf8").trim().split("\n")).toHaveLength(1);
