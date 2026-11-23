@@ -7,6 +7,7 @@ const tool_dispatch = @import("../../tooling/tool_dispatch.zig");
 const io_mod = @import("../../shared/io.zig");
 const command_admission = @import("../../permissions/command_admission.zig");
 const file_mutation = @import("../../tooling/file_mutation.zig");
+const file_mutation_execution = @import("../../tooling/file_mutation_execution.zig");
 const diff = @import("../../output/diff.zig");
 
 const runtime_deps = @import("deps.zig");
@@ -550,11 +551,7 @@ pub fn parallelHookExecute(ctx: *anyopaque, alloc: Allocator, call: ToolCall, in
         exec_ctx.authorities[index]
     else
         .ordinary;
-    const result_allocator = if (authority == .file_mutation) distinct: {
-        const result_arena = try alloc.create(std.heap.ArenaAllocator);
-        result_arena.* = std.heap.ArenaAllocator.init(alloc);
-        break :distinct result_arena.allocator();
-    } else alloc;
+    const result_allocator = if (authority == .file_mutation) try file_mutation_execution.distinctResultOwner(alloc) else alloc;
     return exec_ctx.hooks.executeToolCall(.{
         .skill_locations = exec_ctx.skill_locations,
         .call_allocator = alloc,

@@ -20,6 +20,7 @@ const InnerCall = struct {
     verb: []const u8,
     args: []const u8 = "",
     ok: bool = false,
+    notice: ?[]const u8 = null,
 };
 
 const Report = struct {
@@ -105,6 +106,7 @@ pub fn detail(alloc: Allocator, registry: tool_dispatch.Registry, call: ToolCall
     errdefer out.deinit(alloc);
     for (report.calls) |inner| {
         try out.print(alloc, "  {s}({s}) -> {s}\n", .{ inner.verb, try argsSummary(scratch, registry, inner), if (inner.ok) "ok" else "error" });
+        if (inner.notice) |notice| try out.print(alloc, "    notice: {s}\n", .{notice});
     }
     if (report.calls_dropped > 0) try out.print(alloc, "  ... {d} more calls\n", .{report.calls_dropped});
     if (report.@"error") |message| try out.print(alloc, "error: {s}\n", .{text_utils.utf8PrefixByBytes(message, max_error_bytes)});
@@ -138,6 +140,13 @@ test "run_code presents its body line before results and the verbs it called aft
     try std.testing.expectEqualStrings("read_file, fs_stat", (try calledVerbs(arena, test_call, test_output)).?);
     try std.testing.expect(try calledVerbs(arena, test_call, "not json") == null);
     try std.testing.expect(try calledVerbs(arena, .{ .id = "r", .name = "read_file", .arguments_json = "{}" }, test_output) == null);
+}
+
+test "run_code detail shows the notice an inner call carried under that call" {
+    const output = "{\"ok\":true,\"calls\":[{\"verb\":\"read_file\",\"args\":\"{}\",\"ok\":true,\"notice\":\"shell snapshot unavailable\"}],\"calls_dropped\":0}";
+    const text = (try detail(std.testing.allocator, test_builtin_tools.registry, test_call, output)).?;
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "-> ok\n    notice: shell snapshot unavailable\n") != null);
 }
 
 test "run_code detail lists each inner call with its own presenter's summary and the body as JavaScript" {

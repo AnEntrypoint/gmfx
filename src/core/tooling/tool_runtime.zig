@@ -661,14 +661,17 @@ pub fn executeHostToolCallAuthorized(
         request.call,
     );
     dispatch_ctx.execution_authority = request.authority;
-    var inner_call_gate = InnerCallGateState{ .runtime = execution_ctx };
+    var context_notice_sink = ContextNoticeSinkState{ .allocator = request.result_allocator };
+    var inner_call_gate = InnerCallGateState{ .runtime = execution_ctx, .notices = &context_notice_sink };
     if (spec.runtime_provider == .verb_host) dispatch_ctx.inner_call_gate = inner_call_gate.gate();
     const dispatched = try tool_dispatch.dispatchAuthorizedToolCall(
         dispatch_ctx,
         execution_ctx.tool_registry,
         request.call,
     );
-    return toolExecutionResultFromDispatch(dispatched, .{});
+    var execution = toolExecutionResultFromDispatch(dispatched, .{});
+    execution.context_notices = context_notice_sink.notices.items;
+    return execution;
 }
 
 fn rebindMcpAuthorityGeneration(
@@ -904,7 +907,7 @@ fn executeRegisteredTool(
         .completion_sink = &dispatch_metadata.subagent_completion,
     };
     var mcp_call_bridge = McpCallBridgeState{ .runtime = ctx };
-    var inner_call_gate = InnerCallGateState{ .runtime = ctx };
+    var inner_call_gate = InnerCallGateState{ .runtime = ctx, .notices = &context_notice_sink };
     var dispatch_ctx = typedDispatchContextForCall(ctx, arena, call);
     dispatch_metadata.attach(&dispatch_ctx);
     var result_commit_token: ?result_commit.Token = null;
@@ -1060,6 +1063,7 @@ fn permissionDenial(arena: Allocator, tool: []const u8, outcome: command_admissi
 
 const InnerCallGateState = struct {
     runtime: Context,
+    notices: *ContextNoticeSinkState,
 
     fn gate(self: *InnerCallGateState) tool_dispatch.InnerCallGate {
         return .{
@@ -1108,9 +1112,13 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
     if (try permissionDenial(arena, call.name, outcome)) |text| return .{ .ok = false, .body = text };
     const authority = outcome.execution_authority orelse
         return .{ .ok = false, .body = try arena.print("Permission to run {s} carried no execution authority.", .{call.name}) };
+    const result_allocator = switch (authority) {
+        .file_mutation => try file_mutation_execution.distinctResultOwner(arena),
+        else => arena,
+    };
     const result = try executeToolCallAuthorized(ctx, .{
         .call_allocator = arena,
-        .result_allocator = arena,
+        .result_allocator = result_allocator,
         .call = call,
         .authority = authority,
         .current_turn_messages = ctx.current_turn_messages,
@@ -1120,6 +1128,7 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         .lifecycle_id = ctx.output_chunk_lifecycle_id,
         .presentation_group_id = ctx.output_chunk_presentation_group_id,
     });
+    for (result.context_notices) |notice| try recordContextNoticeForDispatch(state.notices, notice);
     return .{ .ok = result.status == .success, .body = result.model_output };
 }
 
@@ -3430,6 +3439,66 @@ test "a PreToolUse hook matching write_file refuses the write inside run_code as
     try std.testing.expectEqual(@as(usize, 1), blocker.seen);
     try expectContains(result.model_output, "refused: ");
     try expectContains(result.model_output, "inner writes are blocked here");
+}
+
+test "file mutation verbs inside run_code write and edit the file on disk" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    var rt = TestRuntime{ .workspace_root = root, .tool_registry = test_builtin_tools.registry_with_tower, .permission_mode = .yolo };
+    defer rt.deinit(alloc);
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const call = ToolCall{
+        .id = "carrier",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"try { gm.write_file({ path: 'out.txt', content: 'first' }); gm.read_file({ path: 'out.txt' }); gm.edit_file({ path: 'out.txt', old_string: 'first', new_string: 'second' }); return 'done'; } catch (error) { return 'failed: ' + error.message; }\"}",
+    };
+    const result = try executeToolCall(rt.context(), arena.allocator(), call);
+    try expectNotContains(result.model_output, "failed:");
+    var file = try tmp.dir.openFile(io_mod.getIo(), "out.txt", .{});
+    defer file.close(io_mod.getIo());
+    const bytes = try io_mod.readFileToEnd(alloc, &file, 64);
+    defer alloc.free(bytes);
+    try std.testing.expectEqualStrings("second", bytes);
+}
+
+test "a context notice produced by a verb inside run_code reaches the run_code result" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/workflow");
+    {
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md", .{});
+        defer file.close(io_mod.getIo());
+        try file.writeStreamingAll(
+            io_mod.getIo(),
+            "---\nname: workflow\ndescription: workflow helper\n---\n\nuse the workflow skill\n" ++ text_utils.repeat("bounded instruction line\n", 8),
+        );
+    }
+    const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
+    defer alloc.free(workspace_root);
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    defer alloc.free(skills_dir);
+    try setTestHome(null);
+    defer io_mod.resetEnvironForTest();
+    var rt = TestRuntime{ .workspace_root = workspace_root, .skills_dir = skills_dir, .session_allocator = alloc, .tool_registry = test_builtin_tools.registry_with_tower, .permission_mode = .yolo };
+    defer rt.deinit(alloc);
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    var ctx = rt.context();
+    ctx.context_limits.skill_chunk_bytes = .{ .value = .{ .bytes = 96 }, .source = .command_line };
+    const call = ToolCall{
+        .id = "carrier",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"return gm.Skill({ skill: 'workflow' });\"}",
+    };
+    const result = try executeToolCall(ctx, arena.allocator(), call);
+    try std.testing.expect(result.context_notices.len >= 1);
+    try expectContains(result.context_notices[0], "[context] skill resource \"workflow/SKILL.md\" truncated");
 }
 
 fn expectContains(haystack: []const u8, needle: []const u8) !void {

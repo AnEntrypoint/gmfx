@@ -252,6 +252,12 @@ fn fileMutationFailure(
     };
 }
 
+pub fn distinctResultOwner(alloc: Allocator) Allocator.Error!Allocator {
+    const arena = try alloc.create(std.heap.ArenaAllocator);
+    arena.* = std.heap.ArenaAllocator.init(alloc);
+    return arena.allocator();
+}
+
 fn allocatorsEqual(a: Allocator, b: Allocator) bool {
     return a.ptr == b.ptr and a.vtable == b.vtable;
 }
