@@ -632,9 +632,7 @@ fn composeWireFrame(
                 try vt_emulator.Grid.diffBand(clear_baseline, target.*, range.top, range.bottom, &wire_frame.writer);
             }
         } else {
-            for (repaint_window.ranges()) |range| {
-                try vt_emulator.Grid.diffBand(previous_for_diff.*, target.*, range.top, range.bottom, &wire_frame.writer);
-            }
+            try writeIncrementalRanges(input.surface.alloc, wire_frame, previous_for_diff.*, target.*, repaint_window, input.surface.plan.footer_band);
         }
     }
 
@@ -642,6 +640,45 @@ fn composeWireFrame(
     if (input.synchronized_update) try wire_frame.writer.writeAll("\x1b[?2026l");
     if (target.cursor_visible) try wire_frame.writer.writeAll("\x1b[?25h");
     return prefix_len;
+}
+
+fn rowChanged(prev: vt_emulator.Grid, target: vt_emulator.Grid, row: u16) bool {
+    var col: u16 = 1;
+    while (col <= target.cols) : (col += 1) {
+        const p = prev.cellAt(row, col) orelse return true;
+        const n = target.cellAt(row, col) orelse return true;
+        if (!frame_cell_match.gridCellsEqual(prev, p, target, n)) return true;
+    }
+    return false;
+}
+
+fn writeIncrementalRanges(
+    alloc: Allocator,
+    wire_frame: *std.Io.Writer.Allocating,
+    previous: vt_emulator.Grid,
+    target: vt_emulator.Grid,
+    repaint_window: paint_plan.FrameRepaintWindow,
+    footer_band: paint_plan.FrameBand,
+) !void {
+    var erased: ?vt_emulator.Grid = null;
+    defer if (erased) |*grid| grid.deinit();
+
+    for (repaint_window.ranges()) |range| {
+        var row = @max(range.top, footer_band.top);
+        const footer_bottom = @min(range.bottom, footer_band.bottom);
+        while (row <= footer_bottom) : (row += 1) {
+            if (!rowChanged(previous, target, row)) continue;
+            if (erased == null) erased = try cloneAuthoritativeShadow(alloc, &previous, target.cols, target.rows);
+            const clear_start = wire_frame.written().len;
+            try writeBandClears(&wire_frame.writer, row, row);
+            if (erased) |*grid| try grid.feed(wire_frame.written()[clear_start..]);
+        }
+    }
+
+    const base = erased orelse previous;
+    for (repaint_window.ranges()) |range| {
+        try vt_emulator.Grid.diffBand(base, target, range.top, range.bottom, &wire_frame.writer);
+    }
 }
 
 fn recoverPartialFrame(
@@ -2908,6 +2945,34 @@ test "flushFrame diffs owned band growth without full repaint wipe" {
     try std.testing.expectEqual(ShadowCommitState.committed, result.shadow_state);
     try std.testing.expect(!result.full_repaint);
     try std.testing.expect(std.mem.find(u8, sink.bytes.items, "\x1b[2J") == null);
+}
+
+test "flushFrame erases a changed footer row before diffing it" {
+    var previous = try vt_emulator.Grid.init(std.testing.allocator, 8, 4);
+    defer previous.deinit();
+    try previous.feed("\x1b[4;1Hstale");
+
+    var surface = try frame_surface.FrameSurface.initFromShadow(std.testing.allocator, testPlan(), previous);
+    defer surface.deinit();
+    _ = try surface.writeAnsiBand(4, 1, ">", .footer, .same_owner);
+
+    var sink = TestSink{};
+    defer sink.deinit(std.testing.allocator);
+    var metrics: Metrics = .{};
+    _ = try flushFrame(.{
+        .previous = &previous,
+        .surface = &surface,
+        .repaint_window = paint_plan.FrameRepaintWindow.fromPlan(surface.plan, .{ .include_transcript = true }),
+        .synchronized_update = false,
+        .scroll_plan = testScrollPlan(0),
+        .sink = sink.frameSink(),
+        .metrics = &metrics,
+    });
+
+    const erase = std.mem.find(u8, sink.bytes.items, "\x1b[4;1H\x1b[2K") orelse return error.TestExpectedFooterErase;
+    const glyph = std.mem.find(u8, sink.bytes.items, ">") orelse return error.TestExpectedFooterGlyph;
+    try std.testing.expect(erase < glyph);
+    try std.testing.expect(std.mem.find(u8, sink.bytes.items, "\x1b[3;1H\x1b[2K") == null);
 }
 
 test "flushFrame does not feed shadow after sink failure" {
