@@ -532,7 +532,7 @@ test.skipIf(!tmuxAvailable())(
     await session.waitForText("esc close · pgup/pgdn scroll", TIMEOUT);
     let grid = await settledFullGrid();
     expect(fullReadHeading(grid), grid.join("\n")).toBe(expectedHeading);
-    expect(grid.join("\n")).toContain("task_id: ");
+    expect(grid.join("\n")).toContain("\"task_id\":\"shell-1\"");
     expect(grid.join("\n")).not.toContain("…");
 
     await session.resizeWindow(60, 72);
