@@ -2868,8 +2868,6 @@ fn innerCallPermissionOutcome(raw: *anyopaque, arena: Allocator, call: ToolCall)
     return outcome;
 }
 
-<<<<<<< ours
-=======
 fn retainInnerSessionGrants(state: *InnerPermissionState, arena: Allocator, call: ToolCall, outcome: command_admission.PermissionOutcome) !void {
     const local_grants = state.local_grants orelse return;
     if (outcome.decision != .always and outcome.decision != .always_tree) return;
@@ -2891,7 +2889,6 @@ fn retainInnerSessionGrants(state: *InnerPermissionState, arena: Allocator, call
     try runtime_tool_admission.applyInitialSessionGrants(state.deps, state.grant_arena, local_grants, state.config.workspace_root, call, target_path);
 }
 
->>>>>>> theirs
 fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!bool {
     const state: *InnerContextGatherState = @ptrCast(@alignCast(raw));
     const targets = try tool_preparation.innerCallTargets(
@@ -2922,12 +2919,8 @@ fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!bool {
         state.replaced_sources.items,
         state.remind_sources,
     );
-<<<<<<< ours
     return selected.content != null and
         !runtime_parallel_execution.isReadOnlyCall(state.deps.tool_registry, call);
-=======
-    return selected.content != null;
->>>>>>> theirs
 }
 
 fn candidateHasApplicableContextDelta(

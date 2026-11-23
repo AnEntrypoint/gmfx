@@ -94,7 +94,6 @@ fn mutationTarget(arena: Allocator, inner: InnerCall) Allocator.Error!?[]const u
     return if (path == .string) path.string else null;
 }
 
-<<<<<<< ours
 pub fn changedFiles(call: ToolCall, output: []const u8, registry: tool_dispatch.Registry, arena: Allocator) Allocator.Error!bool {
     if (!isRunCode(call.name)) return false;
     const report = try parseReport(arena, output) orelse return false;
@@ -106,10 +105,6 @@ pub fn changedFiles(call: ToolCall, output: []const u8, registry: tool_dispatch.
     return false;
 }
 
-fn calledBefore(earlier: []const InnerCall, verb: []const u8) bool {
-    for (earlier) |inner| if (std.mem.eql(u8, inner.verb, verb)) return true;
-    return false;
-=======
 pub fn leadingCall(arena: Allocator, registry: tool_dispatch.Registry, call: ToolCall) Allocator.Error!?ToolCall {
     if (!isRunCode(call.name)) return null;
     var rest = try body(arena, call);
@@ -120,7 +115,6 @@ pub fn leadingCall(arena: Allocator, registry: tool_dispatch.Registry, call: Too
         if (registry.lookup(rest[0..end]) != null) return .{ .id = call.id, .name = rest[0..end], .arguments_json = "{}" };
     }
     return null;
->>>>>>> theirs
 }
 
 fn argsSummary(arena: Allocator, registry: tool_dispatch.Registry, inner: InnerCall) Allocator.Error![]const u8 {
