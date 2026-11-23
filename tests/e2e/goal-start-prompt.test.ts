@@ -1,24 +1,13 @@
 import { expect, test } from "bun:test";
 import { Profile } from "./shell-sessions";
-import { fakeGatewayFinalText, fakeGatewaySse, tmuxAvailable } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, tmuxAvailable } from "./tmux-helpers";
 
 const TIMEOUT = 180_000;
 const STEP = 60_000;
 const CANCELLED = "was not run because the approval request was cancelled.";
 
 function createGoalCall() {
-  return fakeGatewaySse([
-    {
-      type: "tool-call",
-      toolCallId: "create-goal",
-      toolName: "CreateGoal",
-      input: { objective: "ship the parser", completionCriterion: "tests pass" },
-    },
-    {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "tool-calls" },
-    },
-  ]);
+  return fakeGatewayVerbCall("create-goal", "CreateGoal", { objective: "ship the parser", completionCriterion: "tests pass" });
 }
 
 test.skipIf(!tmuxAvailable())("CreateGoal in Always Ask shows the goal start prompt and Switch to Never Ask changes the mode", async () => {

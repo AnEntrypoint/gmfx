@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   serveFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -115,9 +115,9 @@ async function startSession(layout: Layout, gateway: { baseUrl: string; chatUrl:
 
 function ownerSteps(body: string): Response | null {
   const last = lastToolResultId(body);
-  if (!last) return fakeGatewayToolCall("cut-start", "superagent", { action: "start", agent: PROJECT });
+  if (!last) return fakeGatewayVerbCall("cut-start", "superagent", { action: "start", agent: PROJECT });
   if (last === "cut-start") {
-    return fakeGatewayToolCall("cut-instruct", "superagent", { action: "instruct", agent: PROJECT, prompt: PEER_TASK });
+    return fakeGatewayVerbCall("cut-instruct", "superagent", { action: "instruct", agent: PROJECT, prompt: PEER_TASK });
   }
   if (last === "cut-instruct") return fakeGatewayFinalText(WAITING);
   return null;

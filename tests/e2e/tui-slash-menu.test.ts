@@ -18,7 +18,7 @@ import {
   composerContains,
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   hasEmptyComposer,
   heldFakeGatewayFinalText,
   isComposerLine,
@@ -3405,7 +3405,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       gateway = startFakeGateway([
         async () => {
           await approvalReady;
-          return fakeGatewayToolCall("catalog_approval", "write_file", {
+          return fakeGatewayVerbCall("catalog_approval", "write_file", {
             path: "catalog-approval.txt",
             content: "must not be written\n",
           });

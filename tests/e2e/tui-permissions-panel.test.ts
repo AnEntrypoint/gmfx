@@ -20,7 +20,7 @@ import {
   type PanelReport,
 } from "./info-panel";
 import { Profile } from "./shell-sessions";
-import { fakeGatewayFinalText, fakeGatewayToolCall, tmuxAvailable } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, tmuxAvailable } from "./tmux-helpers";
 import { assertSingleFooter } from "./tui-render-assertions";
 
 const TIMEOUT = 120_000;
@@ -115,7 +115,7 @@ scenario("a session grant an approval adds while the panel is open shows when th
   profile.script("Write the note.", [
     async () => {
       await released;
-      return fakeGatewayToolCall("write_note", "write_file", { path: "note.txt", content: "hi\n" });
+      return fakeGatewayVerbCall("write_note", "write_file", { path: "note.txt", content: "hi\n" });
     },
     () => fakeGatewayFinalText("WROTE_NOTE"),
   ]);
@@ -229,7 +229,7 @@ scenario("a .git control approval offers the whole .git tree as the third choice
   profile.script("Write the git note.", [
     async () => {
       await released;
-      return fakeGatewayToolCall("write_git_note", "write_file", { path: ".git/note.txt", content: "hi\n" });
+      return fakeGatewayVerbCall("write_git_note", "write_file", { path: ".git/note.txt", content: "hi\n" });
     },
     () => fakeGatewayFinalText("WROTE_GIT_NOTE"),
   ]);

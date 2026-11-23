@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   serveFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -78,7 +78,9 @@ function allToolResults(body: string): Record<string, unknown>[] {
 }
 
 function resultText(part: Record<string, unknown>): string {
-  return JSON.stringify(part.output ?? part);
+  const output = part.output as { value?: unknown } | undefined;
+  const envelope = typeof output?.value === "string" ? JSON.parse(output.value) : undefined;
+  return JSON.stringify(envelope?.ok === true ? { ...output, value: envelope.value } : output ?? part);
 }
 
 function createLayout() {
@@ -145,13 +147,13 @@ describe.skipIf(SKIP)("superagent drives a persistent project root", () => {
         const user = lastUserText(body);
         if (user.includes(PEER_TASK)) {
           const results = resultsSinceLastUser(body);
-          if (results.length === 0) return fakeGatewayToolCall("peer-read", "read_file", { path: "README.md" });
+          if (results.length === 0) return fakeGatewayVerbCall("peer-read", "read_file", { path: "README.md" });
           peerRead.push(resultText(results[0]!));
           return fakeGatewayFinalText("peer-pong");
         }
         const last = resultsSinceLastUser(body).at(-1);
         if (user.includes(LIST_PROMPT)) {
-          if (!last) return fakeGatewayToolCall("sa-list", "superagent", { action: "list_projects" });
+          if (!last) return fakeGatewayVerbCall("sa-list", "superagent", { action: "list_projects" });
           (seen["sa-list"] ??= []).push(resultText(last));
           return fakeGatewayFinalText(LISTED);
         }
@@ -163,14 +165,14 @@ describe.skipIf(SKIP)("superagent drives a persistent project root", () => {
         if (user.includes("superagent event: root ")) {
           if (user.includes("is gone")) return fakeGatewayFinalText(GONE_ACK);
           (seen.event ??= []).push(user);
-          return fakeGatewayToolCall("sa-stop", "superagent", { action: "stop", agent: PROJECT });
+          return fakeGatewayVerbCall("sa-stop", "superagent", { action: "stop", agent: PROJECT });
         }
         if (user.includes(START_PROMPT)) {
-          if (!last) return fakeGatewayToolCall("sa-start", "superagent", { action: "start", agent: PROJECT });
+          if (!last) return fakeGatewayVerbCall("sa-start", "superagent", { action: "start", agent: PROJECT });
           const id = String(last.toolCallId);
           (seen[id] ??= []).push(resultText(last));
           if (id === "sa-start") {
-            return fakeGatewayToolCall("sa-instruct", "superagent", { action: "instruct", agent: PROJECT, prompt: PEER_TASK });
+            return fakeGatewayVerbCall("sa-instruct", "superagent", { action: "instruct", agent: PROJECT, prompt: PEER_TASK });
           }
           if (id === "sa-instruct") return fakeGatewayFinalText(WAITING);
         }
@@ -223,17 +225,17 @@ describe.skipIf(SKIP)("superagent drives a persistent project root", () => {
         const user = lastUserText(body);
         const last = resultsSinceLastUser(body).at(-1);
         if (user.includes(LATE_PROMPT)) {
-          if (!last) return fakeGatewayToolCall("sa-start-late", "superagent", { action: "start", agent: LATE_PROJECT });
+          if (!last) return fakeGatewayVerbCall("sa-start-late", "superagent", { action: "start", agent: LATE_PROJECT });
           (seen["sa-start-late"] ??= []).push(resultText(last));
           return fakeGatewayFinalText(LATE_DONE);
         }
         if (user.includes(RELIST_PROMPT)) {
-          if (!last) return fakeGatewayToolCall("sa-list-2", "superagent", { action: "list_projects" });
+          if (!last) return fakeGatewayVerbCall("sa-list-2", "superagent", { action: "list_projects" });
           (seen["sa-list-2"] ??= []).push(resultText(last));
           return fakeGatewayFinalText(RELISTED);
         }
         if (user.includes(LIST_PROMPT)) {
-          if (!last) return fakeGatewayToolCall("sa-list-1", "superagent", { action: "list_projects" });
+          if (!last) return fakeGatewayVerbCall("sa-list-1", "superagent", { action: "list_projects" });
           (seen["sa-list-1"] ??= []).push(resultText(last));
           return fakeGatewayFinalText(LISTED);
         }

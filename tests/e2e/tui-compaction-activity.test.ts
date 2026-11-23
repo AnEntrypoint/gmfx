@@ -8,7 +8,7 @@ import { onlySessionId, savedText, sessionDir } from "./saved-sessions";
 
 process.env.FX_E2E_DISABLE_DOTENV = "1";
 const {
-  FAKE_GATEWAY_MODEL, TmuxSession, fakeGatewayFinalText, fakeGatewayToolCall,
+  FAKE_GATEWAY_MODEL, TmuxSession, fakeGatewayFinalText, fakeGatewayVerbCall,
   fakeShellRun, heldFakeGatewayFinalText, startDynamicFakeGateway,
   hasEmptyComposer, tmuxAvailable,
 } = await import("./tmux-helpers");
@@ -98,7 +98,7 @@ async function fixture(trigger: Trigger, outcome: Outcome = "success", longResum
 
 
     const seedRead = `seed-read-${ordinary + 1}`;
-    if (phase === "seed" && !raw.includes(`"${seedRead}"`)) return fakeGatewayToolCall(seedRead, "read_file", { path: "seed-notes.txt" });
+    if (phase === "seed" && !raw.includes(`"${seedRead}"`)) return fakeGatewayVerbCall(seedRead, "read_file", { path: "seed-notes.txt" });
     ordinary++;
     if (phase === "seed") return fakeGatewayFinalText(seedReply(ordinary));
     if (phase === "attempt") {
@@ -653,7 +653,7 @@ describe.skipIf(!tmuxAvailable())("tui: compaction activity", () => {
       const n = ordinaryBodies.length;
       if (summaryBodies.length > 0) return fakeGatewayFinalText("STEER_DONE_8d4");
       if (n === 1) return fakeShellRun("steer-window-8d4", "printf STEER_WINDOW_8d4; sleep 3");
-      if (n <= 31) return fakeGatewayToolCall(`steer-probe-${n - 1}-8d4`, "read_file", { path: `probe-${n - 1}.txt` });
+      if (n <= 31) return fakeGatewayVerbCall(`steer-probe-${n - 1}-8d4`, "read_file", { path: `probe-${n - 1}.txt` });
       return fakeGatewayFinalText("STEER_NOT_COMPACTED_8d4");
     }, { models: [{ id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"], context_window: 60000, max_tokens: 4096 }] });
     const env: Record<string, string> = {

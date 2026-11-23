@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -54,7 +54,7 @@ function createIsolatedRoot(): IsolatedRoot {
 }
 
 function exitPlanCall(plan: string) {
-  return fakeGatewayToolCall("exit_plan", "ExitPlanMode", { plan });
+  return fakeGatewayVerbCall("exit_plan", "ExitPlanMode", { plan });
 }
 
 async function launchPlanScenario(plan: string, resultMarker: string, expectedResult = "Exited plan mode.") {

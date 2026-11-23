@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Profile } from "./shell-sessions";
-import { fakeGatewayFinalText, fakeGatewayToolCall, tmuxAvailable } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, tmuxAvailable } from "./tmux-helpers";
 
 const TIMEOUT = 120_000;
 const STEP = 60_000;
@@ -20,7 +20,7 @@ test.skipIf(!tmuxAvailable())("a turn that ends with open todo work is continued
   try {
     profile.script("Plan two steps and stop early.", [
       () =>
-        fakeGatewayToolCall("plan-two", "TodoList", {
+        fakeGatewayVerbCall("plan-two", "TodoList", {
           todos: [
             { title: "write the parser", status: "in_progress" },
             { title: "add the parser test", status: "pending" },
@@ -55,7 +55,7 @@ test.skipIf(!tmuxAvailable())("a turn whose todo items are all done ends without
   let passed = false;
   try {
     profile.script("Plan one step and finish it.", [
-      () => fakeGatewayToolCall("plan-one", "TodoList", { todos: [{ title: "write the note", status: "done" }] }),
+      () => fakeGatewayVerbCall("plan-one", "TodoList", { todos: [{ title: "write the note", status: "done" }] }),
       () => fakeGatewayFinalText("Wrote the note."),
     ]);
     const shell = await profile.launch();

@@ -7,7 +7,7 @@ import { runFx } from "../evals/eval-helpers";
 import { completion, createConfiguredProviderFixture, toolCompletion } from "./fixtures/chat-completions";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
 } from "./tmux-helpers";
 
@@ -239,7 +239,7 @@ describe("ReadMediaFile decodes valid PNG files", () => {
       const bytes = encodePng(testCase);
       const encoded = bytes.toString("base64");
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("media_read", "ReadMediaFile", { path: "image.png" }),
+        fakeGatewayVerbCall("media_read", "ReadMediaFile", { path: "image.png" }),
         (body) => {
           const part = toolResultPart(body, "media_read");
           const output = part.output as Record<string, unknown>;

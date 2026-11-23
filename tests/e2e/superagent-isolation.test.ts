@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   serveFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -50,6 +50,13 @@ function textOf(message: Message): string {
 function lastUserText(body: string): string {
   const last = messages(body).filter((message) => message.role === "user").at(-1);
   return last ? textOf(last) : "";
+}
+
+function verbReply(result: Record<string, unknown>): string {
+  const output = result.output as { value?: unknown } | undefined;
+  const envelope = typeof output?.value === "string" ? JSON.parse(output.value) : undefined;
+  if (envelope?.ok !== true) return JSON.stringify(output ?? result);
+  return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
 }
 
 function lastToolResult(body: string): Record<string, unknown> | undefined {
@@ -258,20 +265,20 @@ describe.skipIf(SKIP)("the superagent needs no process outside fx", () => {
           if (user.includes(ROOT_TASK)) {
             rootRequests += 1;
             if (lastId === "iso-run") return fakeGatewayFinalText("REPORT: finished — the long command ended");
-            return fakeGatewayToolCall("iso-run", "Bash", { command: ROOT_COMMAND, description: "Run the long command" });
+            return fakeGatewayVerbCall("iso-run", "Bash", { command: ROOT_COMMAND, description: "Run the long command" });
           }
           if (user.includes(STATUS_PROMPT)) {
-            if (lastId !== "iso-status") return fakeGatewayToolCall("iso-status", "superagent", { action: "status" });
-            statusText = JSON.stringify(last!.output ?? last);
+            if (lastId !== "iso-status") return fakeGatewayVerbCall("iso-status", "superagent", { action: "status" });
+            statusText = verbReply(last!);
             return fakeGatewayFinalText(STATUS_SEEN);
           }
           if (user.includes(OWNER_PROMPT)) {
-            if (!lastId) return fakeGatewayToolCall("iso-start", "superagent", { action: "start", agent: PROJECT });
+            if (!lastId) return fakeGatewayVerbCall("iso-start", "superagent", { action: "start", agent: PROJECT });
             if (lastId === "iso-start") {
-              started = JSON.stringify(last!.output ?? last);
-              return fakeGatewayToolCall("iso-instruct", "superagent", { action: "instruct", agent: PROJECT, prompt: ROOT_TASK });
+              started = verbReply(last!);
+              return fakeGatewayVerbCall("iso-instruct", "superagent", { action: "instruct", agent: PROJECT, prompt: ROOT_TASK });
             }
-            instructed = JSON.stringify(last!.output ?? last);
+            instructed = verbReply(last!);
             return fakeGatewayFinalText(WAITING);
           }
           if (user.includes("superagent event: root ")) return fakeGatewayFinalText(EVENT_SEEN);

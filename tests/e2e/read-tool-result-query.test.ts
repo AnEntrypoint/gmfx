@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
 } from "./tmux-helpers";
 
@@ -55,7 +55,13 @@ function gatewayEnv(root: IsolatedRoot, gateway: ReturnType<typeof startFakeGate
 }
 
 function shellCall(command: string, id: string) {
-  return fakeGatewayToolCall(id, "Bash", { command });
+  return fakeGatewayVerbCall(id, "Bash", { command });
+}
+
+function runCodeVerbReply(text: string): string {
+  const envelope = JSON.parse(text);
+  expect(envelope.ok).toBe(true);
+  return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
 }
 
 function toolResultText(body: string, toolCallId: string): string {
@@ -69,7 +75,7 @@ function toolResultText(body: string, toolCallId: string): string {
   const output = result!.output as Record<string, unknown>;
   expect(output.type).toBe("text");
   expect(typeof output.value).toBe("string");
-  return output.value as string;
+  return runCodeVerbReply(output.value as string);
 }
 
 describe.skipIf(!claudeOnPath)("read_tool_result over the live claude --help output", () => {
@@ -90,7 +96,7 @@ describe.skipIf(!claudeOnPath)("read_tool_result over the live claude --help out
           expect(commandResult.exit_code).toBe(0);
           handle = commandResult.full_output_handle ?? "";
           expect(handle).toMatch(/^fx-command-replay-.+\.bin$/);
-          return fakeGatewayToolCall("query_claude_code", "read_tool_result", {
+          return fakeGatewayVerbCall("query_claude_code", "read_tool_result", {
             handle,
             query: "Claude Code",
           });
@@ -98,7 +104,7 @@ describe.skipIf(!claudeOnPath)("read_tool_result over the live claude --help out
         (body) => {
           queriedClaudeCode = toolResultText(body, "query_claude_code");
           expect(queriedClaudeCode).not.toContain("(no matches");
-          return fakeGatewayToolCall("query_version", "read_tool_result", {
+          return fakeGatewayVerbCall("query_version", "read_tool_result", {
             handle,
             query: "version",
           });
@@ -107,7 +113,7 @@ describe.skipIf(!claudeOnPath)("read_tool_result over the live claude --help out
           queriedVersion = toolResultText(body, "query_version");
           expect(queriedVersion).not.toContain("(no matches");
           expect(queriedVersion).toContain("--version");
-          return fakeGatewayToolCall("ranged_read", "read_tool_result", {
+          return fakeGatewayVerbCall("ranged_read", "read_tool_result", {
             handle,
             start_byte: 1,
             byte_count: 400,
@@ -154,7 +160,7 @@ describe("read_tool_result over output with SGR color codes", () => {
           expect(commandResult.exit_code).toBe(0);
           handle = commandResult.full_output_handle ?? "";
           expect(handle).toMatch(/^fx-command-replay-.+\.bin$/);
-          return fakeGatewayToolCall("query_colored", "read_tool_result", {
+          return fakeGatewayVerbCall("query_colored", "read_tool_result", {
             handle,
             query: "Claude Code is ready",
           });

@@ -107,14 +107,18 @@ function sse(events: object[]) {
   );
 }
 
-function gatewayToolCall(toolName: string, input: object, toolCallId: string) {
+function verbCallEvent(toolCallId: string, verb: string, input: object) {
+  return {
+    type: "tool-call",
+    toolCallId,
+    toolName: "run_code",
+    input: { body: `return gm.${verb}(${JSON.stringify(input)});` },
+  };
+}
+
+function gatewayToolCall(verb: string, input: object, toolCallId: string) {
   return sse([
-    {
-      type: "tool-call",
-      toolCallId,
-      toolName,
-      input,
-    },
+    verbCallEvent(toolCallId, verb, input),
     {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool-calls" },
@@ -142,14 +146,7 @@ function permissionDecision(
 
 function toolCalls(command: string, callIds: string[]) {
   return sse([
-    ...callIds.map((toolCallId) => ({
-      type: "tool-call",
-      toolCallId,
-      toolName: "Bash",
-      input: {
-          command,
-        },
-    })),
+    ...callIds.map((toolCallId) => verbCallEvent(toolCallId, "Bash", { command })),
     {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool-calls" },
@@ -159,22 +156,8 @@ function toolCalls(command: string, callIds: string[]) {
 
 function twoEffectfulCommandBatch(first: string, second: string) {
   return sse([
-    {
-      type: "tool-call",
-      toolCallId: "history_feedback_first",
-      toolName: "Bash",
-      input: {
-          command: first,
-        },
-    },
-    {
-      type: "tool-call",
-      toolCallId: "history_feedback_second",
-      toolName: "Bash",
-      input: {
-          command: second,
-        },
-    },
+    verbCallEvent("history_feedback_first", "Bash", { command: first }),
+    verbCallEvent("history_feedback_second", "Bash", { command: second }),
     {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool-calls" },
@@ -224,7 +207,7 @@ function expectOrdinaryToolResults(body: string, callIds: string[]) {
   for (const result of results) {
     const output = result.output as Record<string, unknown> | undefined;
     expect(output?.type).toBe("text");
-    const snapshot = JSON.parse(output?.value as string);
+    const snapshot = JSON.parse(runCodeVerbReply(output?.value as string));
     expect(snapshot).toMatchObject({ state: "completed", exit_code: 0 });
     expect(snapshot).not.toHaveProperty("error");
   }
@@ -242,7 +225,13 @@ function toolResultText(body: string, toolCallId: string): string {
   const output = result!.output as Record<string, unknown>;
   expect(output.type).toBe("text");
   expect(typeof output.value).toBe("string");
-  return output.value as string;
+  return runCodeVerbReply(output.value as string);
+}
+
+function runCodeVerbReply(text: string): string {
+  const envelope = JSON.parse(text);
+  expect(envelope.ok).toBe(true);
+  return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
 }
 
 function completedToolCallIds(body: string): string[] {
@@ -1041,16 +1030,9 @@ describe("effect-aware command permissions", () => {
       const streamText = "DIRECT_NO_NOTICE_STREAM_TEXT";
       const gateway = startFakeGateway([
         sse([
-          { type: "tool-input-start", id: "command_1", toolName: "Bash" },
+          { type: "tool-input-start", id: "command_1", toolName: "run_code" },
           { type: "text-delta", id: "answer_1", delta: streamText },
-          {
-            type: "tool-call",
-            toolCallId: "command_1",
-            toolName: "Bash",
-            input: {
-                command: "pwd",
-              },
-          },
+          verbCallEvent("command_1", "Bash", { command: "pwd" }),
           {
             type: "finish",
             finishReason: { unified: "tool-calls", raw: "tool-calls" },
@@ -1146,21 +1128,14 @@ describe("effect-aware command permissions", () => {
           ...calls.map((call) => ({
             type: "tool-input-start",
             id: call.id,
-            toolName: "Bash",
+            toolName: "run_code",
           })),
           {
             type: "text-delta",
             id: "fxc110-provider-bridge",
             delta: "FXC110_PROVIDER_BRIDGE",
           },
-          ...calls.map((call) => ({
-            type: "tool-call",
-            toolCallId: call.id,
-            toolName: "Bash",
-            input: {
-                command: call.command,
-              },
-          })),
+          ...calls.map((call) => verbCallEvent(call.id, "Bash", { command: call.command })),
           {
             type: "finish",
             finishReason: { unified: "tool-calls", raw: "tool-calls" },
@@ -2037,7 +2012,7 @@ describe("effect-aware command permissions", () => {
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("direct repetition complete");
-      expect(result.stderr).toContain("Running pwd");
+      expect(result.stderr).toContain("Working");
       expect(gateway.requests).toHaveLength(2);
       expectOrdinaryToolResults(gateway.requests[1].body, callIds);
       expect(gateway.requests[1].body).not.toContain("Agent stopped:");
@@ -2070,7 +2045,7 @@ describe("effect-aware command permissions", () => {
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("direct unlimited complete");
-      expect(result.stderr).toContain("Running pwd");
+      expect(result.stderr).toContain("Working");
       expect(gateway.requests).toHaveLength(12);
       expect(existsSync(root.profileMarker)).toBe(true);
       expectNoHostileExecutables(root);
@@ -2571,7 +2546,7 @@ describe("effect-aware command permissions", () => {
       );
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toContain("Running pwd");
+      expect(result.stderr).toContain("Working");
       expect(result.stderr.toLowerCase()).not.toContain("error");
       expect(JSON.parse(toolResultText(gateway.requests[1].body, "command_1"))).toMatchObject({
         state: "completed",
@@ -2661,7 +2636,7 @@ describe("effect-aware command permissions", () => {
       );
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toContain("Running printf '%s' '<'");
+      expect(result.stderr).toContain("Working");
       expect(gateway.requests).toHaveLength(2);
       expect(JSON.parse(toolResultText(gateway.requests[1].body, "command_1"))).toMatchObject({
         state: "completed",

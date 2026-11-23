@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Profile } from "./shell-sessions";
-import { fakeGatewayFinalText, fakeGatewayToolCall, tmuxAvailable } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, tmuxAvailable } from "./tmux-helpers";
 
 const TIMEOUT = 180_000;
 const STEP = 60_000;
@@ -14,7 +14,7 @@ async function toolResultBody(label: string, prompt: string, toolName: string, i
   try {
     for (const [name, content] of Object.entries(files)) writeFileSync(join(profile.workspace, name), content);
     const done = `Finished ${label}.`;
-    profile.script(prompt, [() => fakeGatewayToolCall(`${label}-call`, toolName, input), () => fakeGatewayFinalText(done)]);
+    profile.script(prompt, [() => fakeGatewayVerbCall(`${label}-call`, toolName, input), () => fakeGatewayFinalText(done)]);
     const shell = await profile.launch();
     await shell.session.sendText(prompt);
     await shell.session.waitForText(done, STEP);

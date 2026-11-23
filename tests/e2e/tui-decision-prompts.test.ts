@@ -49,7 +49,7 @@ const QUESTION_TYPING = "typing a reply hjkl";
 const CTRL_C_HINT = "press ctrl+c again to exit";
 const ESC_HINT = "esc again to clear";
 const ARGUMENT_RECOVERY_CALL_ID = "argument_recovery_question_1";
-const ARGUMENT_RECOVERY_TOOL_NAME = "AskUserQuestion";
+const ARGUMENT_RECOVERY_TOOL_NAME = "run_code";
 const VALID_QUESTION_PREAMBLE = "I need one detail before continuing.";
 const MALFORMED_ARGUMENTS = "{]";
 const MALFORMED_LABEL_SENTINEL = "FX_MALFORMED_LABEL_SENTINEL";
@@ -61,7 +61,7 @@ const LONG_QUESTION_ANSWER =
   "Run the complete verification suite before pushing this branch";
 const LONG_QUESTION_DESCRIPTION =
   "Keep the entire explanation visible even when it wraps across several terminal rows";
-const VALID_QUESTION_ARGUMENTS = JSON.stringify({
+const VALID_QUESTION_ARGUMENTS = JSON.stringify(runCodeInput("AskUserQuestion", {
   questions: [
     {
       question: QUESTION_PROMPT,
@@ -77,7 +77,7 @@ const VALID_QUESTION_ARGUMENTS = JSON.stringify({
       ],
     },
   ],
-});
+}));
 
 const PASTE_START = ["1b", "5b", "32", "30", "30", "7e"] as const;
 const PASTE_END = ["1b", "5b", "32", "30", "31", "7e"] as const;
@@ -149,14 +149,18 @@ function sse(events: object[], done = true) {
   );
 }
 
+function runCodeInput(verb: string, input: object) {
+  return { body: `return gm.${verb}(${JSON.stringify(input)});` };
+}
+
 function outerToolCalls(calls: Array<{ id: string; name: string; input: object }>) {
   return sse(
     [
       ...calls.map((call) => ({
         type: "tool-call",
         toolCallId: call.id,
-        toolName: call.name,
-        input: call.input,
+        toolName: "run_code",
+        input: runCodeInput(call.name, call.input),
       })),
       {
         type: "finish",
@@ -317,6 +321,11 @@ function outerBatchQuestionCall(id: string, count: number) {
   ]);
 }
 
+function runCodeVerbReply(text: string): string {
+  const envelope = JSON.parse(text);
+  return envelope.ok === true && typeof envelope.value === "string" ? envelope.value : text;
+}
+
 function toolResultText(body: string, callId: string): string {
   const prompt = (JSON.parse(body) as { prompt: Array<{ content: unknown }> }).prompt;
   for (const message of prompt) {
@@ -327,7 +336,7 @@ function toolResultText(body: string, callId: string): string {
       if (typeof output?.value !== "string") {
         throw new Error(`Tool result ${callId} has no text output`);
       }
-      return output.value;
+      return runCodeVerbReply(output.value);
     }
   }
   throw new Error(`Missing tool result for ${callId}`);
@@ -1098,7 +1107,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
             {
               type: "tool-input-start",
               id: malformedCallId,
-              toolName: "read_file",
+              toolName: "run_code",
             },
             {
               type: "tool-input-delta",
@@ -1193,8 +1202,8 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
             {
               type: "tool-call",
               toolCallId: "pacer_gate_question",
-              toolName: "AskUserQuestion",
-              input: {
+              toolName: "run_code",
+              input: runCodeInput("AskUserQuestion", {
                 questions: [
                   {
                     question: QUESTION_PROMPT,
@@ -1210,7 +1219,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
                     ],
                   },
                 ],
-              },
+              }),
             },
             {
               type: "finish",

@@ -6,6 +6,7 @@ import { cleanupIsolatedTestHome, createIsolatedTestHome, FX_BIN } from "../eval
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewaySse,
+  fakeGatewayVerbCall,
   LIST_VERBS_BODY,
   runCodeVerbNames,
   startDynamicFakeGateway,
@@ -292,15 +293,7 @@ function runThenAnswer(body: string): Response {
   const turn = userTexts(body).at(-1)?.match(/PERM_(\d+)/)?.[1] ?? "0";
   if (request.prompt?.at(-1)?.role === "tool") return text(`done_${turn}`, `PERM_DONE_${turn}`);
   const command = userTexts(body).at(-1)?.match(/RUN\[(.+?)\]/)?.[1] ?? "true";
-  return fakeGatewaySse([
-    {
-      type: "tool-call",
-      toolCallId: `run_${turn}`,
-      toolName: "Bash",
-      input: { command, description: "Run the turn's command" },
-    },
-    { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
-  ]);
+  return fakeGatewayVerbCall(`run_${turn}`, "Bash", { command, description: "Run the turn's command" });
 }
 
 
@@ -818,11 +811,11 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         const texts = userTexts(body);
         if (texts.join("\n").includes("TREE_TASK")) {
           if (answered(body)) return text("tree_child_done", "TREE_CHILD_DONE");
-          return call("tree_touch", "Bash", { command: "touch tree-marker", description: "Make the marker" });
+          return fakeGatewayVerbCall("tree_touch", "Bash", { command: "touch tree-marker", description: "Make the marker" });
         }
         if (texts.join("\n").includes("TREE_USER")) {
           if (answered(body)) return text("tree_main_final", "TREE_MAIN_FINAL");
-          return call("tree_sub", "Agent", { description: "Make the marker", prompt: "TREE_TASK make the marker" });
+          return fakeGatewayVerbCall("tree_sub", "Agent", { description: "Make the marker", prompt: "TREE_TASK make the marker" });
         }
         return answerByLetter(body);
       }, { instances: 2, env: { FX_PERMISSION_MODE: "yolo" } }, async ({ workspace, session }) => {
@@ -863,7 +856,7 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         }
         if (texts.at(-1)?.includes("CLOSE_USER")) {
           if (answered(body)) return text("close_final", "CLOSE_MAIN_FINAL");
-          return call("close_sub", "Agent", { description: "Slow helper", prompt: "SLOW_TASK take your time", run_in_background: true });
+          return fakeGatewayVerbCall("close_sub", "Agent", { description: "Slow helper", prompt: "SLOW_TASK take your time", run_in_background: true });
         }
         return answerByLetter(body);
       };
@@ -925,7 +918,7 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         if (texts.join("\n").includes("KEEP_TASK")) return text("keep_child", "KEEP_CHILD_DONE");
         if (texts.at(-1)?.includes("KEEP_USER")) {
           if (answered(body)) return text("keep_final", "KEEP_MAIN_FINAL");
-          return call("keep_sub", "Agent", { description: "Keeper", prompt: "KEEP_TASK note it" });
+          return fakeGatewayVerbCall("keep_sub", "Agent", { description: "Keeper", prompt: "KEEP_TASK note it" });
         }
         return answerByLetter(body);
       };
@@ -975,12 +968,12 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         const last = userTexts(body).at(-1) ?? "";
         if (last.includes("TREE_USER_PLAIN")) {
           if (answered(body) && body.includes("plain_sub")) return text("plain_final", "TREE_PLAIN_FINAL");
-          if (answered(body)) return call("plain_sub", "Agent", { description: "Plain helper", prompt: "TREE_PLAIN_TASK" });
+          if (answered(body)) return fakeGatewayVerbCall("plain_sub", "Agent", { description: "Plain helper", prompt: "TREE_PLAIN_TASK" });
           return call("instance_verbs", "run_code", LIST_VERBS_BODY);
         }
         if (last.includes("TREE_USER_BUILDER")) {
           if (answered(body)) return text("builder_final", "TREE_BUILDER_FINAL");
-          return call("builder_sub", "Agent", { description: "Builder", prompt: "TREE_BUILDER_TASK", subagent_type: "builder" });
+          return fakeGatewayVerbCall("builder_sub", "Agent", { description: "Builder", prompt: "TREE_BUILDER_TASK", subagent_type: "builder" });
         }
         return answerByLetter(body);
       }, { env: { FX_PERMISSION_MODE: "yolo" } }, async ({ home, session }) => {
@@ -1033,11 +1026,11 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         const texts = userTexts(body).join("\n");
         if (texts.includes("TREE_LEND_TASK")) {
           if (answered(body)) return text("lend_child_done", "TREE_LEND_CHILD_DONE");
-          return call("lend_write", "write_file", { path: "lent.txt", content: "TREE_LENT\n" });
+          return fakeGatewayVerbCall("lend_write", "write_file", { path: "lent.txt", content: "TREE_LENT\n" });
         }
         if (texts.includes("TREE_LEND_USER")) {
           if (answered(body)) return text("lend_main_done", "TREE_LEND_MAIN_DONE");
-          return call("lend_sub", "Agent", { description: "Write the file", prompt: "TREE_LEND_TASK", subagent_type: "writer" });
+          return fakeGatewayVerbCall("lend_sub", "Agent", { description: "Write the file", prompt: "TREE_LEND_TASK", subagent_type: "writer" });
         }
         return answerByLetter(body);
       }, { instances: 2 }, async ({ home, workspace, session }) => {
@@ -1049,17 +1042,17 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         await session.sendText("TREE_LEND_USER write the file");
 
 
-        await session.waitForPane((pane) => pane.includes("TREE_LEND_USER") && pane.includes("Subagent agent-lend-sub needs permission"), 30_000);
+        await session.waitForPane((pane) => pane.includes("TREE_LEND_USER") && pane.includes("Subagent agent-lend-sub-1 needs permission"), 30_000);
 
 
         await switchAgent(session, 1);
-        const first = await session.waitForPane((pane) => pane.includes("fx 1/2") && pane.includes("agent-lend-sub needs approval"), 15_000);
-        expect(first).not.toContain("Subagent agent-lend-sub needs permission");
+        const first = await session.waitForPane((pane) => pane.includes("fx 1/2") && pane.includes("agent-lend-sub-1 needs approval"), 15_000);
+        expect(first).not.toContain("Subagent agent-lend-sub-1 needs permission");
 
 
         expect(first).not.toContain("TREE_LEND_USER");
         await switchAgent(session, 2);
-        await session.waitForPane((pane) => pane.includes("TREE_LEND_USER") && pane.includes("Subagent agent-lend-sub needs permission"), 15_000);
+        await session.waitForPane((pane) => pane.includes("TREE_LEND_USER") && pane.includes("Subagent agent-lend-sub-1 needs permission"), 15_000);
         await session.sendKeys("1");
         await session.waitForText("TREE_LEND_MAIN_DONE", 30_000);
         expect(readFileSync(join(workspace, "lent.txt"), "utf8")).toBe("TREE_LENT\n");
@@ -1078,8 +1071,8 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
       const respond = (direct: boolean) => (body: string): Response => {
         const request = JSON.parse(body) as { prompt?: Array<{ role?: string }> };
         const results = (request.prompt ?? []).filter((message) => message.role === "tool").length;
-        if (!direct && results === 0) return call("select_mcp", "select_tools", { names: ["mcp__fixture__echo"] });
-        if (results === (direct ? 0 : 1)) return call("call_mcp", "mcp__fixture__echo", { text: "hello" });
+        if (!direct && results === 0) return fakeGatewayVerbCall("select_mcp", "select_tools", { names: ["mcp__fixture__echo"] });
+        if (results === (direct ? 0 : 1)) return fakeGatewayVerbCall("call_mcp", "mcp__fixture__echo", { text: "hello" });
         return text("mcp_done", "TREE_MCP_DONE");
       };
       for (const [profile, servers, reaches, direct] of [
@@ -1446,7 +1439,7 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
             return text("child_mcp_done", "CHILD_MCP_DONE");
           }
 
-          if (results === 0) return call("start_child", "Agent", { description: "Call the fixture", prompt: "CHILD_MCP_TASK", subagent_type: "mcp-child" });
+          if (results === 0) return fakeGatewayVerbCall("start_child", "Agent", { description: "Call the fixture", prompt: "CHILD_MCP_TASK", subagent_type: "mcp-child" });
           return text("parent_mcp_done", "PARENT_MCP_DONE");
         }, { env: { FX_PERMISSION_MODE: "yolo" }, reuse: { home, workspace } }, async ({ session }) => {
           await session.sendText("PARENT_MCP start the child");
@@ -1559,7 +1552,7 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
     async () => {
       await withHost((body) => {
         if (answered(body)) return text("note_done", "NOTE_DONE");
-        return call("note_shell", "Bash", { command: "rm -rf ./nothing-here", description: "Remove nothing" });
+        return fakeGatewayVerbCall("note_shell", "Bash", { command: "rm -rf ./nothing-here", description: "Remove nothing" });
       }, { instances: 3, env: { FX_PERMISSION_MODE: "ask" } }, async ({ session }) => {
         await session.waitForPane((pane) => pane.includes("fx 1/3"), 15_000);
         await switchAgent(session, "previous");
@@ -1657,7 +1650,7 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         if (texts.includes("LIST_TASK")) return text("list_child", "LIST_CHILD_DONE");
         if (texts.includes("LIST_USER")) {
           if (answered(body)) return text("list_main_final", "LIST_MAIN_FINAL");
-          return call("list_sub", "Agent", { description: "Look", prompt: "LIST_TASK look" });
+          return fakeGatewayVerbCall("list_sub", "Agent", { description: "Look", prompt: "LIST_TASK look" });
         }
         return answerByLetter(body);
       }, { instances: 2, env: { FX_PERMISSION_MODE: "yolo" } }, async ({ session }) => {
@@ -1668,18 +1661,18 @@ describe.skipIf(!tmuxAvailable())("TUI host instances", () => {
         await session.waitForComposer(15_000);
 
         await switchAgent(session, "next");
-        await session.waitForPane((pane) => pane.includes("agent-list-sub \u00b7 "), 15_000);
+        await session.waitForPane((pane) => pane.includes("agent-list-sub-1 \u00b7 "), 15_000);
         await session.sendKeys("C-x");
-        const list = await session.waitForPane((pane) => pane.includes("agent-list-sub (on screen) ·"), 15_000);
+        const list = await session.waitForPane((pane) => pane.includes("agent-list-sub-1 (on screen) ·"), 15_000);
         const rows = list.split("\n");
         const first = rows.findIndex((row) => row.includes("fx 1 ·"));
-        const helper = rows.findIndex((row) => row.includes("    agent-list-sub (on screen) ·"));
+        const helper = rows.findIndex((row) => row.includes("    agent-list-sub-1 (on screen) ·"));
         const second = rows.findIndex((row) => row.includes("fx 2 ·"));
         expect(first).toBeGreaterThanOrEqual(0);
         expect(helper).toBe(first + 1);
         expect(second).toBe(helper + 1);
         await session.sendKeys("Escape");
-        await session.waitForPane((pane) => !pane.includes(LIST_HINT) && pane.includes("agent-list-sub \u00b7 "), 15_000);
+        await session.waitForPane((pane) => !pane.includes(LIST_HINT) && pane.includes("agent-list-sub-1 \u00b7 "), 15_000);
       });
     },
     TIMEOUT,

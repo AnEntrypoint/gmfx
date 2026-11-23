@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   serveFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -65,7 +65,9 @@ function resultsSinceLastUser(body: string): Record<string, unknown>[] {
 }
 
 function resultText(part: Record<string, unknown>): string {
-  return JSON.stringify(part.output ?? part);
+  const output = part.output as { value?: unknown } | undefined;
+  const envelope = typeof output?.value === "string" ? JSON.parse(output.value) : undefined;
+  return JSON.stringify(envelope?.ok === true ? { ...output, value: envelope.value } : output ?? part);
 }
 
 function sessionFromEvent(event: string): string {
@@ -135,20 +137,20 @@ describe.skipIf(SKIP)("superagent live witness: start, REPORT event, continue on
         }
         const last = resultsSinceLastUser(body).at(-1);
         if (user.includes(START_PROMPT)) {
-          if (!last) return fakeGatewayToolCall("w-start", "superagent", { action: "start", agent: PROJECT });
+          if (!last) return fakeGatewayVerbCall("w-start", "superagent", { action: "start", agent: PROJECT });
           (seen["w-start"] ??= []).push(resultText(last));
-          return fakeGatewayToolCall("w-instruct-1", "superagent", { action: "instruct", agent: PROJECT, prompt: ROOT_FIRST });
+          return fakeGatewayVerbCall("w-instruct-1", "superagent", { action: "instruct", agent: PROJECT, prompt: ROOT_FIRST });
         }
         if (user.includes("superagent event: root") && user.includes("step one done")) {
           sessionId = sessionFromEvent(user);
           (seen.event1 ??= []).push(user);
-          if (!last) return fakeGatewayToolCall("w-start-2", "superagent", { action: "start", agent: PROJECT, session: sessionId });
+          if (!last) return fakeGatewayVerbCall("w-start-2", "superagent", { action: "start", agent: PROJECT, session: sessionId });
           (seen["w-start-2"] ??= []).push(resultText(last));
-          return fakeGatewayToolCall("w-instruct-2", "superagent", { action: "instruct", agent: PROJECT, prompt: ROOT_SECOND });
+          return fakeGatewayVerbCall("w-instruct-2", "superagent", { action: "instruct", agent: PROJECT, prompt: ROOT_SECOND });
         }
         if (user.includes("superagent event: root") && user.includes("step two done")) {
           (seen.event2 ??= []).push(user);
-          if (!last) return fakeGatewayToolCall("w-status", "superagent", { action: "status" });
+          if (!last) return fakeGatewayVerbCall("w-status", "superagent", { action: "status" });
           (seen["w-status"] ??= []).push(resultText(last));
           return fakeGatewayFinalText(SUPERAGENT_DONE);
         }

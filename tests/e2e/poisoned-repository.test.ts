@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   startFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -187,8 +187,8 @@ describe("poisoned repository", () => {
     async () => {
       const fixture = poisonedRepository();
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("glob", "glob_files", { pattern: "**/alpha-*.txt" }),
-        fakeGatewayToolCall("grep", "grep_files", { pattern: "needle", output_mode: "content" }),
+        fakeGatewayVerbCall("glob", "glob_files", { pattern: "**/alpha-*.txt" }),
+        fakeGatewayVerbCall("grep", "grep_files", { pattern: "needle", output_mode: "content" }),
         fakeGatewayFinalText("inspection complete"),
       ], { classifierResponses: [] });
       gateways.push(gateway);
@@ -266,7 +266,7 @@ describe("poisoned repository", () => {
       const config = join(fixture.workspace, ".git", "config");
       writeFileSync(config, readFileSync(config, "utf8") + "[include]\n\tpath = config\n".repeat(4));
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("glob", "glob_files", { pattern: "**/alpha-*.txt" }),
+        fakeGatewayVerbCall("glob", "glob_files", { pattern: "**/alpha-*.txt" }),
         fakeGatewayFinalText("inspection complete"),
       ], { classifierResponses: [] });
       gateways.push(gateway);
@@ -339,8 +339,8 @@ describe("user git config through a symlink", () => {
       expect(git(fixture, ["ls-files", "-co", "--exclude-standard"]).trim()).toBe("public.txt");
 
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("glob", "glob_files", { pattern: "**/*" }),
-        fakeGatewayToolCall("grep", "grep_files", { pattern: "needle", output_mode: "content" }),
+        fakeGatewayVerbCall("glob", "glob_files", { pattern: "**/*" }),
+        fakeGatewayVerbCall("grep", "grep_files", { pattern: "needle", output_mode: "content" }),
         fakeGatewayFinalText("inspection complete"),
       ], { classifierResponses: [] });
       gateways.push(gateway);

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Profile } from "./shell-sessions";
-import { fakeGatewayFinalText, fakeGatewayToolCall, tmuxAvailable } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, tmuxAvailable } from "./tmux-helpers";
 
 const TIMEOUT = 180_000;
 const STEP = 60_000;
@@ -28,6 +28,12 @@ function contentText(content: unknown): string {
   return "";
 }
 
+function runCodeVerbReply(text: string): string {
+  const envelope = JSON.parse(text);
+  expect(envelope.ok).toBe(true);
+  return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
+}
+
 function toolResultText(body: string, callId: string): string {
   const request = JSON.parse(body) as { prompt: Array<{ content: unknown }> };
   const parts = request.prompt.flatMap((message) =>
@@ -35,7 +41,7 @@ function toolResultText(body: string, callId: string): string {
   ) as Array<Record<string, unknown>>;
   const result = parts.find((part) => part.type === "tool-result" && part.toolCallId === callId);
   if (!result) throw new Error(`Missing tool result for ${callId}`);
-  return contentText(result.output);
+  return runCodeVerbReply(contentText(result.output));
 }
 
 async function bashResultText(label: string, prompt: string, input: object, inspect?: (profile: Profile) => void) {
@@ -44,7 +50,7 @@ async function bashResultText(label: string, prompt: string, input: object, insp
   try {
     const callId = `${label}-call`;
     const done = `Finished ${label}.`;
-    profile.script(prompt, [() => fakeGatewayToolCall(callId, "Bash", input), () => fakeGatewayFinalText(done)]);
+    profile.script(prompt, [() => fakeGatewayVerbCall(callId, "Bash", input), () => fakeGatewayFinalText(done)]);
     const shell = await profile.launch();
     await shell.session.sendText(prompt);
     await shell.session.waitForText(done, STEP);

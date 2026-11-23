@@ -99,7 +99,9 @@ function toolResultText(body: string, toolCallId: string): string {
   const output = result!.output as Record<string, unknown>;
   expect(output.type).toBe("text");
   expect(typeof output.value).toBe("string");
-  return output.value as string;
+  const envelope = JSON.parse(output.value as string);
+  expect(envelope.ok).toBe(true);
+  return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
 }
 
 function runGit(cwd: string, args: string[]) {
@@ -157,7 +159,7 @@ describe("lean auto mode reliability", () => {
       expect(result.stderr.toLowerCase()).not.toContain("permission required");
       expect(gateway.requests).toHaveLength(2);
       expect(gateway.classifierRequests).toHaveLength(0);
-      expect(toolCallStatuses(result.stdout)).toEqual([{ name: "Bash", status: "success" }]);
+      expect(toolCallStatuses(result.stdout)).toEqual([{ name: "run_code", status: "success" }]);
     },
     TIMEOUT,
   );
@@ -187,7 +189,7 @@ describe("lean auto mode reliability", () => {
       expect(result.code, result.stderr).toBe(0);
       expect(gateway.requests).toHaveLength(2);
       expect(gateway.classifierRequests).toHaveLength(0);
-      expect(toolCallStatuses(result.stdout)).toEqual([{ name: "Bash", status: "success" }]);
+      expect(toolCallStatuses(result.stdout)).toEqual([{ name: "run_code", status: "success" }]);
     },
     TIMEOUT,
   );
@@ -203,14 +205,14 @@ describe("lean auto mode reliability", () => {
           {
             type: "tool-call",
             toolCallId: "direct_pwd",
-            toolName: "Bash",
-            input: { command: "pwd" },
+            toolName: "run_code",
+            input: { body: "return gm.Bash({ command: \"pwd\" });" },
           },
           {
             type: "tool-call",
             toolCallId: "direct_git_status",
-            toolName: "Bash",
-            input: { command: "git status --short" },
+            toolName: "run_code",
+            input: { body: "return gm.Bash({ command: \"git status --short\" });" },
           },
           {
             type: "finish",
@@ -242,8 +244,8 @@ describe("lean auto mode reliability", () => {
       expect(gateway.requests).toHaveLength(2);
       expect(gateway.classifierRequests).toHaveLength(0);
       expect(toolCallStatuses(result.stdout)).toEqual([
-        { name: "Bash", status: "success" },
-        { name: "Bash", status: "success" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "success" },
       ]);
       expect(result.stdout).toContain("Direct command group complete.");
     },
@@ -302,8 +304,8 @@ describe("lean auto mode reliability", () => {
       expect(gateway.classifierRequests).toHaveLength(0);
       expect(gateway.requests).toHaveLength(4);
       expect(toolCallStatuses(result.stdout)).toEqual([
-        { name: "Bash", status: "success" },
-        { name: "Bash", status: "error" },
+        { name: "run_code", status: "success" },
+        { name: "run_code", status: "error" },
       ]);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     },

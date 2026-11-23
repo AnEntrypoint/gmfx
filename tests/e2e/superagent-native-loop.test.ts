@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   serveFakeGateway,
   TmuxSession,
   tmuxAvailable,
@@ -133,9 +133,9 @@ async function startSession(layout: Layout, gateway: { baseUrl: string; chatUrl:
 
 function ownerSteps(body: string, instruct: Record<string, unknown>): Response | null {
   const last = lastToolResultId(body);
-  if (!last) return fakeGatewayToolCall("loop-start", "superagent", { action: "start", agent: PROJECT });
+  if (!last) return fakeGatewayVerbCall("loop-start", "superagent", { action: "start", agent: PROJECT });
   if (last === "loop-start") {
-    return fakeGatewayToolCall("loop-instruct", "superagent", { action: "instruct", agent: PROJECT, ...instruct });
+    return fakeGatewayVerbCall("loop-instruct", "superagent", { action: "instruct", agent: PROJECT, ...instruct });
   }
   if (last === "loop-instruct") return fakeGatewayFinalText(WAITING);
   return null;
@@ -323,7 +323,7 @@ describe.skipIf(SKIP)("the superagent loop runs in fx's own code", () => {
         }
         if (user.includes(ITEM_ONE)) {
           if (lastToolResultId(body) === "loop-job") return fakeGatewayFinalText("REPORT: open — the job is still running");
-          return fakeGatewayToolCall("loop-job", "Bash", {
+          return fakeGatewayVerbCall("loop-job", "Bash", {
             command: "sleep 3; echo LOOP-JOB-OUT",
             description: "Run the slow job",
             run_in_background: true,
@@ -653,7 +653,7 @@ describe.skipIf(SKIP)("the superagent loop runs in fx's own code", () => {
           if (lastToolResultId(body) === "loop-again") return fakeGatewayFinalText(WAITING);
           events += 1;
           lastEvent = user;
-          if (events === 1) return fakeGatewayToolCall("loop-again", "superagent", { action: "instruct", agent: PROJECT, prompt: ITEM_THREE });
+          if (events === 1) return fakeGatewayVerbCall("loop-again", "superagent", { action: "instruct", agent: PROJECT, prompt: ITEM_THREE });
           return fakeGatewayFinalText(EVENT_SEEN);
         }
         return null;

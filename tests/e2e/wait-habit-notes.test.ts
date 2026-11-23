@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Profile } from "./shell-sessions";
-import { fakeGatewayFinalText, fakeGatewayToolCall, tmuxAvailable } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, tmuxAvailable } from "./tmux-helpers";
 
 const TIMEOUT = 120_000;
 const STEP = 60_000;
@@ -21,14 +21,14 @@ test.skipIf(!tmuxAvailable())("a Bash command that sleeps in a loop to poll gets
   try {
     profile.script("Poll for the marker file.", [
       () =>
-        fakeGatewayToolCall("poll-loop", "Bash", {
+        fakeGatewayVerbCall("poll-loop", "Bash", {
           command: "touch marker.txt; while ! test -f marker.txt; do sleep 1; done; echo polled-$((40 + 2))",
           description: "Poll for the marker",
         }),
       () => fakeGatewayFinalText("Polled for the marker."),
     ]);
     profile.script("Print one line.", [
-      () => fakeGatewayToolCall("plain-echo", "Bash", { command: "echo plain-$((40 + 2))", description: "Print a line" }),
+      () => fakeGatewayVerbCall("plain-echo", "Bash", { command: "echo plain-$((40 + 2))", description: "Print a line" }),
       () => fakeGatewayFinalText("Printed one line."),
     ]);
     const shell = await profile.launch();

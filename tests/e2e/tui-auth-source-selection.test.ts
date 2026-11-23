@@ -42,6 +42,14 @@ if (process.env.FX_REQUIRE_TMUX === "1" && !HAS_TMUX) {
 const tmuxTest = test.skipIf(!HAS_TMUX);
 const profileStoredKeyTmuxTest = test.skipIf(!HAS_TMUX || process.platform === "darwin");
 const TIMEOUT = 30_000;
+
+function runCodeInput(verb: string, input: object) {
+  return { body: `return gm.${verb}(${JSON.stringify(input)});` };
+}
+
+function runCodeCall(verb: string, input: object) {
+  return { name: "run_code", arguments: JSON.stringify(runCodeInput(verb, input)) };
+}
 type RecordedRequest = { path: string };
 function countRevocations(requests: RecordedRequest[]): number {
   return requests.filter((request) => request.path === "/oauth/revoke").length;
@@ -925,8 +933,8 @@ function startFakeCodexToolLoop(options: {
 } = {}) {
   const bodies: string[] = [];
   const accessToken = chatgptAccessToken("acct_tool_loop");
-  const toolName = options.toolName ?? "read_file";
-  const toolArguments = options.toolArguments ?? { path: "README.md" };
+  const toolName = options.toolName ?? "run_code";
+  const toolArguments = options.toolArguments ?? runCodeInput("read_file", { path: "README.md" });
   const finalText = options.finalText ?? "CODEX_TOOL_LOOP_OK";
   const inputModalities = options.inputModalities ?? ["text"];
   const server = Bun.serve({
@@ -1022,8 +1030,8 @@ function startFakeGrokToolLoop(options: {
 } = {}) {
   const bodies: string[] = [];
   const accessToken = "grok-tool-loop-token";
-  const toolName = options.toolName ?? "read_file";
-  const toolArguments = options.toolArguments ?? { path: "README.md" };
+  const toolName = options.toolName ?? "run_code";
+  const toolArguments = options.toolArguments ?? runCodeCall("read_file", { path: "README.md" }).input;
   const finalText = options.finalText ?? "GROK_TOOL_LOOP_OK";
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -5103,7 +5111,7 @@ test("native assistant messages keep their boundaries and phases through tools a
     const progressTwo = message("msg_progress_two", "commentary", "Reading its contents.");
     const answer = message("msg_answer", "final_answer", "The value is 42.");
     const reasoning = { type: "reasoning", id: "rs_messages", summary: [], encrypted_content: "MESSAGE_REPLAY_CONTEXT" };
-    const call = { type: "function_call", id: "fc_messages", call_id: "call_messages", name: "read_file", arguments: JSON.stringify({ path: "notes.txt" }) };
+    const call = { type: "function_call", id: "fc_messages", call_id: "call_messages", ...runCodeCall("read_file", { path: "notes.txt" }) };
     const responses = [fakeGatewaySse([
       { type: "response.output_item.added", output_index: 0, item: { ...progress, content: [] } },
       { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: progress.id, delta: "Checking " },
@@ -5170,7 +5178,7 @@ test("native reasoning snapshots survive tools and saved resume exactly once", a
     const model = "fixture-model";
     const signature = "REASONING_SNAPSHOT_CONTEXT";
     const reasoning = { id: "rs_snapshot", type: "reasoning", summary: [], encrypted_content: signature };
-    const call = { id: "fc_snapshot", type: "function_call", call_id: "call_snapshot", name: "read_file", arguments: JSON.stringify({ path: "notes.txt" }) };
+    const call = { id: "fc_snapshot", type: "function_call", call_id: "call_snapshot", ...runCodeCall("read_file", { path: "notes.txt" }) };
     const events: object[] = [{ type: "response.output_item.added", output_index: 0, item: { id: reasoning.id, type: reasoning.type, summary: [] } }];
     if (shape !== "terminal-only") events.push({ type: "response.output_item.done", output_index: 0, item: shape === "enriched" || shape === "identity-conflict" ? { id: reasoning.id, type: reasoning.type, summary: [] } : reasoning });
     events.push(
@@ -5242,7 +5250,7 @@ test("native final snapshots preserve completed items and reject conflicting kin
     const reasoning = { type: "reasoning", id: "rs_snapshot", summary: [], encrypted_content: "SNAPSHOT_REASONING" };
     const message = (id: string, text: string, phase: string) => ({ type: "message", id, role: "assistant", status: "completed", phase, content: [{ type: "output_text", text, annotations: [] }] });
     const progress = message("msg_progress", "Inspecting.", "commentary");
-    const call = { type: "function_call", id: "fc_snapshot", call_id: "call_snapshot", name: "read_file", arguments: JSON.stringify({ path: "notes.txt" }) };
+    const call = { type: "function_call", id: "fc_snapshot", call_id: "call_snapshot", ...runCodeCall("read_file", { path: "notes.txt" }) };
     const replacement = message("msg_replacement", "CONFLICTING_TEXT", "final_answer");
     const events: object[] = [
       { type: "response.output_item.done", output_index: 0, item: reasoning },
@@ -5285,7 +5293,7 @@ test("native final snapshots preserve completed items and reject conflicting kin
         expect(result.output).not.toContain("CONFLICTING_TEXT");
       } else {
         expect(result.output).toBe("Inspecting.\n\nSNAPSHOT_OK");
-        expect(result.tool_calls).toEqual([{ name: "read_file", status: "success" }]);
+        expect(result.tool_calls).toEqual([{ name: "run_code", status: "success" }]);
         expect(trace).toContain("after_tool_execution");
       }
       const detail = await runFx(["session", "--json", "--id", result.session_id], { cwd: profile, env });
@@ -5328,7 +5336,7 @@ test("native discarded prose keeps tool continuation and saved resume valid", as
     const reasoning = { type: "reasoning", id: "rs_filtered", summary: [], encrypted_content: "RETAINED_REASONING" };
     const message = (id: string, text: string, phase?: string) => ({ type: "message", id, role: "assistant", status: "completed", ...(phase ? { phase } : {}), content: [{ type: "output_text", text, annotations: [] }] });
     const messages = multiple ? [message("msg_first", prose), message("msg_second", prose)] : [message("msg_first", prose, "commentary")];
-    const call = { type: "function_call", id: "fc_filtered", call_id: "call_filtered", name: "read_file", arguments: JSON.stringify({ path: "notes.txt" }) };
+    const call = { type: "function_call", id: "fc_filtered", call_id: "call_filtered", ...runCodeCall("read_file", { path: "notes.txt" }) };
     const toolIndex = messages.length + 1;
     const answer = (text: string) => fakeGatewaySse([
       { type: "response.output_item.done", output_index: 0, item: message("msg_answer", text) },
@@ -5361,7 +5369,7 @@ test("native discarded prose keeps tool continuation and saved resume valid", as
       expect(first.code, provider + "/" + mismatch + "/" + multiple + ": " + first.stdout + first.stderr).toBe(0);
       expect(first.signal).toBeNull();
       const result = JSON.parse(first.stdout);
-      expect(result.tool_calls).toEqual([{ name: "read_file", status: "success" }]);
+      expect(result.tool_calls).toEqual([{ name: "run_code", status: "success" }]);
       expect(result.output).toBe(mismatch ? "The notes were checked." : messages.map(() => prose).join("\n\n") + "\n\nThe notes were checked.");
       expect(direct.bodies).toHaveLength(2);
       const trace = readFileSync(tracePath, "utf8");
@@ -5411,7 +5419,7 @@ test("native terminal outcomes preserve recovery and incomplete warnings", async
     if (limited) events.push(event("LIMITED_ANSWER"));
     if (mode === "tool" || rejected) {
       writeFileSync(join(profile, "read-me.txt"), "must not be read by the failed attempt");
-      events.push({ type: "response.output_item.added", output_index: 1, item: { type: "function_call", id: "fc_failed", call_id: "failed", name: "read_file", arguments: JSON.stringify({ path: "read-me.txt" }) } });
+      events.push({ type: "response.output_item.added", output_index: 1, item: { type: "function_call", id: "fc_failed", call_id: "failed", ...runCodeCall("read_file", { path: "read-me.txt" }) } });
     }
     const failure = { code: rejected ? "invalid_prompt" : "server_error", message: rejected ? "OUTCOME_REJECTED" : "OUTCOME_RETRY" };
     if (limited) events.push({ type: "response.incomplete", response: { id: "resp_limited", ...(mode === "length-with-status" ? { status: "incomplete" } : {}), output: [], incomplete_details: { reason: "max_output_tokens" } } });
@@ -5502,10 +5510,10 @@ test("provider SSE framing preserves saved and resumed answers", async () => {
       const input = { path: "read-me.txt" };
       writeFileSync(join(profile, "read-me.txt"), "not admitted");
       if (native) {
-        const item = { type: "function_call", id: "fc_read", call_id: "read", name: "read_file", arguments: JSON.stringify(input) };
+        const item = { type: "function_call", id: "fc_read", call_id: "read", ...runCodeCall("read_file", input) };
         wire += frame({ type: "response.output_item.added", output_index: 1, item });
         wire += frame({ type: "response.output_item.done", output_index: 1, item });
-      } else wire += frame({ type: "tool-call", toolCallId: "read", toolName: "read_file", input });
+      } else wire += frame({ type: "tool-call", toolCallId: "read", toolName: "run_code", input: runCodeInput("read_file", input) });
       wire += "data: {invalid-json}\n\n";
     } else if (mode === "no-space") wire += "data:" + JSON.stringify(event(answer)) + "\n\n";
     else wire += JSON.stringify(event(answer), null, 2).split("\n").map(line => "data: " + line).join("\n") + "\n\n";
@@ -5583,7 +5591,7 @@ test("direct providers reconcile final text before saving or releasing tools", a
         events.push({ type: "response.output_text.delta", output_index: index, content_index: 0, item_id: id, delta: text });
       }
       if (mode === "conflict" && index === 0) {
-        events.push({ type: "response.output_item.added", output_index: 2, item: { type: "function_call", id: "fc_write", call_id: "write", name: "write_file", arguments: JSON.stringify({ path: "must-not-exist.txt", content: "not admitted" }) } });
+        events.push({ type: "response.output_item.added", output_index: 2, item: { type: "function_call", id: "fc_write", call_id: "write", ...runCodeCall("write_file", { path: "must-not-exist.txt", content: "not admitted" }) } });
         events.push({ type: "response.output_text.done", output_index: 0, content_index: 0, item_id: id, text: "CONFLICTING_FINAL" });
         break;
       }
@@ -5651,8 +5659,8 @@ test("direct providers keep images with their users through tools and resume", a
     const terminal = { type: "response.completed", response: { status: "completed", usage: { input_tokens: 50_000, output_tokens: 10 } } };
     const responses = [
       fakeGatewaySse([
-        { type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: "read_1", name: "read_file", arguments: "" } },
-        { type: "response.function_call_arguments.done", output_index: 0, arguments: JSON.stringify({ path: "fixture.txt" }) },
+        { type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: "read_1", name: "run_code", arguments: "" } },
+        { type: "response.function_call_arguments.done", output_index: 0, arguments: runCodeCall("read_file", { path: "fixture.txt" }).arguments },
         terminal,
       ]),
       ...Array.from({ length: 3 }, () => fakeGatewaySse([
@@ -5703,7 +5711,7 @@ test("direct providers keep images with their users through tools and resume", a
       expect(first.code, first.stdout + first.stderr).toBe(0);
       expect(first.signal).toBeNull();
       const sessionId = JSON.parse(first.stdout).session_id;
-      expect(JSON.parse(first.stdout).tool_calls).toEqual([{ name: "read_file", status: "success" }]);
+      expect(JSON.parse(first.stdout).tool_calls).toEqual([{ name: "run_code", status: "success" }]);
       expect(direct.bodies).toHaveLength(2);
       expect(imageOwners(direct.bodies[0])).toEqual([firstOwner]);
       expect(imageOwners(direct.bodies[1])).toEqual([firstOwner]);
@@ -5800,7 +5808,7 @@ test("direct provider tool identities obey the session boundary before execution
     for (const bytes of [256, 257]) {
       const profile = mkdtempSync(join(tmpdir(), `fx-${provider}-identity-`));
       const testGateway = startFakeGateway([]);
-      const options = { toolCallId: "i".repeat(bytes), toolName: "write_file", toolArguments: { path: "result.txt", content: "saved" } };
+      const options = { toolCallId: "i".repeat(bytes), toolName: "run_code", toolArguments: runCodeInput("write_file", { path: "result.txt", content: "saved" }) };
       const direct = provider === "codex" ? startFakeCodexToolLoop(options) : startFakeGrokToolLoop(options);
       try {
         if (provider === "codex") writeSeededChatGptLogin(profile, direct.accessToken);
@@ -5827,7 +5835,7 @@ test("direct provider tool identities obey the session boundary before execution
         expect(direct.bodies).toHaveLength(accepted ? 2 : 1);
         expect(testGateway.requests).toHaveLength(0);
         const json = JSON.parse(result.stdout);
-        expect(json.tool_calls).toEqual(accepted ? [{ name: "write_file", status: "success" }] : []);
+        expect(json.tool_calls).toEqual(accepted ? [{ name: "run_code", status: "success" }] : []);
         if (!accepted) expect(json.error).toBe("MalformedAuthoritativeToolIdentity");
         const detail = await runFx(["session", "--json", "--id", json.session_id], { cwd: profile, env });
         expect(detail.code).toBe(0);
