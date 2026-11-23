@@ -4517,8 +4517,8 @@ pub fn Runtime(comptime App: type) type {
 
         fn runCodeRowResult(row: run_code_presentation.Row, text: []u8) types.PersistedToolResult {
             return .{
-                .tool_call_id = row.call.id,
-                .tool_name = row.call.name,
+                .tool_call_id = @constCast(row.call.id),
+                .tool_name = @constCast(row.call.name),
                 .status = if (row.ok) .success else .failure,
                 .output = text,
                 .output_bytes = text.len,
