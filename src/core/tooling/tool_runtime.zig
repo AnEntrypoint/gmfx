@@ -1115,7 +1115,7 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         .failure => |reason| return .{ .ok = false, .body = reason },
         else => {},
     }
-    try gatherInnerCallContext(ctx, call);
+    if (try gatherInnerCallContext(ctx, call)) return .{ .ok = false, .body = types.context_deferred_tool_result_output };
     const outcome = try innerPermissionOutcome(ctx, arena, call);
     if (outcome.decision.isDenied() or outcome.tool_failure != null) return deniedInnerReply(arena, call, outcome);
     const authority = outcome.execution_authority orelse
@@ -1162,9 +1162,9 @@ fn deniedInnerReply(arena: Allocator, call: ToolCall, outcome: command_admission
     };
 }
 
-fn gatherInnerCallContext(ctx: Context, call: ToolCall) !void {
-    const gather = ctx.inner_context orelse return;
-    try gather.gather_fn(gather.context, call);
+fn gatherInnerCallContext(ctx: Context, call: ToolCall) !bool {
+    const gather = ctx.inner_context orelse return false;
+    return gather.gather_fn(gather.context, call);
 }
 
 fn keepCancelledCommand(ctx: Context, arena: Allocator, result: ToolExecutionResult) !void {

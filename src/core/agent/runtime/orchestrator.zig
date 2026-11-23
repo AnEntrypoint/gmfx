@@ -2864,7 +2864,7 @@ fn innerCallPermissionOutcome(raw: *anyopaque, arena: Allocator, call: ToolCall)
     );
 }
 
-fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!void {
+fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!bool {
     const state: *InnerContextGatherState = @ptrCast(@alignCast(raw));
     const targets = try tool_preparation.innerCallTargets(
         state.arena,
@@ -2873,7 +2873,7 @@ fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!void {
         state.config.access_scope,
         state.deps.tool_registry,
     );
-    if (targets.len == 0) return;
+    if (targets.len == 0) return false;
     var selected = try state.registry.selectDefaultApplicableContext(state.arena, .{
         .workspace_root = state.config.workspace_root,
         .access_scope = state.config.access_scope,
@@ -2894,6 +2894,8 @@ fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!void {
         state.replaced_sources.items,
         state.remind_sources,
     );
+    return selected.content != null and
+        !runtime_parallel_execution.isReadOnlyCall(state.deps.tool_registry, call);
 }
 
 fn candidateHasApplicableContextDelta(

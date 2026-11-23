@@ -3230,7 +3230,7 @@ test "inner verb calls gather applicable context from their own arguments" {
     const InnerRead = struct {
         fn execute(_: *anyopaque, request: runtime_tool_contracts.ToolExecutionRequest) !runtime_tool_contracts.ToolExecutionResult {
             const gather = request.inner_context orelse return error.InnerContextMissing;
-            try gather.gather_fn(gather.context, toolCall("inner_call", "read_file", "{\"path\":\"nested/inner.txt\"}"));
+            _ = try gather.gather_fn(gather.context, toolCall("inner_call", "read_file", "{\"path\":\"nested/inner.txt\"}"));
             return .{ .model_output = "ok" };
         }
     };
@@ -3244,6 +3244,55 @@ test "inner verb calls gather applicable context from their own arguments" {
 
     try std.testing.expectEqual(@as(usize, 2), EmptyApplicableContext.select_calls);
     try std.testing.expectEqual(@as(usize, 1), EmptyApplicableContext.last_target_count);
+}
+
+test "inner file mutation defers on new scoped context while an inner read proceeds" {
+    const alloc = std.testing.allocator;
+    defer ApplicableContextDelta.reset("", null);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "workspace/nested");
+    {
+        var inner = try tmp.dir.createFile(std.testing.io, "workspace/nested/inner.txt", .{});
+        defer inner.close(std.testing.io);
+        try inner.writeStreamingAll(std.testing.io, "inner");
+    }
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+
+    const calls = [_]ToolCall{toolCall("outer_call", "read_file", "{\"path\":\"nested/inner.txt\"}")};
+    const completions = [_]FakeCompletion{
+        .{ .tool_calls = &calls },
+        .{ .content = "Final" },
+    };
+    var gateway = FakeGateway.init(alloc, &completions);
+    defer gateway.deinit();
+    var hooks = FakeAgentRuntimeDeps.init(alloc);
+    defer hooks.deinit();
+    hooks.context_enabled = true;
+    hooks.context_registry = ApplicableContextDelta.registry;
+    const InnerMutation = struct {
+        var mutation_deferred = false;
+        var read_deferred = true;
+
+        fn execute(_: *anyopaque, request: runtime_tool_contracts.ToolExecutionRequest) !runtime_tool_contracts.ToolExecutionResult {
+            const gather = request.inner_context orelse return error.InnerContextMissing;
+            read_deferred = try gather.gather_fn(gather.context, toolCall("inner_read", "read_file", "{\"path\":\"nested/inner.txt\"}"));
+            mutation_deferred = try gather.gather_fn(gather.context, toolCall("inner_write", "write_file", "{\"path\":\"nested/inner.txt\",\"content\":\"changed\"}"));
+            return .{ .model_output = "ok" };
+        }
+    };
+    var override_context: u8 = 0;
+    hooks.tool_execution_override = .{ .context = &override_context, .execute_fn = InnerMutation.execute };
+    var fixture = PromptFixture{ .workspace_root = workspace };
+    ApplicableContextDelta.reset("", null);
+    var job = fixture.job();
+    job.permission_mode = .auto;
+
+    try runFakePrompt(&gateway, &hooks, fixture.config(), job);
+
+    try std.testing.expect(!InnerMutation.read_deferred);
+    try std.testing.expect(InnerMutation.mutation_deferred);
 }
 
 test "modern parallel preparation validates and checks availability once" {

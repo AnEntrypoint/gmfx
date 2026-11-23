@@ -137,7 +137,7 @@ pub fn unavailableHostToolResult(alloc: Allocator) Allocator.Error!ToolExecution
 
 pub const InnerContextGather = struct {
     context: *anyopaque,
-    gather_fn: *const fn (context: *anyopaque, call: ToolCall) anyerror!void,
+    gather_fn: *const fn (context: *anyopaque, call: ToolCall) anyerror!bool,
 };
 
 pub const InnerPermission = struct {
