@@ -106,7 +106,7 @@ fn compactArgs(alloc: std.mem.Allocator, arena: std.mem.Allocator, args_json: []
         switch (field.value_ptr.*) {
             .string => |text| {
                 try json.objectField(field.key_ptr.*);
-                const limit = if (std.mem.eql(u8, field.key_ptr.*, "path") or std.mem.eql(u8, field.key_ptr.*, "command")) max_whole_value_bytes else max_args_bytes;
+                const limit: usize = if (std.mem.eql(u8, field.key_ptr.*, "path") or std.mem.eql(u8, field.key_ptr.*, "command")) max_whole_value_bytes else max_args_bytes;
                 try json.write(text_utils.utf8PrefixByBytes(text, limit));
             },
             .integer, .float, .bool => {
