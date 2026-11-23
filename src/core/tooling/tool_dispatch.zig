@@ -295,6 +295,8 @@ pub const InnerCallReply = struct {
     deferred: bool = false,
     additions: u32 = 0,
     deletions: u32 = 0,
+    output_handle: ?[]const u8 = null,
+    output_bytes: usize = 0,
 };
 
 pub const InnerCallGate = struct {

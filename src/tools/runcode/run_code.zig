@@ -15,6 +15,7 @@ const tool_mcp_registry = @import("../../core/tooling/tool_mcp_registry.zig");
 const tool_mcp_runtime = @import("../../core/tooling/tool_mcp_runtime.zig");
 const tool_args = @import("../../core/tooling/tool_args.zig");
 const call_ledger = @import("call_ledger.zig");
+const result_store = @import("../../core/session/result_store.zig");
 
 pub const tool_name = "run_code";
 
@@ -137,6 +138,15 @@ const Bridge = struct {
     }
 };
 
+fn storeVerbOutput(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, text: []const u8) anyerror!?[]u8 {
+    const bridge: *Bridge = @ptrCast(@alignCast(context));
+    if (bridge.ctx.session_child_capability) |capability| {
+        return try result_store.storeLargeResultManaged(alloc, capability, bridge.ctx.tool_call_id, name, text);
+    }
+    const dir = bridge.ctx.tool_result_dir orelse return null;
+    return try result_store.storeLargeResult(alloc, dir, bridge.ctx.tool_call_id, name, text);
+}
+
 fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror![]u8 {
     return (try invokeCountedVerb(context, alloc, name, args_json)).reply;
 }
@@ -169,9 +179,16 @@ fn invokeCountedVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []cons
     try bridge.keepCommandResult(reply.ok, reply.command_result_json);
     bridge.denied = bridge.denied or reply.denied;
     gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
-    if (host) return .{ .reply = try alloc.dupe(u8, reply.body) };
-    const reply_text = if (reply.deferred) try deferredVerbReply(alloc, reply.body) else try verbReply(alloc, reply.ok, reply.body);
-    return .{ .reply = reply_text, .additions = reply.additions, .deletions = reply.deletions };
+    const reply_text = if (host) try alloc.dupe(u8, reply.body) else if (reply.deferred) try deferredVerbReply(alloc, reply.body) else try verbReply(alloc, reply.ok, reply.body);
+    errdefer alloc.free(reply_text);
+    return .{
+        .reply = reply_text,
+        .additions = reply.additions,
+        .deletions = reply.deletions,
+        .output = if (reply.output_handle == null) try alloc.dupe(u8, reply.body) else null,
+        .output_handle = if (reply.output_handle) |handle| try alloc.dupe(u8, handle) else null,
+        .output_bytes = reply.output_bytes,
+    };
 }
 
 fn ungatedReply(
@@ -380,7 +397,7 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     const catalog = buildCatalog(ctx.allocator, ctx, registry, bodyNeedsMcpCatalog(input.body)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not list its verbs") };
     defer ctx.allocator.free(catalog);
     var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
-    var ledger = call_ledger.Ledger.init(ctx.allocator, &bridge, invokeCountedVerb);
+    var ledger = call_ledger.Ledger.init(ctx.allocator, &bridge, invokeCountedVerb, .{ .context = &bridge, .write = storeVerbOutput });
     defer ledger.deinit();
     const outcome = runcode.execute(ctx.allocator, input.body, .{
         .format = input.format,

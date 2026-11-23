@@ -2,6 +2,7 @@ const std = @import("std");
 const text_utils = @import("../../core/shared/text_utils.zig");
 
 pub const max_entries = 50;
+pub const max_inline_output_bytes = 8 * 1024;
 const max_args_bytes = 120;
 const max_whole_value_bytes = 4096;
 
@@ -13,12 +14,33 @@ const Entry = struct {
     deferred: ?bool = null,
     additions: ?u32 = null,
     deletions: ?u32 = null,
+    output: ?[]const u8 = null,
+    output_handle: ?[]const u8 = null,
+    output_bytes: ?usize = null,
 };
 
 pub const Invoked = struct {
     reply: []u8,
     additions: u32 = 0,
     deletions: u32 = 0,
+    output: ?[]u8 = null,
+    output_handle: ?[]u8 = null,
+    output_bytes: usize = 0,
+
+    fn releaseOutput(self: Invoked, alloc: std.mem.Allocator) void {
+        if (self.output) |text| alloc.free(text);
+        if (self.output_handle) |handle| alloc.free(handle);
+    }
+};
+
+pub const Store = struct {
+    context: *anyopaque,
+    write: *const fn (context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, text: []const u8) anyerror!?[]u8,
+};
+
+pub const PointerReader = struct {
+    context: *anyopaque,
+    read: *const fn (context: *anyopaque, alloc: std.mem.Allocator, handle: []const u8, bytes: usize) anyerror![]u8,
 };
 
 const Reply = struct {
@@ -43,11 +65,12 @@ pub const Ledger = struct {
     arena: std.heap.ArenaAllocator,
     context: *anyopaque,
     inner: InvokeFn,
+    store: ?Store,
     entries: std.ArrayList(Entry) = .empty,
     dropped: usize = 0,
 
-    pub fn init(alloc: std.mem.Allocator, context: *anyopaque, inner: InvokeFn) Ledger {
-        return .{ .arena = .init(alloc), .context = context, .inner = inner };
+    pub fn init(alloc: std.mem.Allocator, context: *anyopaque, inner: InvokeFn, store: ?Store) Ledger {
+        return .{ .arena = .init(alloc), .context = context, .inner = inner, .store = store };
     }
 
     pub fn deinit(self: *Ledger) void {
@@ -58,6 +81,7 @@ pub const Ledger = struct {
         const self: *Ledger = @ptrCast(@alignCast(context));
         const invoked = try self.inner(self.context, alloc, name, args_json);
         errdefer alloc.free(invoked.reply);
+        defer invoked.releaseOutput(alloc);
         try self.record(alloc, name, args_json, invoked);
         return invoked.reply;
     }
@@ -69,6 +93,7 @@ pub const Ledger = struct {
         }
         const arena = self.arena.allocator();
         const outcome = try replyOutcome(alloc, arena, invoked.reply);
+        const saved = try self.saveOutput(alloc, arena, name, invoked);
         try self.entries.append(arena, .{
             .verb = try arena.dupe(u8, name),
             .args = try compactArgs(alloc, arena, args_json),
@@ -77,7 +102,26 @@ pub const Ledger = struct {
             .deferred = if (outcome.deferred) true else null,
             .additions = if (invoked.additions > 0) invoked.additions else null,
             .deletions = if (invoked.deletions > 0) invoked.deletions else null,
+            .output = saved.output,
+            .output_handle = saved.handle,
+            .output_bytes = saved.bytes,
         });
+    }
+
+    const Saved = struct {
+        output: ?[]const u8 = null,
+        handle: ?[]const u8 = null,
+        bytes: ?usize = null,
+    };
+
+    fn saveOutput(self: *Ledger, alloc: std.mem.Allocator, arena: std.mem.Allocator, name: []const u8, invoked: Invoked) !Saved {
+        if (invoked.output_handle) |handle| return .{ .handle = try arena.dupe(u8, handle), .bytes = invoked.output_bytes };
+        const text = invoked.output orelse return .{};
+        if (text.len <= max_inline_output_bytes) return .{ .output = try arena.dupe(u8, text) };
+        const store = self.store orelse return .{};
+        const handle = (try store.write(store.context, alloc, name, text)) orelse return .{};
+        defer alloc.free(handle);
+        return .{ .handle = try arena.dupe(u8, handle), .bytes = text.len };
     }
 
     pub fn report(self: *const Ledger, alloc: std.mem.Allocator, base: []u8) ![]u8 {
@@ -97,6 +141,13 @@ pub const Ledger = struct {
         return out.toOwnedSlice();
     }
 };
+
+pub fn resolveOutput(alloc: std.mem.Allocator, output: ?[]const u8, handle: ?[]const u8, bytes: ?usize, reader: PointerReader) !?[]u8 {
+    if (output) |text| return try alloc.dupe(u8, text);
+    const pointer = handle orelse return null;
+    const total = bytes orelse return error.MalformedCallOutput;
+    return try reader.read(reader.context, alloc, pointer, total);
+}
 
 fn compactArgs(alloc: std.mem.Allocator, arena: std.mem.Allocator, args_json: []const u8) ![]const u8 {
     const parsed = std.json.parseFromSlice(std.json.Value, alloc, args_json, .{}) catch return arena.dupe(u8, text_utils.utf8PrefixByBytes(args_json, max_args_bytes));
@@ -137,6 +188,133 @@ fn replyOutcome(alloc: std.mem.Allocator, arena: std.mem.Allocator, reply: []con
     };
 }
 
+const Canned = struct {
+    output: []const u8 = "",
+    handle: ?[]const u8 = null,
+    handle_bytes: usize = 0,
+};
+
+fn cannedInvoke(context: *anyopaque, alloc: std.mem.Allocator, _: []const u8, _: []const u8) anyerror!Invoked {
+    const canned: *Canned = @ptrCast(@alignCast(context));
+    return .{
+        .reply = try alloc.dupe(u8, "{\"ok\":true,\"text\":\"x\"}"),
+        .output = if (canned.handle == null) try alloc.dupe(u8, canned.output) else null,
+        .output_handle = if (canned.handle) |handle| try alloc.dupe(u8, handle) else null,
+        .output_bytes = canned.handle_bytes,
+    };
+}
+
+const FakeStore = struct {
+    calls: usize = 0,
+
+    fn write(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, text: []const u8) anyerror!?[]u8 {
+        const self: *FakeStore = @ptrCast(@alignCast(context));
+        self.calls += 1;
+        return try std.fmt.allocPrint(alloc, "result-{s}-{d}.txt", .{ name, text.len });
+    }
+
+    fn store(self: *FakeStore) Store {
+        return .{ .context = self, .write = write };
+    }
+};
+
+const Reader = struct {
+    calls: usize = 0,
+
+    fn read(context: *anyopaque, alloc: std.mem.Allocator, handle: []const u8, bytes: usize) anyerror![]u8 {
+        const self: *Reader = @ptrCast(@alignCast(context));
+        self.calls += 1;
+        return std.fmt.allocPrint(alloc, "{s}:{d}", .{ handle, bytes });
+    }
+};
+
+const big_output = text_utils.repeat("o", max_inline_output_bytes + 1);
+
+test "an output within the cap is kept inline and survives the report round trip" {
+    const alloc = std.testing.allocator;
+    var canned: Canned = .{ .output = "line one\nline two" };
+    var fake: FakeStore = .{};
+    var ledger = Ledger.init(alloc, &canned, cannedInvoke, fake.store());
+    defer ledger.deinit();
+    alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{\"path\":\"a\"}"));
+    try std.testing.expectEqualStrings("line one\nline two", ledger.entries.items[0].output.?);
+    try std.testing.expect(ledger.entries.items[0].output_handle == null);
+    try std.testing.expectEqual(@as(usize, 0), fake.calls);
+    const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true}"));
+    defer alloc.free(text);
+    const Replay = struct {
+        calls: []const struct {
+            output: ?[]const u8 = null,
+            output_handle: ?[]const u8 = null,
+            output_bytes: ?usize = null,
+        },
+    };
+    const parsed = try std.json.parseFromSlice(Replay, alloc, text, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("line one\nline two", parsed.value.calls[0].output.?);
+    try std.testing.expect(parsed.value.calls[0].output_handle == null);
+}
+
+test "an output past the cap is kept as a pointer with its byte count and no inline part" {
+    const alloc = std.testing.allocator;
+    var canned: Canned = .{ .output = big_output };
+    var fake: FakeStore = .{};
+    var ledger = Ledger.init(alloc, &canned, cannedInvoke, fake.store());
+    defer ledger.deinit();
+    alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{}"));
+    const entry = ledger.entries.items[0];
+    try std.testing.expect(entry.output == null);
+    try std.testing.expectEqualStrings("result-read_file-8193.txt", entry.output_handle.?);
+    try std.testing.expectEqual(@as(?usize, big_output.len), entry.output_bytes);
+    try std.testing.expectEqual(@as(usize, 1), fake.calls);
+    const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true}"));
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"output_handle\":\"result-read_file-8193.txt\",\"output_bytes\":8193") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"output\":") == null);
+}
+
+test "a verb whose own result is already stored is pointed at that handle without storing again" {
+    const alloc = std.testing.allocator;
+    var canned: Canned = .{ .output = "preview", .handle = "result-inner.txt", .handle_bytes = 40000 };
+    var fake: FakeStore = .{};
+    var ledger = Ledger.init(alloc, &canned, cannedInvoke, fake.store());
+    defer ledger.deinit();
+    alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{}"));
+    const entry = ledger.entries.items[0];
+    try std.testing.expect(entry.output == null);
+    try std.testing.expectEqualStrings("result-inner.txt", entry.output_handle.?);
+    try std.testing.expectEqual(@as(?usize, 40000), entry.output_bytes);
+    try std.testing.expectEqual(@as(usize, 0), fake.calls);
+}
+
+test "the ledger keeps max_entries entries and stores output only for the entries it keeps" {
+    const alloc = std.testing.allocator;
+    var canned: Canned = .{ .output = big_output };
+    var fake: FakeStore = .{};
+    var ledger = Ledger.init(alloc, &canned, cannedInvoke, fake.store());
+    defer ledger.deinit();
+    for (0..max_entries + 10) |_| alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{}"));
+    try std.testing.expectEqual(@as(usize, max_entries), ledger.entries.items.len);
+    try std.testing.expectEqual(@as(usize, 10), ledger.dropped);
+    try std.testing.expectEqual(@as(usize, max_entries), fake.calls);
+}
+
+test "resolveOutput returns inline output without reading and reads a pointer with its byte count" {
+    const alloc = std.testing.allocator;
+    var reader: Reader = .{};
+    const source: PointerReader = .{ .context = &reader, .read = Reader.read };
+    const inline_text = (try resolveOutput(alloc, "hello", null, null, source)).?;
+    defer alloc.free(inline_text);
+    try std.testing.expectEqualStrings("hello", inline_text);
+    try std.testing.expectEqual(@as(usize, 0), reader.calls);
+    const stored = (try resolveOutput(alloc, null, "result-a.txt", 9000, source)).?;
+    defer alloc.free(stored);
+    try std.testing.expectEqualStrings("result-a.txt:9000", stored);
+    try std.testing.expectEqual(@as(usize, 1), reader.calls);
+    try std.testing.expect((try resolveOutput(alloc, null, null, null, source)) == null);
+    try std.testing.expectEqual(@as(usize, 1), reader.calls);
+}
+
 fn testInvoke(_: *anyopaque, alloc: std.mem.Allocator, name: []const u8, _: []const u8) anyerror!Invoked {
     return .{ .reply = try alloc.dupe(u8, if (std.mem.eql(u8, name, "bad")) "{\"ok\":false,\"error\":\"no\"}" else "{\"ok\":true,\"text\":\"x\"}") };
 }
@@ -156,7 +334,7 @@ fn deferredInvoke(_: *anyopaque, alloc: std.mem.Allocator, _: []const u8, _: []c
 test "the ledger marks a context-deferred verb reply as deferred rather than failed" {
     const alloc = std.testing.allocator;
     var unused: u8 = 0;
-    var ledger = Ledger.init(alloc, &unused, deferredInvoke);
+    var ledger = Ledger.init(alloc, &unused, deferredInvoke, null);
     defer ledger.deinit();
     alloc.free(try Ledger.invoke(&ledger, alloc, "Bash", "{}"));
     try std.testing.expectEqual(@as(?bool, true), ledger.entries.items[0].deferred);
@@ -169,7 +347,7 @@ test "the ledger marks a context-deferred verb reply as deferred rather than fai
 test "the ledger carries a notice found in a verb's result body into the report" {
     const alloc = std.testing.allocator;
     var unused: u8 = 0;
-    var ledger = Ledger.init(alloc, &unused, noticeInvoke);
+    var ledger = Ledger.init(alloc, &unused, noticeInvoke, null);
     defer ledger.deinit();
     alloc.free(try Ledger.invoke(&ledger, alloc, "Bash", "{}"));
     try std.testing.expectEqualStrings("shell snapshot unavailable", ledger.entries.items[0].notice.?);
@@ -181,7 +359,7 @@ test "the ledger carries a notice found in a verb's result body into the report"
 test "the ledger leaves out a notice the result value already carries" {
     const alloc = std.testing.allocator;
     var unused: u8 = 0;
-    var ledger = Ledger.init(alloc, &unused, noticeInvoke);
+    var ledger = Ledger.init(alloc, &unused, noticeInvoke, null);
     defer ledger.deinit();
     alloc.free(try Ledger.invoke(&ledger, alloc, "Bash", "{}"));
     const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true,\"value\":\"shell snapshot unavailable\"}"));
@@ -192,7 +370,7 @@ test "the ledger leaves out a notice the result value already carries" {
 test "the ledger keeps a write's args parseable and carries its diff counts into the report" {
     const alloc = std.testing.allocator;
     var unused: u8 = 0;
-    var ledger = Ledger.init(alloc, &unused, diffInvoke);
+    var ledger = Ledger.init(alloc, &unused, diffInvoke, null);
     defer ledger.deinit();
     alloc.free(try Ledger.invoke(&ledger, alloc, "write_file", "{\"path\":\"a.txt\",\"content\":\"" ++ text_utils.repeat("z", 400) ++ "\",\"nested\":{\"k\":1}}"));
     const entry = ledger.entries.items[0];
@@ -208,7 +386,7 @@ test "the ledger keeps a write's args parseable and carries its diff counts into
 test "the ledger keeps a long path whole" {
     const alloc = std.testing.allocator;
     var unused: u8 = 0;
-    var ledger = Ledger.init(alloc, &unused, testInvoke);
+    var ledger = Ledger.init(alloc, &unused, testInvoke, null);
     defer ledger.deinit();
     const path = text_utils.repeat("p", max_args_bytes * 2);
     alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{\"path\":\"" ++ path ++ "\"}"));
@@ -218,7 +396,7 @@ test "the ledger keeps a long path whole" {
 test "the ledger keeps a long command whole" {
     const alloc = std.testing.allocator;
     var unused: u8 = 0;
-    var ledger = Ledger.init(alloc, &unused, testInvoke);
+    var ledger = Ledger.init(alloc, &unused, testInvoke, null);
     defer ledger.deinit();
     const command = text_utils.repeat("c", max_args_bytes * 2);
     alloc.free(try Ledger.invoke(&ledger, alloc, "Bash", "{\"command\":\"" ++ command ++ "\"}"));
@@ -228,7 +406,7 @@ test "the ledger keeps a long command whole" {
 test "the ledger records each verb call with a bounded args summary and appends it to the report" {
     const alloc = std.testing.allocator;
     var unused: u8 = 0;
-    var ledger = Ledger.init(alloc, &unused, testInvoke);
+    var ledger = Ledger.init(alloc, &unused, testInvoke, null);
     defer ledger.deinit();
     alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{\"path\":\"a\"}"));
     alloc.free(try Ledger.invoke(&ledger, alloc, "bad", "{\"q\":\"" ++ text_utils.repeat("y", 200) ++ "\"}"));
