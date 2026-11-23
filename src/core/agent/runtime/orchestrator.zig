@@ -12207,7 +12207,7 @@ fn processQueuedPromptLoop(
                 defer if (!replay_handed_off) {
                     execution.command_replay_capture.?.discard(arena);
                 };
-                const cancelled_command = if (execution_is_command and
+                const cancelled_command = inner_cancelled_command.value orelse if (execution_is_command and
                     (config.session_child_capability != null or
                         config.ephemeral_command_replay != null))
                     runtime_execution_memory.retainCancelledCommandReplay(
@@ -12216,7 +12216,7 @@ fn processQueuedPromptLoop(
                         execution.command_replay_capture,
                     )
                 else
-                    inner_cancelled_command.value;
+                    null;
                 _ = try stream_ctx.provisional_statuses.finishCancelledCall(
                     deps,
                     stream_ctx.alloc,
