@@ -3269,7 +3269,7 @@ fn captureToolExecutionResult(
             if (result.status == .failure) "error" else "success",
             result,
             if (result.status == .failure)
-                if (result.command_result_json != null) .command_failed else .tool_failed
+                if (result.failure_kind == .denied) .rejected else if (result.command_result_json != null) .command_failed else .tool_failed
             else
                 null,
             null,
@@ -3382,7 +3382,7 @@ fn appendToolCallRecord(
     defer scratch_state.deinit();
     const scratch = scratch_state.allocator();
     const is_shell = std.mem.eql(u8, call.name, "Bash") or
-        (if (result) |execution| execution.command_result_json != null else false);
+        (if (result) |execution| execution.command_result_json != null or execution.failure_kind == .denied else false);
     const error_code = if (is_shell and error_category != null)
         try ctx.alloc.dupe(
             u8,

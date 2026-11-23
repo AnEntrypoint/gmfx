@@ -2827,6 +2827,43 @@ const InnerContextGatherState = struct {
     }
 };
 
+const InnerPermissionState = struct {
+    deps: *const AgentRuntimeDeps,
+    config: Config,
+    review_context: permission_auto_classifier.ReviewTurnContext,
+    mode: types.PermissionMode,
+    grants: []const PermissionGrant,
+    live_authority: ?runtime_tool_contracts.LiveToolAuthority,
+    advertised_dynamic_tool_names: []const []const u8,
+    advertised_dynamic_tools: []const agent_stream_provider.DynamicFunctionTool,
+    step_ctx: TraceContext,
+
+    fn source(self: *InnerPermissionState) runtime_tool_contracts.InnerPermission {
+        return .{ .context = @ptrCast(self), .outcome_fn = innerCallPermissionOutcome };
+    }
+};
+
+fn innerCallPermissionOutcome(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!command_admission.PermissionOutcome {
+    const state: *InnerPermissionState = @ptrCast(@alignCast(raw));
+    var review = state.review_context;
+    review.target_call_id = call.id;
+    review.pending_assistant = .{ .role = .assistant, .tool_calls = try arena.dupe(ToolCall, &.{call}) };
+    return runtime_tool_admission.requestToolPermissionTraced(
+        state.deps,
+        arena,
+        call,
+        review,
+        state.mode,
+        state.grants,
+        state.live_authority,
+        null,
+        state.advertised_dynamic_tool_names,
+        state.advertised_dynamic_tools,
+        state.config.workspace_root,
+        state.step_ctx,
+    );
+}
+
 fn gatherInnerCallContext(raw: *anyopaque, call: ToolCall) anyerror!void {
     const state: *InnerContextGatherState = @ptrCast(@alignCast(raw));
     const targets = try tool_preparation.innerCallTargets(
@@ -6392,33 +6429,6 @@ fn buildReviewTurnContext(
         },
         .trusted_root_context = trusted_root_context,
         .current_turn_untrusted_messages = current_turn_messages,
-    };
-}
-
-fn permissionDeniedModelOutput(
-    alloc: Allocator,
-    tool_name: []const u8,
-    reason: types.ToolPermissionDenialReason,
-    outcome: command_admission.PermissionOutcome,
-) ![]u8 {
-    if (reason == .policy_denied) {
-        if (outcome.rule_reason) |rule_reason| {
-            return tool_result_errors.toolRuleDeniedJson(alloc, tool_name, rule_reason);
-        }
-    }
-    return switch (reason) {
-        .review_caution, .review_evidence_incomplete, .review_unavailable => tool_result_errors.toolReviewHeldJson(
-            alloc,
-            tool_name,
-            reason,
-            if (outcome.auto_review_result) |result| result.rationale else null,
-            outcome.auto_review_failure,
-        ),
-        .user_denied, .auto_denied, .policy_denied, .permission_required, .dont_ask_denied => tool_result_errors.toolPermissionDeniedJson(
-            alloc,
-            tool_name,
-            reason,
-        ),
     };
 }
 
@@ -10578,7 +10588,7 @@ fn processQueuedPromptLoop(
                             parallel_call,
                             permission_outcome,
                         );
-                        const denied_output = try permissionDeniedModelOutput(
+                        const denied_output = try tool_result_errors.permissionDeniedOutput(
                             arena,
                             parallel_call.name,
                             reason,
@@ -11850,7 +11860,7 @@ fn processQueuedPromptLoop(
                     tool_call,
                     permission_outcome,
                 );
-                const denied_output = try permissionDeniedModelOutput(
+                const denied_output = try tool_result_errors.permissionDeniedOutput(
                     arena,
                     tool_call.name,
                     reason,
@@ -12096,8 +12106,20 @@ fn processQueuedPromptLoop(
             else
                 null;
             var inner_cancelled_command: runtime_tool_contracts.CancelledCommandSink = .{ .alloc = arena };
+            var inner_permission_state: InnerPermissionState = .{
+                .deps = deps,
+                .config = config,
+                .review_context = review_context,
+                .mode = action_permission_mode,
+                .grants = action_grants,
+                .live_authority = if (live_authority) |resolved| resolved.authority else null,
+                .advertised_dynamic_tool_names = advertised_dynamic_tool_names,
+                .advertised_dynamic_tools = advertised_dynamic_tools,
+                .step_ctx = step_ctx,
+            };
             var execution = deps.executeToolCall(.{
                 .inner_context = if (inner_context_state) |*state| state.gather() else null,
+                .inner_permission = inner_permission_state.source(),
                 .skill_locations = if (skills.catalog) |catalog| &catalog.locations else null,
                 .call_allocator = call_allocator,
                 .result_allocator = arena,

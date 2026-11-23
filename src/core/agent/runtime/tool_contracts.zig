@@ -140,6 +140,11 @@ pub const InnerContextGather = struct {
     gather_fn: *const fn (context: *anyopaque, call: ToolCall) anyerror!void,
 };
 
+pub const InnerPermission = struct {
+    context: *anyopaque,
+    outcome_fn: *const fn (context: *anyopaque, arena: Allocator, call: ToolCall) anyerror!command_admission.PermissionOutcome,
+};
+
 pub const CancelledCommandSink = struct {
     alloc: Allocator,
     value: ?types.CancelledCommandPresentation = null,
@@ -173,6 +178,7 @@ pub const ToolExecutionRequest = struct {
     lifecycle_id: ?types.ToolLifecycleId = null,
     presentation_group_id: ?types.ToolPresentationGroupId = null,
     inner_context: ?InnerContextGather = null,
+    inner_permission: ?InnerPermission = null,
 };
 
 pub const DiffEntryPayload = diff.DiffEntryPayload;

@@ -9582,7 +9582,7 @@ describe("acp: model-independent", () => {
         expect(permission.params.toolCall.toolCallId).toBe("rejected_call_1:1");
         expect(existsSync(target)).toBe(false);
         const wire = JSON.stringify(result.messages);
-        expect(wire).toContain("Permission to run write_file was not granted");
+        expect(wire).toContain("tool_permission_denied");
         expect(wire).toContain('"status":"failed"');
         expect(wire).not.toContain('"status":"error"');
         expect(client.stderr).toBe("");

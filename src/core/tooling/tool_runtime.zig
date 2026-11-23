@@ -174,6 +174,7 @@ pub const Context = struct {
     first_call_tool_choice: types.ToolChoice = .auto,
     tool_registry: tool_dispatch.Registry = .{},
     inner_context: ?tool_contracts.InnerContextGather = null,
+    inner_permission: ?tool_contracts.InnerPermission = null,
     host_tool_provider: ?tool_dispatch.HostToolProvider = null,
     subagent_host: ?*subagent_tool_host.Runtime = null,
     subagent_caller_id: ?[]const u8 = null,
@@ -425,6 +426,7 @@ pub fn executeToolCallAuthorized(
     execution_ctx.observer = request.observer orelse ctx.observer;
     execution_ctx.skill_locations = request.skill_locations orelse ctx.skill_locations;
     execution_ctx.inner_context = request.inner_context;
+    execution_ctx.inner_permission = request.inner_permission;
     if (request.permission_mode) |permission_mode| {
         execution_ctx.permission_mode = permission_mode;
     }
@@ -1114,8 +1116,8 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         else => {},
     }
     try gatherInnerCallContext(ctx, call);
-    const outcome = try reviewedPermissionOutcome(ctx, arena, call);
-    if (try permissionDenial(arena, call.name, outcome)) |text| return .{ .ok = false, .body = text };
+    const outcome = try innerPermissionOutcome(ctx, arena, call);
+    if (outcome.decision.isDenied() or outcome.tool_failure != null) return deniedInnerReply(arena, call, outcome);
     const authority = outcome.execution_authority orelse
         return .{ .ok = false, .body = try arena.print("Permission to run {s} carried no execution authority.", .{call.name}) };
     const result_allocator = switch (authority) {
@@ -1138,6 +1140,22 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
     for (result.context_notices) |notice| try recordContextNoticeForDispatch(state.notices, notice);
     const images = if (result.tool_result_memory) |memory| memory.tool_images else &.{};
     return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json };
+}
+
+fn innerPermissionOutcome(ctx: Context, arena: Allocator, call: ToolCall) !command_admission.PermissionOutcome {
+    const source = ctx.inner_permission orelse return reviewedPermissionOutcome(ctx, arena, call);
+    return source.outcome_fn(source.context, arena, call);
+}
+
+fn deniedInnerReply(arena: Allocator, call: ToolCall, outcome: command_admission.PermissionOutcome) !tool_dispatch.InnerCallReply {
+    const denied = outcome.decision.isDenied() and isWorkspaceCommandToolName(call.name);
+    if (outcome.tool_failure orelse outcome.feedback) |text| return .{ .ok = false, .body = text, .denied = denied };
+    const reason = outcome.denial_reason orelse outcome.decision.denialReason() orelse .user_denied;
+    return .{
+        .ok = false,
+        .body = try tool_result_errors.permissionDeniedOutput(arena, call.name, reason, outcome),
+        .denied = denied,
+    };
 }
 
 fn gatherInnerCallContext(ctx: Context, call: ToolCall) !void {
@@ -1484,6 +1502,7 @@ const DispatchMetadata = struct {
     subagent_completion: ?types.SubagentStatus = null,
     tool_result_memory: ?types.ToolResultMemory = null,
     command_result_json: ?[]const u8 = null,
+    permission_denied: bool = false,
 
     fn attach(self: *DispatchMetadata, ctx: *tool_dispatch.DispatchContext) void {
         ctx.model_content_kind_sink = &self.model_content_kind;
@@ -1492,6 +1511,7 @@ const DispatchMetadata = struct {
         ctx.web_fetch_completion_sink = &self.web_fetch_completion;
         ctx.tool_result_memory_sink = &self.tool_result_memory;
         ctx.command_result_json_sink = &self.command_result_json;
+        ctx.permission_denied_sink = &self.permission_denied;
     }
 };
 
@@ -1518,6 +1538,7 @@ fn toolExecutionResultFromDispatch(
         },
         .failure => .{
             .status = .failure,
+            .failure_kind = if (metadata.permission_denied) .denied else .none,
             .model_output = result.body,
             .inner_usage = metadata.inner_usage,
             .web_search_completion = metadata.web_search_completion,
@@ -3440,7 +3461,65 @@ test "headless ask admits run_code as the carrier and refuses the inner write th
     const carrier = try tool_admission.requestPermissionOutcome(ctx.admissionInput(), arena.allocator(), inner_write_call, .ask, &.{});
     try std.testing.expect(!carrier.decision.isDenied());
     const result = try executeToolCall(ctx, arena.allocator(), inner_write_call);
-    try expectContains(result.model_output, "refused: Permission to run write_file was not granted (permission_required).");
+    try expectContains(result.model_output, "refused: ");
+    try expectContains(result.model_output, "tool_permission_denied");
+    try expectContains(result.model_output, "permission_required");
+}
+
+const InnerPermissionDenier = struct {
+    seen: usize = 0,
+    tool: [32]u8 = undefined,
+    tool_len: usize = 0,
+
+    fn outcome(raw: *anyopaque, _: Allocator, call: ToolCall) anyerror!command_admission.PermissionOutcome {
+        const self: *InnerPermissionDenier = @ptrCast(@alignCast(raw));
+        self.seen += 1;
+        self.tool_len = @min(call.name.len, self.tool.len);
+        @memcpy(self.tool[0..self.tool_len], call.name[0..self.tool_len]);
+        return .{ .decision = .policy_denied };
+    }
+};
+
+test "an inner verb takes its permission from the runtime source and the body sees the structured denial" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    var rt = TestRuntime{ .workspace_root = root, .tool_registry = test_builtin_tools.registry_with_tower, .permission_mode = .yolo };
+    defer rt.deinit(alloc);
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    var source = InnerPermissionDenier{};
+    const result = try executeToolCallAuthorized(rt.context(), .{
+        .call_allocator = arena.allocator(),
+        .result_allocator = arena.allocator(),
+        .call = inner_write_call,
+        .authority = .ordinary,
+        .current_turn_messages = &.{},
+        .session_grants = &.{},
+        .advertised_dynamic_tool_names = &.{},
+        .max_tool_result_bytes = 64 * 1024,
+        .inner_permission = .{ .context = &source, .outcome_fn = InnerPermissionDenier.outcome },
+    });
+    try std.testing.expectEqual(@as(usize, 1), source.seen);
+    try std.testing.expectEqualStrings("write_file", source.tool[0..source.tool_len]);
+    try expectContains(result.model_output, "refused: ");
+    try expectContains(result.model_output, "tool_permission_denied");
+    try expectContains(result.model_output, "policy_denied");
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io_mod.getIo(), "out.txt", .{}));
+}
+
+test "a denied shell verb is flagged for the carrier and a denied file verb is not" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const outcome: command_admission.PermissionOutcome = .{ .decision = .policy_denied };
+    const shell = try deniedInnerReply(arena.allocator(), .{ .id = "a", .name = "Bash", .arguments_json = "{}" }, outcome);
+    try std.testing.expect(shell.denied and !shell.ok);
+    try expectContains(shell.body, "\"type\":\"tool_permission_denied\"");
+    try expectContains(shell.body, "\"suggestion\"");
+    const file = try deniedInnerReply(arena.allocator(), .{ .id = "b", .name = "write_file", .arguments_json = "{}" }, outcome);
+    try std.testing.expect(!file.denied);
 }
 
 test "a PreToolUse hook matching write_file refuses the write inside run_code as data" {

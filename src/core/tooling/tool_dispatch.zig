@@ -291,6 +291,7 @@ pub const InnerCallReply = struct {
     body: []const u8,
     images: []const core_types.ToolImage = &.{},
     command_result_json: ?[]const u8 = null,
+    denied: bool = false,
 };
 
 pub const InnerCallGate = struct {
@@ -387,6 +388,7 @@ pub const DispatchContext = struct {
     tool_result_memory_sink: ?*?core_types.ToolResultMemory = null,
     model_content_kind_sink: ?*ModelContentKind = null,
     command_result_json_sink: ?*?[]const u8 = null,
+    permission_denied_sink: ?*bool = null,
     result_commit_sink: ?*?result_commit.Token = null,
     goal: ?goal_state.View = null,
     cron: ?*cron_runtime.Runtime = null,
@@ -1300,6 +1302,11 @@ pub fn reportToolResultMemory(ctx: DispatchContext, memory: core_types.ToolResul
 pub fn reportCommandResultJson(ctx: DispatchContext, json: []const u8) void {
     const sink = ctx.command_result_json_sink orelse return;
     sink.* = json;
+}
+
+pub fn reportPermissionDenied(ctx: DispatchContext) void {
+    const sink = ctx.permission_denied_sink orelse return;
+    sink.* = true;
 }
 
 pub fn reportResultCommit(ctx: DispatchContext, token: result_commit.Token) void {

@@ -120,6 +120,7 @@ const Bridge = struct {
     calls: usize = 0,
     images: std.ArrayList(core_types.ToolImage) = .empty,
     command_result_json: ?[]u8 = null,
+    denied: bool = false,
 
     fn keepCommandResult(self: *Bridge, ok: bool, json: ?[]const u8) !void {
         const failed_json = json orelse return;
@@ -162,6 +163,7 @@ fn invokeVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, a
     const reply = if (host) try hostVerbReply(ctx, bridge.registry, verb_call) else try gate.run_fn(gate.context, verb_alloc, verb_call);
     try bridge.keepImages(reply.images);
     try bridge.keepCommandResult(reply.ok, reply.command_result_json);
+    bridge.denied = bridge.denied or reply.denied;
     gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
     if (host) return alloc.dupe(u8, reply.body);
     return verbReply(alloc, reply.ok, reply.body);
@@ -369,7 +371,8 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     const base = runcode.reportJson(ctx.allocator, outcome, batchingNotice(ctx.single_verb_bodies, bridge.calls)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     const report = ledger.report(ctx.allocator, base) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     if (bridge.command_result_json) |json| tool_dispatch.reportCommandResultJson(ctx, json);
-    const succeeded = outcome.ok and bridge.command_result_json == null;
+    if (bridge.denied) tool_dispatch.reportPermissionDenied(ctx);
+    const succeeded = outcome.ok and bridge.command_result_json == null and !bridge.denied;
     if (bridge.images.items.len > 0) return .{ .rich = .{
         .text = report,
         .images = bridge.images.toOwnedSlice(ctx.allocator) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not attach its images") },
@@ -486,6 +489,7 @@ const RecordingGate = struct {
     images: []const core_types.ToolImage = &.{},
     ok: bool = true,
     command_result_json: ?[]const u8 = null,
+    denied: bool = false,
     ids: std.ArrayList([]const u8) = .empty,
 
     fn gate(self: *RecordingGate) tool_dispatch.InnerCallGate {
@@ -504,7 +508,7 @@ const RecordingGate = struct {
 
     fn run(raw: *anyopaque, _: std.mem.Allocator, _: message.ToolCall) anyerror!tool_dispatch.InnerCallReply {
         const self: *RecordingGate = @ptrCast(@alignCast(raw));
-        return .{ .ok = self.ok, .body = "done", .images = self.images, .command_result_json = self.command_result_json };
+        return .{ .ok = self.ok, .body = "done", .images = self.images, .command_result_json = self.command_result_json, .denied = self.denied };
     }
 
     fn finish(_: *anyopaque, _: std.mem.Allocator, _: message.ToolCall, _: tool_dispatch.InnerCallReply) void {}
@@ -590,6 +594,31 @@ test "a failed inner command's result json reaches the run_code result and fails
     try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.failure, result.status);
     try std.testing.expectEqualStrings(json, result.command_result_json.?);
     try std.testing.expectEqualStrings(json, captured.?);
+}
+
+test "a denied inner call reports the permission denial and fails the run_code result" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var recorder = RecordingGate{ .alloc = alloc, .ok = false, .denied = true };
+    var denied = false;
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = alloc,
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+        .tool_call_id = "call-denied",
+        .inner_call_gate = recorder.gate(),
+        .permission_denied_sink = &denied,
+    };
+    const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
+        .id = "call-denied",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"try { gm.glob_files({ pattern: 'a' }); } catch (error) {} return 1;\"}",
+    });
+    try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.failure, result.status);
+    try std.testing.expect(denied);
 }
 
 test "an inner call that succeeds leaves the run_code result without command json" {

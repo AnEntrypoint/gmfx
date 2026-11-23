@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const auto_classifier = @import("../permissions/auto_classifier.zig");
+const command_admission = @import("../permissions/command_admission.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const types = @import("../shared/types.zig");
 
@@ -203,6 +204,33 @@ pub fn toolPermissionDeniedJson(alloc: Allocator, tool_name: []const u8, reason:
     writeMaskedJsonString(alloc, &out.writer, permissionDeniedSuggestion(reason)) catch return error.OutOfMemory;
     out.writer.writeAll("}}") catch return error.OutOfMemory;
     return try out.toOwnedSlice();
+}
+
+pub fn permissionDeniedOutput(
+    alloc: Allocator,
+    tool_name: []const u8,
+    reason: types.ToolPermissionDenialReason,
+    outcome: command_admission.PermissionOutcome,
+) Allocator.Error![]u8 {
+    if (reason == .policy_denied) {
+        if (outcome.rule_reason) |rule_reason| {
+            return toolRuleDeniedJson(alloc, tool_name, rule_reason);
+        }
+    }
+    return switch (reason) {
+        .review_caution, .review_evidence_incomplete, .review_unavailable => toolReviewHeldJson(
+            alloc,
+            tool_name,
+            reason,
+            if (outcome.auto_review_result) |result| result.rationale else null,
+            outcome.auto_review_failure,
+        ),
+        .user_denied, .auto_denied, .policy_denied, .permission_required, .dont_ask_denied => toolPermissionDeniedJson(
+            alloc,
+            tool_name,
+            reason,
+        ),
+    };
 }
 
 pub fn toolRuleDeniedJson(alloc: Allocator, tool_name: []const u8, rule_reason: []const u8) Allocator.Error![]u8 {
