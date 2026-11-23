@@ -5332,3 +5332,11 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - st28 (tree d55e8eeb) built but failed 2 unit tests in app_input_runtime (kitty Escape and remapped ctrl+c expected a question_resolution row). Caused by removing the question-cancel row in 1063743a; restored in bee33a11.
 - Open: the duplicate "Cancelled" row in the kitty and raw Escape e2e rows is not fixed; the session-replay path (app_session_runtime.zig:3853) is the unconfirmed source.
 - Row groups queued on st29: G5 (tui-resume, 2 rows: zero-output cancelled row, read_file Ctrl-O) at /workspace/tmp/fx/win_rows29_G5.out; G6 (tui-decision-prompts 2 Escape rows, tui-full-transcript-brutal footer row) at win_rows29_G6.out.
+
+## G5 and G6 row results on the st29 binary (tree 08976390)
+
+- Passing: tui-decision-prompts "raw Escape cancels a question turn before a new prompt" (/workspace/tmp/fx/e2e29/G6/tui-decision-prompts.out; ROWS_G6_DONE 2 counts the failing rows).
+- Failing, fixed in the tree (re-run pending on st30): tui-resume "Ctrl-O renders read_file results as readable content". Cause: two render paths in src/ui/full_transcript_screen.zig passed the outer run_code JSON to the unwrapper, not the inner read_file output.
+- Failing, owner decision: tui-resume "zero-output cancelled command restores its row without an output block". Cause: the Cancelled row shows the run_code body (body: return gm.Bash({"command":"./z.sh"})) because the Ctrl-O detail renders a run_code body. Decision: may the Ctrl-O detail of a run_code show its JavaScript body? The unit test requires it; this row forbids it.
+- Failing, open: tui-decision-prompts "kitty Escape cancels a question turn before a new prompt". Cause: two Cancelled rows. The live cancel path does not produce the second row; the replay path (app_session_runtime.zig:3853) is the unconfirmed source.
+- Failing, open: tui-full-transcript-brutal "Ctrl-O keeps saved tool output intact across window replacement". Cause: the footer text is still written over row 251 ("originaltooloutpescclose"). The \x1b[K in paint_plan.zig:1091 clears only the tail of the footer row; the cells before the footer text are left unerased by the render engine. A render-engine change is needed, which is out of the footer composer.
