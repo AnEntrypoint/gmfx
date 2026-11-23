@@ -276,13 +276,20 @@ fn bodyNeedsMcpCatalog(body: []const u8) bool {
     return std.mem.find(u8, body, "mcp__") != null or std.mem.find(u8, body, "verbs") != null;
 }
 
+fn verbReachable(tool: tool_dispatch.Tool) bool {
+    return tool.model_visible or switch (tool.executor_kind) {
+        .create_goal, .get_goal, .set_goal_budget, .update_goal => true,
+        else => false,
+    };
+}
+
 fn buildCatalog(alloc: std.mem.Allocator, ctx: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry, with_mcp: bool) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeByte('[');
     var first = true;
     for (registry.tools) |tool| {
-        if (std.mem.eql(u8, tool.name, tool_name) or !tool.model_visible or !toolAdmitted(ctx, tool.name)) continue;
+        if (std.mem.eql(u8, tool.name, tool_name) or !verbReachable(tool) or !toolAdmitted(ctx, tool.name)) continue;
         try openCatalogEntry(&out.writer, &first, tool.name, tool.description, "tool");
         try model_tool_schema.writeObjectSchema(alloc, &out.writer, tool.model_schema.input_schema);
         try out.writer.writeByte('}');

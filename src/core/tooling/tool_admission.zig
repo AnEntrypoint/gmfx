@@ -803,6 +803,7 @@ fn planModeOutcome(input: Input, arena: Allocator, call: ToolCall) !?command_adm
         if (!isAvailableDynamicTool(input, call.name)) return null;
         return .{ .tool_failure = try plan_mode.mutationRefusal(arena, call.name) };
     };
+    if (tool.runtime_provider == .verb_host) return null;
     if (tool.executor_kind == .exit_plan_mode) return try planExitOutcome(input, arena, call, state);
     if (tool_dispatch.callIsPlanReadOnly(arena, tool, call.arguments_json, input.workspace_root)) return null;
     if (plan_mode.callWritesPlanFile(arena, call.name, call.arguments_json, input.workspace_root)) return null;

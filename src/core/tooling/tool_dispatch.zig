@@ -791,6 +791,7 @@ pub const AdmissionResult = union(enum) {
 fn planModeAdmissionFailure(ctx: DispatchContext, tool: *const Tool, input: ToolInput, arguments_json: []const u8) DispatchError!?[]u8 {
     const state = ctx.plan_mode orelse return null;
     if (!state.isActive()) return null;
+    if (tool.runtime_provider == .verb_host) return null;
     if (tool.executor_kind == .exit_plan_mode) {
         if (ctx.permission_decider != null) return null;
         return try ctx.allocator.dupe(u8, plan_mode.exit_requires_prompt_message);
