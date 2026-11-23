@@ -5994,22 +5994,14 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const tableGateway = startFakeGateway([
         fakeGatewaySerializedToolCall(
           "launch-history-list",
-          "glob_files",
-          JSON.stringify({ pattern: "*", path: "." }),
+          "run_code",
+          JSON.stringify({ body: `return gm.glob_files(${JSON.stringify({ pattern: "*", path: "." })});` }),
           "I'll inspect the docs and determine their authorship.",
         ),
-        fakeGatewaySerializedToolCall(
+        fakeShellRun(
           "launch-history-command",
-          "shell",
-          JSON.stringify({
-            request: {
-              action: "run",
-              yield_time_ms: 30_000,
-              timeout_ms: 600_000,
-              command:
-                "for i in $(seq -w 1 27); do printf 'docs/source-%s.md\\tWalter (1)\\n' \"$i\"; done",
-            },
-          }),
+          "for i in $(seq -w 1 27); do printf 'docs/source-%s.md\\tWalter (1)\\n' \"$i\"; done",
+          { timeout_ms: 600_000 },
         ),
         fakeGatewayFinalText(response),
       ]);
