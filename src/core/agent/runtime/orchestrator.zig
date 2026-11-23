@@ -9988,6 +9988,7 @@ fn processQueuedPromptLoop(
                     .tool_registry = deps.tool_registry,
                     .workspace_root = config.workspace_root,
                     .access_scope = config.access_scope,
+                    .advertised_tool_names = config.advertised_tool_names,
                     .advertised_dynamic_tool_names = advertised_dynamic_tool_names,
                     .cancel_flag = config.cancel_flag,
                     .classifiers = .{

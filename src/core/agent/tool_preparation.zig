@@ -41,6 +41,7 @@ pub const Config = struct {
     tool_registry: tool_dispatch.Registry,
     workspace_root: []const u8,
     access_scope: ?workspace_access.AccessScope = null,
+    advertised_tool_names: []const []const u8 = &.{},
     advertised_dynamic_tool_names: []const []const u8 = &.{},
     cancel_flag: ?*std.atomic.Value(bool) = null,
     classifiers: Classifiers,
@@ -152,7 +153,7 @@ pub fn prepareReadyCall(alloc: Allocator, call: ToolCall, config: Config) !Resul
     try checkCancellation(config.cancel_flag);
 
     const tool = config.tool_registry.lookup(call.name) orelse {
-        if (isAdvertisedDynamic(config.advertised_dynamic_tool_names, call.name)) {
+        if (containsName(config.advertised_dynamic_tool_names, call.name)) {
             if (try classifyWithCallback(
                 alloc,
                 config.cancel_flag,
@@ -180,6 +181,10 @@ pub fn prepareReadyCall(alloc: Allocator, call: ToolCall, config: Config) !Resul
         }
         return .{ .terminal = .{ .kind = .unsupported } };
     };
+
+    if (!advertisedTool(config.advertised_tool_names, call.name)) {
+        return .{ .terminal = .{ .kind = .unsupported } };
+    }
 
     if (try classifyWithCallback(
         alloc,
@@ -285,7 +290,11 @@ fn checkCancellationWithOutput(
     };
 }
 
-fn isAdvertisedDynamic(names: []const []const u8, name: []const u8) bool {
+fn advertisedTool(names: []const []const u8, name: []const u8) bool {
+    return names.len == 0 or std.mem.eql(u8, name, "vision") or containsName(names, name);
+}
+
+fn containsName(names: []const []const u8, name: []const u8) bool {
     for (names) |candidate| {
         if (std.mem.eql(u8, candidate, name)) return true;
     }
@@ -522,6 +531,45 @@ test "advertised dynamic calls stay opaque while unsupported calls are terminal"
     defer unsupported.deinit(alloc);
     try std.testing.expectEqual(TerminalKind.unsupported, unsupported.terminal.kind);
     try std.testing.expect(unsupported.terminal.model_output == null);
+}
+
+test "an unadvertised registered tool is unsupported while run_code stays ready" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    const alloc = std.testing.allocator;
+    const tools = [_]tool_dispatch.Tool{ builtin_tools.read_file, builtin_tools.run_code };
+    const one_tool = [_][]const u8{"run_code"};
+    const gated: Config = .{
+        .tool_registry = .{ .tools = &tools },
+        .workspace_root = "/tmp/workspace",
+        .advertised_tool_names = &one_tool,
+        .classifiers = test_classifiers,
+    };
+    var open = gated;
+    open.advertised_tool_names = &.{};
+
+    var refused = try prepareReadyCall(alloc, .{
+        .id = "refused",
+        .name = "read_file",
+        .arguments_json = "{\"path\":\"README.md\"}",
+    }, gated);
+    defer refused.deinit(alloc);
+    try std.testing.expectEqual(TerminalKind.unsupported, refused.terminal.kind);
+
+    var admitted = try prepareReadyCall(alloc, .{
+        .id = "admitted",
+        .name = "run_code",
+        .arguments_json = "{\"code\":\"1\"}",
+    }, gated);
+    defer admitted.deinit(alloc);
+    try std.testing.expect(admitted == .candidate);
+
+    var ungated = try prepareReadyCall(alloc, .{
+        .id = "ungated",
+        .name = "read_file",
+        .arguments_json = "{\"path\":\"README.md\"}",
+    }, open);
+    defer ungated.deinit(alloc);
+    try std.testing.expect(ungated == .candidate);
 }
 
 test "live deferred dynamic calls reach dispatch while true unknown calls stay terminal" {
