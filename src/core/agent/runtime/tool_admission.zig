@@ -234,6 +234,10 @@ pub const TerminalValidationRetryState = struct {
 
 const max_unchanged_shell_failure_steps: u32 = 3;
 
+fn carriesShellRun(tool_name: []const u8) bool {
+    return std.mem.eql(u8, tool_name, "Bash") or std.mem.eql(u8, tool_name, "run_code");
+}
+
 pub const ShellExecutionFailureRetryState = struct {
     const Streak = struct {
         digest: TerminalValidationDigest,
@@ -259,9 +263,7 @@ pub const ShellExecutionFailureRetryState = struct {
         call: ToolCall,
         execution: ToolExecutionResult,
     ) Allocator.Error!void {
-        if (!std.mem.eql(u8, call.name, "Bash") or execution.status != .failure) {
-            return;
-        }
+        if (!carriesShellRun(call.name) or execution.status != .failure) return;
         var hash = std.crypto.hash.sha2.Sha256.init(.{});
         hash.update("fx.shell-execution-failure.v1\x00");
         hash.update(call.arguments_json);
@@ -561,6 +563,23 @@ test "shell execution failures end the turn on the third unchanged step" {
     try std.testing.expectEqual(@as(usize, 2), state.previous.items.len);
     try std.testing.expectEqual(@as(u32, 4), state.previous.items[0].steps);
     try std.testing.expectEqual(@as(u32, 2), state.previous.items[1].steps);
+}
+
+test "a failed run_code body counts as a shell failure because it carries the shell verb" {
+    const alloc = std.testing.allocator;
+    const carrier: ToolCall = .{
+        .id = "carrier",
+        .name = "run_code",
+        .arguments_json = "{\"body\":\"return gm.Bash({ command: \\\"sh check.sh\\\" });\"}",
+    };
+    const failed = ToolExecutionResult{ .status = .failure, .model_output = "exit 1" };
+    var state: ShellExecutionFailureRetryState = .{};
+    defer state.deinit(alloc);
+    for ([_]bool{ false, false, true }) |stops| {
+        state.beginBatch();
+        try state.observe(alloc, carrier, failed);
+        try std.testing.expectEqual(stops, state.finishBatch(false));
+    }
 }
 
 test "identical failure escalation counts exact repeats within one turn" {
