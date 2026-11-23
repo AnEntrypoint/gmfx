@@ -2281,3 +2281,31 @@ test "the earlier summary is clipped only when the turns alone cannot make the r
     try testing.expectEqualStrings(previous, result.compacted.earlier);
     try testing.expect(std.mem.find(u8, result.text, "In short:\n" ++ previous ++ "\n") != null);
 }
+
+test "a run_code call is summarized as its name, the first 120 bytes of its body and its result size, and saved whole" {
+    const prefix = "const out = gm.run_shell({ command: 'zig build' }); ";
+    const body = prefix ++ text_utils.repeat("a", 200) ++ " TAILMARK";
+    const arguments = "{\"body\":\"" ++ body ++ "\"}";
+    const turns = [_]Turn{.{ .user = "Fix the build.\nIt fails on main.", .items = &.{
+        .{ .assistant = "I'll run the build first." },
+        .{ .tool_call = .{ .id = "call-1", .name = "run_code", .arguments = arguments } },
+        .{ .tool_result = .{ .call_id = "call-1", .name = "run_code", .output = "error: missing semicolon at src/a.zig:4" } },
+        .{ .assistant = "Found it: a missing semicolon at src/a.zig:4." },
+    } }};
+    var model = FakeModel{};
+    defer model.deinit();
+    var store = MemoryStore{ .alloc = testing.allocator };
+    defer store.deinit();
+
+    var result = try compact(testing.allocator, .{ .model = "m", .turns = &turns }, model.model(), store.store());
+    defer result.deinit();
+
+    const line = "run_code " ++ body[0..120] ++ "\u{2026} (39 bytes)";
+    try testing.expectEqual(@as(usize, 1), result.compacted.tool_count);
+    try testing.expectEqualStrings(line, result.compacted.turns[0].tools[0].line);
+    try testing.expect(std.mem.find(u8, result.text, "TAILMARK") == null);
+    try testing.expect(std.mem.find(u8, result.text, "T1 " ++ line) != null);
+    const saved = store.find(.tool, 1).?;
+    try testing.expect(std.mem.find(u8, saved, "Arguments:\n" ++ arguments ++ "\n") != null);
+    try testing.expect(std.mem.find(u8, saved, "Result:\nerror: missing semicolon at src/a.zig:4\n") != null);
+}

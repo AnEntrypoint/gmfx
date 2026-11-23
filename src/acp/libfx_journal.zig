@@ -1184,3 +1184,32 @@ test "an open needs only the named images its window keeps, and every image of t
     try std.testing.expectEqual(@as(usize, 3), resolver.missing.count());
     try std.testing.expect(!resolver.missing.contains(names[0]));
 }
+
+test "an interrupted run_code call is answered as unfinished, listed as ambiguous, and run again only when the host asks" {
+    const alloc = std.testing.allocator;
+    var calls = [_]types.ToolCall{
+        .{ .id = "call-1", .name = "run_code", .arguments_json = "{\"body\":\"gm.write_file({ path: 'b', content: 'c' });\"}" },
+    };
+    var answered = try testAnswered(alloc, &calls);
+    defer answered.deinit(alloc);
+    var ran: std.ArrayList([]const u8) = .empty;
+    defer ran.deinit(alloc);
+
+    const reran = try rerunCalls(alloc, &answered, 0, TestRerunner{ .ids = &.{}, .ran = &ran }, null);
+    try std.testing.expectEqual(@as(usize, 0), reran);
+    try std.testing.expectEqual(@as(usize, 0), ran.items.len);
+    const result = answered.execution.tool_steps[0].tool_results[0];
+    try std.testing.expectEqualStrings("run_code", result.tool_name);
+    try std.testing.expectEqual(types.PersistedToolStatus.failure, result.status);
+    try std.testing.expectEqualStrings(session_adapter.unfinished_tool_output, result.output);
+
+    const ambiguous = try unfinishedCalls(alloc, &calls, &.{});
+    defer types.freeToolCallSlice(alloc, ambiguous);
+    try std.testing.expectEqual(@as(usize, 1), ambiguous.len);
+    try std.testing.expectEqualStrings("call-1", ambiguous[0].id);
+
+    const finished = [_]journal.Finished{.{ .id = @constCast("call-1"), .failed = false, .output = @constCast("done") }};
+    const settled = try unfinishedCalls(alloc, &calls, &finished);
+    defer types.freeToolCallSlice(alloc, settled);
+    try std.testing.expectEqual(@as(usize, 0), settled.len);
+}

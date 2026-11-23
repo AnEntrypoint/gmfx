@@ -1912,3 +1912,25 @@ test "a yielded snapshot names its open turn's stored images" {
     try std.testing.expectEqualStrings(png, folded.open_turn.?.user.images[0].inline_data.?);
     try std.testing.expect(folded.yielded);
 }
+
+test "an inner verb result of a run_code call is no record, and the crashed call stays one running call" {
+    const alloc = std.testing.allocator;
+    var progress = try testProgress(alloc, "build it");
+    defer progress.deinit(alloc);
+    const calls = [_]types.ToolCall{
+        .{ .id = "call-1", .name = "run_code", .arguments_json = "{\"body\":\"gm.read_file({ path: 'a' }); gm.write_file({ path: 'b', content: 'c' });\"}" },
+    };
+
+    const bytes = try testJournal(alloc, &.{
+        .{ .turn_progress = .{ .checkpoint = progress } },
+        .{ .tool_intent = &calls },
+        .{ .tool_result = .{ .id = "call-1:1", .name = "read_file", .failed = false, .output = "inner" } },
+    });
+    defer alloc.free(bytes);
+    var folded = try fold(alloc, bytes);
+    defer folded.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), folded.running_calls.len);
+    try std.testing.expectEqualStrings("call-1", folded.running_calls[0].id);
+    try std.testing.expectEqualStrings("run_code", folded.running_calls[0].name);
+    try std.testing.expectEqual(@as(usize, 0), folded.finished.len);
+}
