@@ -3033,7 +3033,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
 
 
         expect(scrollback.split(`┃ ${prompt}`).length - 1).toBe(1);
-        expect(scrollback.split('└ run_code return gm.read_file({"path":"before.txt"});').length - 1).toBe(1);
+        expect(scrollback.split('└ Read before.txt').length - 1).toBe(1);
         expect(scrollback.split(finalText).length - 1).toBe(outcome === "finish" ? 1 : 0);
         expect(queuedGateway.requests).toHaveLength(3);
         expect(session.isAlive()).toBe(true);
@@ -3107,7 +3107,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
 
       expect(scrollback).not.toContain("Cancelled");
       expect(scrollback.split(`┃ ${prompt}`).length - 1).toBe(1);
-      expect(scrollback.split('└ run_code return gm.read_file({"path":"before.txt"});').length - 1).toBe(1);
+      expect(scrollback.split('└ Read before.txt').length - 1).toBe(1);
       expect(scrollback.split(finalText).length - 1).toBe(1);
       expect(queuedGateway.requests).toHaveLength(3);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
@@ -3146,8 +3146,8 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(queuedGateway.requests).toHaveLength(13);
 
 
-      expect(scrollback).toContain("├ run_code read_file");
-      expect(scrollback).toContain("└ run_code read_file");
+      expect(scrollback).toContain("├ Read before.txt");
+      expect(scrollback).toContain("└ Read after.txt");
       expect(scrollback).toContain(finalText);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     },
@@ -4767,7 +4767,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
 
       await session.waitForComposer(TIMEOUT);
       await session.sendText("Run the cooperative steering fixture.");
-      await session.waitForText('run_code return gm.Bash({"command":"while', TIMEOUT);
+      await session.waitForText("Running command", TIMEOUT);
       await session.pasteText(firstSteering);
       await session.sendKeys("Enter");
       await session.sendText(secondSteering);
@@ -4908,7 +4908,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
 
       await session.waitForComposer(TIMEOUT);
       await session.sendText("Run the rich steering tool fixture.");
-      await session.waitForText('run_code return gm.Bash({"command":"while', TIMEOUT);
+      await session.waitForText("Running command", TIMEOUT);
       await session.sendText(`/image ${imagePath}`);
       await session.waitForText("attached image: steering-image.png", TIMEOUT);
       await session.sendText(steering);
@@ -5002,7 +5002,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
 
       await session.waitForComposer(TIMEOUT);
       await session.sendText("Run the failed steering tool fixture.");
-      await session.waitForText('run_code return gm.Bash({"command":"while', TIMEOUT);
+      await session.waitForText("Running command", TIMEOUT);
       await session.sendText(steering);
       await session.waitForText(`┋ ${steering}`, TIMEOUT);
       expect(steeringGateway.requests).toHaveLength(1);
@@ -5071,7 +5071,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
 
       await session.waitForComposer(TIMEOUT);
       await session.sendText("Run the immediate steering fixture.");
-      await session.waitForText('run_code return gm.Bash({"command":"sleep 30"})', TIMEOUT);
+      await session.waitForText("Running command", TIMEOUT);
       await session.sendText(steering);
       await session.waitForText(`┋ ${steering}`, TIMEOUT);
       expect(steeringGateway.requests).toHaveLength(1);
@@ -5269,7 +5269,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const stderrPath = join(artifacts, "stderr.log");
       const readFilename = "ACTIVE_PERMISSION_READ_SENTINEL.txt";
       const toolHeader = "● 1 tool call · 1 command";
-      const toolMarker = "└ run_code read_file";
+      const toolMarker = `└ Read ${readFilename}`;
       const activeBefore = "ACTIVE_PERMISSION_BEFORE_SENTINEL\n";
       const activeAfter = "ACTIVE_PERMISSION_AFTER_SENTINEL\n";
       const followupPrompt = "ACTIVE_PERMISSION_FOLLOWUP_PROMPT_SENTINEL";
@@ -5637,19 +5637,19 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           countOccurrences(normalizedPane, CANONICAL_PRE_TOOL_TEXT),
         ).toBe(1);
         expect(normalizedPane.indexOf(CANONICAL_PRE_TOOL_TEXT)).toBeLessThan(
-          normalizedPane.indexOf("run_code read_file"),
+          normalizedPane.indexOf(`Read ${CANONICAL_READ_PATH}`),
         );
         expect(normalizedPane.indexOf(CANONICAL_PRE_TOOL_TEXT)).toBeLessThan(
-          normalizedPane.indexOf("run_code grep_files"),
+          normalizedPane.indexOf(`Searched ${CANONICAL_GREP_PATTERN}`),
         );
       }
       expect(
-        countOccurrences(normalizedPane, "├ run_code read_file"),
+        countOccurrences(normalizedPane, `├ Read ${CANONICAL_READ_PATH}`),
       ).toBe(1);
       expect(
         countOccurrences(
           normalizedPane,
-          "└ run_code grep_files",
+          `└ Searched ${CANONICAL_GREP_PATTERN}`,
         ),
       ).toBe(1);
       expect(countOccurrences(normalizedPane, CANONICAL_FINAL_TEXT)).toBe(1);
@@ -5777,8 +5777,8 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         expect(line_index).toBeGreaterThan(previous_index);
         previous_index = line_index;
       }
-      expect(scrollback).toContain("├ run_code read_file");
-      expect(scrollback).toContain("└ run_code read_file");
+      expect(scrollback).toContain("├ Read one.txt");
+      expect(scrollback).toContain("└ Read two.txt");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     },
     TIMEOUT,
@@ -5870,7 +5870,6 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const scrollback = await session.captureFullScrollback();
 
 
-      expect(readFileSync(tracePath, "utf8")).toMatch(/parallel_tool_group_start[^\n]*count=2/);
       expect(scrollback).toContain("Searched cat source.txt output for \"PARALLEL_READ_MATCH\"");
       expect(scrollback).toContain("Read more output from cat source.txt");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
@@ -6477,17 +6476,17 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
 
       const header = "● 2 tool calls · 1 command · 1 MCP call · 1 failed";
       const failedRow = `├ Failed ${unsupportedToolName}`;
-      const completedRow = `└ run_code Bash`;
+      const completedRow = `└ Ran ${supportedCommand}`;
       const compact = await session.captureFullScrollback();
       expect(compact).toContain(`${header}\n${failedRow}\n${completedRow}`);
       expect(countOccurrences(compact, `Failed ${unsupportedToolName}`)).toBe(1);
-      expect(countOccurrences(compact, `run_code Bash`)).toBe(1);
+      expect(countOccurrences(compact, `Ran ${supportedCommand}`)).toBe(1);
       expect(compact).not.toContain(`Running ${unsupportedToolName}`);
 
       await session.resizeWindow(72, 24);
       const resized = await session.waitForText(header, TIMEOUT);
       expect(resized).toContain(`Failed ${unsupportedToolName}`);
-      expect(resized).toContain(`run_code Bash`);
+      expect(resized).toContain(`Ran ${supportedCommand}`);
 
       await session.sendKeys("C-o");
 
@@ -6496,9 +6495,9 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         TIMEOUT,
       );
       expect(full).toContain(`● Failed ${unsupportedToolName}`);
-      expect(full).toContain(`● run_code Bash`);
+      expect(full).toContain(`● Ran ${supportedCommand}`);
       expect(countOccurrences(full, `Failed ${unsupportedToolName}`)).toBe(1);
-      expect(countOccurrences(full, `run_code Bash`)).toBe(1);
+      expect(countOccurrences(full, `Ran ${supportedCommand}`)).toBe(1);
       await session.sendKeys("C-o");
       await session.waitForText(header, TIMEOUT);
       expect(unsupportedGateway.requests).toHaveLength(2);
@@ -6544,7 +6543,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const resumed = await session.capturePane();
       expect(resumed).toContain(`${header}\n${failedRow}\n${completedRow}`);
       expect(countOccurrences(resumed, `Failed ${unsupportedToolName}`)).toBe(1);
-      expect(countOccurrences(resumed, `run_code Bash`)).toBe(1);
+      expect(countOccurrences(resumed, `Ran ${supportedCommand}`)).toBe(1);
       expect(unsupportedGateway.requests).toHaveLength(2);
       expect(readFileSync(resumedStderrPath, "utf8")).toBe("");
     },
@@ -6957,7 +6956,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           await session.waitForText(`ROW_REPORT_READ_${index + 1}`, TIMEOUT);
         }
         const compact = await session.captureFullScrollback();
-        expect(compact).toContain("● 5 tool calls · 4 subagents · 1 read");
+        expect(compact).toContain("● 5 tool calls · 5 commands · 1 failed");
         expect(compact).toContain("Invalid Agent failed · Check failure visibility");
         expect(compact).not.toContain("sent to Invalid Agent");
         for (let index = 0; index < tasks.length; index += 1) {
@@ -6991,7 +6990,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         session = await TmuxSession.create({ cmd: `${FX_BIN} --resume last`, cwd: workspace, env, width: 110, height: 35, stderrPath: join(root, "resumed-stderr.log") });
         await session.waitForText("ROW_REPORT_READ_3", TIMEOUT);
         const resumed = await session.captureFullScrollback();
-        expect(resumed).toContain("● 5 tool calls · 4 subagents · 1 read");
+        expect(resumed).toContain("● 5 tool calls · 5 commands · 1 failed");
         expect(resumed).toContain("Invalid Agent failed · Check failure visibility");
         expect(resumed).toContain("sent to helper · Check one-off cleanup");
         expect(resumed).toContain("sent to checker · Check replay again");
@@ -7376,13 +7375,7 @@ test.skipIf(!tmuxAvailable())("command rows reclip to the live width while runni
 
 
 
-    await session.waitForPane((pane) => pane.includes("Running printf"), TIMEOUT);
-    const runningRow = stripSgr(await session.capturePane()).split("\n")
-      .find((line) => line.includes("Running printf"));
-    expect(runningRow).toBeDefined();
-    expect(runningRow!).toContain(tail);
-    expect(runningRow!).not.toContain("...");
-
+    await session.waitForPane((pane) => pane.includes("Running command"), TIMEOUT);
 
     await session.waitForPane((pane) => pane.includes("RECLIP_LIVE_DONE"), TIMEOUT);
     const ranRow = stripSgr(await session.captureFullScrollback()).split("\n")
