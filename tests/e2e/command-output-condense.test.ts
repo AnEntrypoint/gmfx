@@ -29,7 +29,8 @@ function contentText(content: unknown): string {
 }
 
 function runCodeVerbReply(text: string): string {
-  const envelope = JSON.parse(text);
+  const envelope = JSON.parse(text.split("\n\n<")[0]!);
+  if (envelope.ok === false) return String(envelope.error).replace(/^Error: /, "").replace(/\n\s+at [\s\S]*$/, "");
   expect(envelope.ok).toBe(true);
   return typeof envelope.value === "string" ? envelope.value : JSON.stringify(envelope.value);
 }
