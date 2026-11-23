@@ -5320,3 +5320,8 @@ Source of each witness: /workspace/tmp/fx/e2e27/<group>/<file>.out, group DONE l
 - gateway-stream-lifecycle (G3): held skill resource label: model-selected, finish; held skill resource label: $skill attachment, finish.
 
 Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-permissions 2; tui-decision-prompts 2; tui-terminal-tool 3; tui-full-transcript-brutal 1; tui-gateway-stream-lifecycle 4; gateway-stream-lifecycle 5.
+
+## G4 row group on the st27 binary (tree 4b7dbe1b)
+
+- Passing: tui-terminal-tool "Ctrl-O shows task launch commands in full while the main view trails them" (/workspace/tmp/fx/e2e27/G4/tui-terminal-tool.out; ROWS_G4_DONE 1 counts the other row).
+- Failing: tui-command-permissions "fx ask yolo executes pwd through the default user profile with process-scoped replay". Cause: the test asserts json.tool_calls[0].command_result, but keepCommandResult (src/tools/runcode/run_code.zig) drops successful inner command results by design, so command_result is undefined. Owner decision: carry successful inner command results in the run_code record, or assert their absence.
