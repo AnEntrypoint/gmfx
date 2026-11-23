@@ -5302,3 +5302,9 @@ Each change follows in its own commit with its witness command. The Phase B witn
 - tui-command-permissions: "TUI keeps command output exclusive to Ctrl-O through resize and resume" (R2, e2e25/R2/tui-command-permissions.out).
 - tui-decision-prompts (R2, e2e25/R2/tui-decision-prompts.out): "amended denial follows its denied result without executing the command"; "long approval amendment keeps its tail and cursor visible before exact denial submission"; "exact-command option advertises Tab movement before denial amendment"; "approval amendment supports focused editor shortcut alias parity"; "approval amendment Ctrl+Y cannot yank into the hidden composer".
 - Still failing after R1 to R3 and under triage: the other rows of tui-resume (25), tui-resize (1), tui-command-permissions (2), tui-decision-prompts (2), tui-terminal-tool (4), tui-full-transcript-brutal (2), tui-gateway-stream-lifecycle (4), gateway-stream-lifecycle (7).
+
+## Witnesses from the st27 window (tree 074f53db)
+
+- Build and suite (/workspace/tmp/fx/win_st27.out): ST27_DONE 0. The build passed in 704 s; the suite ran 12260 passed, 27 skipped, 0 failed; the txiki witness reported all checks passed.
+- The st26 build failed on 2e0ae372 at app_session_runtime.zig:4520 (mutable slice for a borrowed tool_call_id and tool_name). Fixed in 074f53db. The st26 result is in /workspace/tmp/fx/win_st26.out (ST26_DONE 3).
+- Row re-runs on st27 are queued as three exclusive tickets: G1 (tui-resume, tui-resize), G2 (tui-command-permissions, tui-decision-prompts, tui-terminal-tool, tui-full-transcript-brutal), G3 (tui-gateway-stream-lifecycle, gateway-stream-lifecycle). Their results are in /workspace/tmp/fx/win_rows27_G1.out, G2, G3.
