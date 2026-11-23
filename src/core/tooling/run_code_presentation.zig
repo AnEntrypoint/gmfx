@@ -21,6 +21,7 @@ const InnerCall = struct {
     verb: []const u8,
     args: []const u8 = "",
     ok: bool = false,
+    deferred: bool = false,
     notice: ?[]const u8 = null,
     additions: ?u32 = null,
     deletions: ?u32 = null,
@@ -29,6 +30,7 @@ const InnerCall = struct {
 pub const Row = struct {
     call: ToolCall,
     ok: bool,
+    deferred: bool = false,
     target: ?[]const u8,
     additions: usize,
     deletions: usize,
@@ -92,6 +94,7 @@ pub fn rows(arena: Allocator, call: ToolCall, output: []const u8) Allocator.Erro
     for (report.calls, out, 1..) |inner, *row, number| row.* = .{
         .call = .{ .id = try arena.print("{s}:{d}", .{ call.id, number }), .name = inner.verb, .arguments_json = inner.args },
         .ok = inner.ok,
+        .deferred = inner.deferred,
         .target = try mutationTarget(arena, inner),
         .additions = inner.additions orelse 0,
         .deletions = inner.deletions orelse 0,
@@ -203,6 +206,18 @@ test "run_code presents its body line before results and the verbs it called aft
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     try std.testing.expectEqualStrings("run_code const a = await gm.read_file({path:'a.txt'});", try title(arena, test_call));
+}
+
+test "run_code rows keep a context-deferred inner verb deferred rather than failed" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const call = ToolCall{ .id = "run", .name = "run_code", .arguments_json = "{\"body\":\"gm.Bash({})\"}" };
+    const output = "{\"ok\":false,\"calls\":[{\"verb\":\"Bash\",\"args\":\"{}\",\"ok\":false,\"deferred\":true}],\"calls_dropped\":0}";
+    const found = try rows(arena, call, output);
+    try std.testing.expectEqual(@as(usize, 1), found.len);
+    try std.testing.expect(found[0].deferred);
+    try std.testing.expect(!found[0].ok);
 }
 
 test "run_code rows give each inner call its own call, target and diff counts in ledger order" {

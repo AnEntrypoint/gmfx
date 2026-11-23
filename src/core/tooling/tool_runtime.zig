@@ -1115,7 +1115,7 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         .failure => |reason| return .{ .ok = false, .body = reason },
         else => {},
     }
-    if (try gatherInnerCallContext(ctx, call)) return .{ .ok = false, .body = types.context_deferred_tool_result_output };
+    if (try gatherInnerCallContext(ctx, call)) return .{ .ok = false, .body = types.context_deferred_tool_result_output, .deferred = true };
     const outcome = try innerPermissionOutcome(ctx, arena, call);
     if (outcome.decision.isDenied() or outcome.tool_failure != null) return deniedInnerReply(arena, call, outcome);
     const authority = outcome.execution_authority orelse

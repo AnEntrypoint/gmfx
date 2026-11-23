@@ -10,6 +10,7 @@ const Entry = struct {
     args: []const u8,
     ok: bool,
     notice: ?[]const u8 = null,
+    deferred: ?bool = null,
     additions: ?u32 = null,
     deletions: ?u32 = null,
 };
@@ -23,6 +24,7 @@ pub const Invoked = struct {
 const Reply = struct {
     ok: bool = false,
     text: ?[]const u8 = null,
+    deferred: bool = false,
 };
 
 const Body = struct {
@@ -32,6 +34,7 @@ const Body = struct {
 const Outcome = struct {
     ok: bool = false,
     notice: ?[]const u8 = null,
+    deferred: bool = false,
 };
 
 pub const InvokeFn = *const fn (context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror!Invoked;
@@ -71,6 +74,7 @@ pub const Ledger = struct {
             .args = try compactArgs(alloc, arena, args_json),
             .ok = outcome.ok,
             .notice = outcome.notice,
+            .deferred = if (outcome.deferred) true else null,
             .additions = if (invoked.additions > 0) invoked.additions else null,
             .deletions = if (invoked.deletions > 0) invoked.deletions else null,
         });
@@ -123,12 +127,13 @@ fn compactArgs(alloc: std.mem.Allocator, arena: std.mem.Allocator, args_json: []
 fn replyOutcome(alloc: std.mem.Allocator, arena: std.mem.Allocator, reply: []const u8) !Outcome {
     const parsed = std.json.parseFromSlice(Reply, alloc, reply, .{ .ignore_unknown_fields = true }) catch return .{};
     defer parsed.deinit();
-    const text = parsed.value.text orelse return .{ .ok = parsed.value.ok };
-    const body = std.json.parseFromSlice(Body, alloc, text, .{ .ignore_unknown_fields = true }) catch return .{ .ok = parsed.value.ok };
+    const text = parsed.value.text orelse return .{ .ok = parsed.value.ok, .deferred = parsed.value.deferred };
+    const body = std.json.parseFromSlice(Body, alloc, text, .{ .ignore_unknown_fields = true }) catch return .{ .ok = parsed.value.ok, .deferred = parsed.value.deferred };
     defer body.deinit();
     return .{
         .ok = parsed.value.ok,
         .notice = if (body.value.notice) |notice| try arena.dupe(u8, notice) else null,
+        .deferred = parsed.value.deferred,
     };
 }
 
@@ -142,6 +147,23 @@ fn diffInvoke(_: *anyopaque, alloc: std.mem.Allocator, _: []const u8, _: []const
 
 fn noticeInvoke(_: *anyopaque, alloc: std.mem.Allocator, _: []const u8, _: []const u8) anyerror!Invoked {
     return .{ .reply = try alloc.dupe(u8, "{\"ok\":true,\"text\":\"{\\\"exit\\\":0,\\\"notice\\\":\\\"shell snapshot unavailable\\\"}\"}") };
+}
+
+fn deferredInvoke(_: *anyopaque, alloc: std.mem.Allocator, _: []const u8, _: []const u8) anyerror!Invoked {
+    return .{ .reply = try alloc.dupe(u8, "{\"ok\":false,\"deferred\":true,\"error\":\"Scoped project instructions\"}") };
+}
+
+test "the ledger marks a context-deferred verb reply as deferred rather than failed" {
+    const alloc = std.testing.allocator;
+    var unused: u8 = 0;
+    var ledger = Ledger.init(alloc, &unused, deferredInvoke);
+    defer ledger.deinit();
+    alloc.free(try Ledger.invoke(&ledger, alloc, "Bash", "{}"));
+    try std.testing.expectEqual(@as(?bool, true), ledger.entries.items[0].deferred);
+    try std.testing.expect(!ledger.entries.items[0].ok);
+    const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true}"));
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"deferred\":true") != null);
 }
 
 test "the ledger carries a notice found in a verb's result body into the report" {

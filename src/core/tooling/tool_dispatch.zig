@@ -292,6 +292,7 @@ pub const InnerCallReply = struct {
     images: []const core_types.ToolImage = &.{},
     command_result_json: ?[]const u8 = null,
     denied: bool = false,
+    deferred: bool = false,
     additions: u32 = 0,
     deletions: u32 = 0,
 };

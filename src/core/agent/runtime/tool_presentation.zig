@@ -874,6 +874,27 @@ pub fn readToolResultDisplayTarget(
     return try read_result_presentation.displayTarget(arena, call.arguments_json, source);
 }
 
+test "an inner row without a file target takes the display target its host resolves" {
+    const Stub = struct {
+        fn resolve(_: *anyopaque, _: Allocator, _: ToolCall) anyerror!?[]const u8 {
+            return "sleep 60";
+        }
+    };
+    var unused: u8 = 0;
+    const task_row: run_code_presentation.Row = .{
+        .call = .{ .id = "rc:1", .name = "TaskOutput", .arguments_json = "{\"task_id\":\"shell-1\"}" },
+        .ok = true,
+        .target = null,
+        .additions = 0,
+        .deletions = 0,
+    };
+    try std.testing.expectEqualStrings("sleep 60", (try innerRowTarget(&Stub.resolve, &unused, std.testing.allocator, task_row)).?);
+    var edited = task_row;
+    edited.target = "src/a.zig";
+    try std.testing.expectEqualStrings("src/a.zig", (try innerRowTarget(&Stub.resolve, &unused, std.testing.allocator, edited)).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), try innerRowTarget(null, &unused, std.testing.allocator, task_row));
+}
+
 test "read_tool_result rows name the earlier call whose output they read" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1323,16 +1344,32 @@ pub fn finishExecutedToolStatus(
     }
 }
 
+fn innerRowTarget(
+    resolve: ?*const fn (ctx: *anyopaque, arena: Allocator, call: ToolCall) anyerror!?[]const u8,
+    ctx: *anyopaque,
+    arena: Allocator,
+    row: run_code_presentation.Row,
+) !?[]const u8 {
+    if (row.target) |target| return target;
+    const resolveTarget = resolve orelse return null;
+    return resolveTarget(ctx, arena, row.call);
+}
+
+fn innerFailureLabel(row: run_code_presentation.Row) []const u8 {
+    return if (row.deferred) types.context_deferred_tool_status_label else "Failed";
+}
+
 fn innerRowLine(
     hooks: *const AgentRuntimeDeps,
     arena: Allocator,
     row: run_code_presentation.Row,
     advertised_dynamic_tool_names: []const []const u8,
 ) ![]const u8 {
+    const target = try innerRowTarget(hooks.resolve_tool_action_display_target, hooks.ctx, arena, row);
     const base = if (row.ok)
-        try hooks.describe_tool_action_completed(hooks.ctx, arena, row.call, row.target, advertised_dynamic_tool_names)
+        try hooks.describe_tool_action_completed(hooks.ctx, arena, row.call, target, advertised_dynamic_tool_names)
     else
-        try hooks.describe_tool_action_denied(hooks.ctx, arena, row.call, row.target, "Failed", advertised_dynamic_tool_names);
+        try hooks.describe_tool_action_denied(hooks.ctx, arena, row.call, target, innerFailureLabel(row), advertised_dynamic_tool_names);
     return formatToolStatusWithStats(arena, base, row.additions, row.deletions, hooks.diff_marker_styles);
 }
 
@@ -1354,7 +1391,7 @@ fn pushInnerRow(
     try hooks.push_tool_lifecycle(hooks.ctx, .{ .terminal = .{
         .id = id,
         .outcome = .{
-            .kind = if (row.ok) .completed else .failed,
+            .kind = if (row.ok) .completed else if (row.deferred) .deferred else .failed,
             .summary = try innerRowLine(hooks, arena, row, advertised_dynamic_tool_names),
         },
     } });

@@ -170,7 +170,8 @@ fn invokeCountedVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []cons
     bridge.denied = bridge.denied or reply.denied;
     gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
     if (host) return .{ .reply = try alloc.dupe(u8, reply.body) };
-    return .{ .reply = try verbReply(alloc, reply.ok, reply.body), .additions = reply.additions, .deletions = reply.deletions };
+    const reply_text = if (reply.deferred) try deferredVerbReply(alloc, reply.body) else try verbReply(alloc, reply.ok, reply.body);
+    return .{ .reply = reply_text, .additions = reply.additions, .deletions = reply.deletions };
 }
 
 fn ungatedReply(
@@ -255,6 +256,15 @@ fn verbReply(alloc: std.mem.Allocator, ok: bool, text: []const u8) ![]u8 {
     } else {
         try out.writer.writeAll("{\"ok\":false,\"error\":");
     }
+    try std.json.Stringify.value(text, .{}, &out.writer);
+    try out.writer.writeByte('}');
+    return out.toOwnedSlice();
+}
+
+fn deferredVerbReply(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.writeAll("{\"ok\":false,\"deferred\":true,\"error\":");
     try std.json.Stringify.value(text, .{}, &out.writer);
     try out.writer.writeByte('}');
     return out.toOwnedSlice();
