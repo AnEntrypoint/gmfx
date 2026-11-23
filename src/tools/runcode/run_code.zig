@@ -251,7 +251,7 @@ fn buildCatalog(alloc: std.mem.Allocator, ctx: tool_dispatch.DispatchContext, re
     try out.writer.writeByte('[');
     var first = true;
     for (registry.tools) |tool| {
-        if (std.mem.eql(u8, tool.name, tool_name) or !toolAdmitted(ctx, tool.name)) continue;
+        if (std.mem.eql(u8, tool.name, tool_name) or !tool.model_visible or !toolAdmitted(ctx, tool.name)) continue;
         try openCatalogEntry(&out.writer, &first, tool.name, tool.description, "tool");
         try model_tool_schema.writeObjectSchema(alloc, &out.writer, tool.model_schema.input_schema);
         try out.writer.writeByte('}');
