@@ -64,6 +64,10 @@ function toolCall(id: string, name: string, input: object) {
   ]);
 }
 
+function verbCall(id: string, verb: string, input: object) {
+  return toolCall(id, "run_code", { body: `return gm.${verb}(${JSON.stringify(input)});` });
+}
+
 function permissionDecision() {
   return toolCall("permission_decision_1", "permission_decision", {
     risk: "medium",
@@ -133,7 +137,7 @@ function firstCallToolResponses(args: {
       expect(body).not.toContain("use a target inside the workspace");
       expect(body).not.toContain("Not executed");
       args.beforeToolCall?.();
-      return toolCall(args.id, args.name, args.input);
+      return verbCall(args.id, args.name, args.input);
     },
     (body) => {
       expect(body).not.toContain("target outside workspace");
@@ -285,7 +289,7 @@ async function runFirstCallToolScenario(args: {
     expect(gateway.requests[0].body).not.toContain(args.id);
     expect(gateway.requests[0].body).not.toContain("target outside workspace");
     expect(gateway.remainingResponseCount()).toBe(0);
-    expect(json.tool_calls).toEqual([{ name: args.name, status: "success" }]);
+    expect(json.tool_calls).toEqual([{ name: "run_code", status: "success" }]);
     const progressLines = result.stderr.split("\n").filter((line) =>
       line.length > 0 && !line.startsWith("[notice]")
     );
@@ -306,7 +310,7 @@ async function runTerminalToolScenario(args: {
   expectedResultRequest: string[];
 }) {
   const gateway = startFakeGateway([
-    toolCall(args.id, args.name, args.input),
+    verbCall(args.id, args.name, args.input),
     finalText("tool result handled"),
   ]);
   try {
@@ -333,7 +337,7 @@ async function runTerminalToolScenario(args: {
     for (const expected of args.expectedResultRequest) {
       expect(gateway.requests[1].body).toContain(expected);
     }
-    expect(json.tool_calls).toEqual([{ name: args.name, status: "error" }]);
+    expect(json.tool_calls).toEqual([{ name: "run_code", status: "error" }]);
   } finally {
     gateway.stop();
   }
@@ -368,7 +372,7 @@ describe("filesystem path handling", () => {
           "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
         const gateway = startFakeGateway(
           [
-            toolCall("read_image_1", "read_file", { path: "pixel.png" }),
+            verbCall("read_image_1", "read_file", { path: "pixel.png" }),
             finalText("image inspected"),
           ],
           { modelTags: imageCase.modelTags },
@@ -387,7 +391,7 @@ describe("filesystem path handling", () => {
             },
           );
           const json = parseFxJson(result);
-          expect(json.tool_calls).toEqual([{ name: "read_file", status: "success" }]);
+          expect(json.tool_calls).toEqual([{ name: "run_code", status: "success" }]);
           expect(gateway.requests).toHaveLength(2);
           const request = JSON.parse(gateway.requests[1].body) as {
             prompt: Array<{ content?: unknown }>;
@@ -487,8 +491,8 @@ describe("filesystem path handling", () => {
         expect(result.code, result.stderr).toBe(0);
         const json = parseFxJson(result);
         expect(json.tool_calls).toEqual([
-          { name: "read_file", status: "success" },
-          { name: "read_file", status: "success" },
+          { name: "run_code", status: "success" },
+          { name: "run_code", status: "success" },
         ]);
         expect(gateway.requests).toHaveLength(2);
         const request = JSON.parse(gateway.requests[1].body) as {
@@ -545,7 +549,7 @@ describe("filesystem path handling", () => {
       const oversizedBase64 = solidPng(8001, 1).toString("base64");
       const gateway = startFakeGateway(
         [
-          toolCall("read_frame", "read_file", { path: "frame.png" }),
+          verbCall("read_frame", "read_file", { path: "frame.png" }),
           (body) => {
             const files = JSON.parse(body).prompt
               .filter((message: { role?: string; content?: unknown }) =>
@@ -556,7 +560,7 @@ describe("filesystem path handling", () => {
             expect(toolResultOutput(body, "read_frame")).toContain("image attached");
             expect(files).toHaveLength(1);
             expect((files[0].data as Record<string, unknown>).data).toBe(frameBase64);
-            return toolCall("read_oversized", "read_file", { path: "oversized.png" });
+            return verbCall("read_oversized", "read_file", { path: "oversized.png" });
           },
           (body) => {
             const files = JSON.parse(body).prompt
@@ -570,7 +574,7 @@ describe("filesystem path handling", () => {
             expect(toolResultOutput(body, "read_oversized")).toContain("save a smaller copy to a new file");
             expect(files).toHaveLength(1);
             expect(JSON.stringify(files)).not.toContain(oversizedBase64);
-            return toolCall("read_small", "read_file", { path: "small.png" });
+            return verbCall("read_small", "read_file", { path: "small.png" });
           },
           (body) => {
             const files = JSON.parse(body).prompt
@@ -604,9 +608,9 @@ describe("filesystem path handling", () => {
         );
         const json = parseFxJson(result);
         expect(json.tool_calls).toEqual([
-          { name: "read_file", status: "success" },
-          { name: "read_file", status: "success" },
-          { name: "read_file", status: "success" },
+          { name: "run_code", status: "success" },
+          { name: "run_code", status: "success" },
+          { name: "run_code", status: "success" },
         ]);
         expect(gateway.requests).toHaveLength(4);
         expect(gateway.remainingResponseCount()).toBe(0);
@@ -658,7 +662,7 @@ describe("filesystem path handling", () => {
         const json = parseFxJson(result);
         expect(json.tool_calls).toHaveLength(21);
         expect(json.tool_calls).toEqual(
-          Array.from({ length: 21 }, () => ({ name: "read_file", status: "success" })),
+          Array.from({ length: 21 }, () => ({ name: "run_code", status: "success" })),
         );
         expect(gateway.requests).toHaveLength(2);
         expect(gateway.remainingResponseCount()).toBe(0);
@@ -678,7 +682,7 @@ describe("filesystem path handling", () => {
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
       const firstGateway = startFakeGateway(
         [
-          toolCall("read_image_1", "read_file", { path: "pixel.png" }),
+          verbCall("read_image_1", "read_file", { path: "pixel.png" }),
           finalText("image stored"),
         ],
         { modelTags: ["tool-use", "vision", "file-input"], contextWindow: 4_000_000 },
@@ -750,7 +754,7 @@ describe("filesystem path handling", () => {
       );
       writeFileSync(join(root.workspace, "parity.md"), `${lines.join("\n")}\n`);
       const firstGateway = startFakeGateway([
-        toolCall("edit_parity_1", "edit_file", {
+        verbCall("edit_parity_1", "edit_file", {
           path: "parity.md",
           old_string: "PARITY_LINE_200_",
           new_string: "PARITY_EDITED_200_",
@@ -870,7 +874,7 @@ describe("filesystem path handling", () => {
 
         for (const scenario of cases) {
           const gateway = startFakeGateway([
-            toolCall(scenario.id, scenario.name, scenario.input),
+            verbCall(scenario.id, scenario.name, scenario.input),
             finalText("added root tool complete"),
           ]);
           try {
@@ -904,7 +908,7 @@ describe("filesystem path handling", () => {
             expect(toolOutput).not.toContain("Not executed");
             expect(toolOutput).toContain(scenario.expected);
             expect(json.tool_calls.map(({ name, status }) => ({ name, status }))).toEqual([
-              { name: scenario.name, status: "success" },
+              { name: "run_code", status: "success" },
             ]);
           } finally {
             gateway.stop();
@@ -923,7 +927,7 @@ describe("filesystem path handling", () => {
       const root = createIsolatedRoot();
       const marker = join(root.external, "command-proof.txt");
       const gateway = startFakeGateway([
-        toolCall("added_command_write_1", "Bash", {
+        verbCall("added_command_write_1", "Bash", {
           command: "printf COMMAND_ADDED_WRITE > command-proof.txt",
           description: "Write the proof file",
           cwd: root.external,
@@ -950,7 +954,7 @@ describe("filesystem path handling", () => {
         const json = parseFxJson(result);
         expect(readFileSync(marker, "utf8")).toBe("COMMAND_ADDED_WRITE");
         expect(json.tool_calls.map(({ name, status }) => ({ name, status }))).toEqual([
-          { name: "Bash", status: "success" },
+          { name: "run_code", status: "success" },
         ]);
         expect(gateway.classifierRequests).toHaveLength(0);
       } finally {
@@ -1000,7 +1004,7 @@ describe("filesystem path handling", () => {
         expect(json.output).toContain(content);
         expect(json.output).not.toContain(instructionSentinel);
         expect(json.tool_calls.some(({ name, status }) =>
-          name === "read_file" && status === "success"
+          name === "run_code" && status === "success"
         )).toBe(true);
       } finally {
         rmSync(root.root, { recursive: true, force: true });
@@ -1078,7 +1082,7 @@ describe("filesystem path handling", () => {
         for (const scenario of cases) {
           const marker = join(scenario.canonical, `${scenario.id}.txt`);
           const gateway = startFakeGateway([
-            toolCall(scenario.id, "Bash", {
+            verbCall(scenario.id, "Bash", {
               command: `pwd; printf ${scenario.id} > ${scenario.id}.txt`,
               description: "Write a marker in the working directory",
               cwd: scenario.cwd,
@@ -1105,7 +1109,7 @@ describe("filesystem path handling", () => {
             expect(readFileSync(marker, "utf8")).toBe(scenario.id);
             expect(
               json.tool_calls.map(({ name, status }) => ({ name, status })),
-            ).toEqual([{ name: "Bash", status: "success" }]);
+            ).toEqual([{ name: "run_code", status: "success" }]);
           } finally {
             gateway.stop();
           }
@@ -1200,7 +1204,7 @@ describe("filesystem path handling", () => {
             expect(classifierGateway.classifierRequests).toHaveLength(0);
             expect(classifierGateway.remainingResponseCount()).toBe(0);
             expect(classifiedJson.tool_calls).toEqual([
-              { name: "write_file", status: "success" },
+              { name: "run_code", status: "success" },
             ]);
             expect(classified.stderr.match(/^Writing /gm)).toHaveLength(1);
             expect(classified.stderr).not.toContain("Auto agent approved this request");
@@ -1250,11 +1254,11 @@ describe("filesystem path handling", () => {
         const target = join(root.workspace, "typed.txt");
         const tracePath = join(root.root, "trace.log");
         const gateway = startFakeGateway([
-          toolCall("typed_write_1", "write_file", {
+          verbCall("typed_write_1", "write_file", {
             path: "typed.txt",
             content: "before\n",
           }),
-          toolCall("typed_edit_1", "edit_file", {
+          verbCall("typed_edit_1", "edit_file", {
             path: "typed.txt",
             old_string: "before",
             new_string: "after",
@@ -1297,8 +1301,8 @@ describe("filesystem path handling", () => {
           );
           expect(json.tool_calls).toEqual(
             expect.arrayContaining([
-              { name: "write_file", status: "success" },
-              { name: "edit_file", status: "success" },
+              { name: "run_code", status: "success" },
+              { name: "run_code", status: "success" },
             ]),
           );
           expect(readFileSync(target, "utf8")).toBe("after\n");
@@ -1334,7 +1338,7 @@ describe("filesystem path handling", () => {
           new_string: "}",
         };
         const gateway = startFakeGateway([
-          toolCall("edit_1", "edit_file", failingEdit),
+          verbCall("edit_1", "edit_file", failingEdit),
           (body) => {
             const output = toolResultOutput(body, "edit_1");
             expect(output).toContain("old_string not found in file");
@@ -1343,7 +1347,7 @@ describe("filesystem path handling", () => {
               "if the change is already applied, do not retry",
             );
             expect(output).not.toContain("already failed");
-            return toolCall("edit_2", "edit_file", failingEdit);
+            return verbCall("edit_2", "edit_file", failingEdit);
           },
           (body) => {
             const output = toolResultOutput(body, "edit_2");
@@ -1373,8 +1377,8 @@ describe("filesystem path handling", () => {
 
           expect(gateway.requests).toHaveLength(3);
           expect(json.tool_calls).toEqual([
-            { name: "edit_file", status: "error" },
-            { name: "edit_file", status: "error" },
+            { name: "run_code", status: "error" },
+            { name: "run_code", status: "error" },
           ]);
           expect(readFileSync(target, "utf8")).toBe(
             "export interface RacePlan {\n  laps: number;\n}\n",
@@ -1503,7 +1507,7 @@ describe("filesystem path handling", () => {
         );
 
         const editGateway = startFakeGateway([
-          toolCall("edit_read_1", "read_file", {
+          verbCall("edit_read_1", "read_file", {
             path: "../external/edit.txt",
           }),
           (body) => {
@@ -1513,7 +1517,7 @@ describe("filesystem path handling", () => {
             expect(readOutput).toContain("BEFORE_EDIT");
             expect(readOutput).not.toContain("Not executed");
             expect(readFileSync(editTarget, "utf8")).toBe("BEFORE_EDIT\n");
-            return toolCall("edit_apply_1", "edit_file", {
+            return verbCall("edit_apply_1", "edit_file", {
               path: "../external/edit.txt",
               old_string: "BEFORE_EDIT",
               new_string: "AFTER_EDIT",
@@ -1547,8 +1551,8 @@ describe("filesystem path handling", () => {
           expect(editGateway.classifierRequests).toHaveLength(0);
           expect(editGateway.remainingResponseCount()).toBe(0);
           expect(json.tool_calls).toEqual([
-            { name: "read_file", status: "success" },
-            { name: "edit_file", status: "success" },
+            { name: "run_code", status: "success" },
+            { name: "run_code", status: "success" },
           ]);
           expect(
             occurrenceCount(result.stderr, "Reading ../external/edit.txt\n"),
@@ -1639,7 +1643,7 @@ describe("filesystem path handling", () => {
             tools: Array<{ name: string }>;
           };
           expect(request.tools.map((tool) => tool.name)).toEqual(["run_code"]);
-          return toolCall("terminal_fallback_1", "Bash", {
+          return verbCall("terminal_fallback_1", "Bash", {
             command,
             description: "Exercise the filesystem fallback commands",
           });
@@ -1675,7 +1679,7 @@ describe("filesystem path handling", () => {
         expect(gateway.classifierRequests).toHaveLength(0);
         expect(gateway.remainingResponseCount()).toBe(0);
         expect(json.tool_calls).toEqual([
-          expect.objectContaining({ name: "Bash", status: "success" }),
+          expect.objectContaining({ name: "run_code", status: "success" }),
         ]);
       } finally {
         gateway.stop();
@@ -1720,7 +1724,7 @@ describe("filesystem path handling", () => {
         const json = parseFxJson(result);
         expect(json.output).toContain(completion);
         expect(json.tool_calls.some(({ name, status }) =>
-          name === "Bash" && status === "success"
+          name === "run_code" && status === "success"
         )).toBe(true);
         for (const removed of REMOVED_FILESYSTEM_TOOLS) {
           expect(json.tool_calls.some(({ name }) => name === removed)).toBe(false);

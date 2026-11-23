@@ -76,8 +76,8 @@ function outerToolCalls(calls: Array<{ id: string; name: string; input: object }
     ...calls.map((call) => ({
       type: "tool-call",
       toolCallId: call.id,
-      toolName: call.name,
-      input: call.input,
+      toolName: "run_code",
+      input: { body: `return gm.${call.name}(${JSON.stringify(call.input)});` },
     })),
     {
       type: "finish",

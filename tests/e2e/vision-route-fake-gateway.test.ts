@@ -65,6 +65,10 @@ function sseText(text: string) {
   );
 }
 
+function verbBody(verb: string, input: object) {
+  return { body: `return gm.${verb}(${JSON.stringify(input)});` };
+}
+
 function sseToolCall(toolName: string, input: object, toolCallId: string) {
   return sseToolCalls([{ toolName, input, toolCallId }]);
 }
@@ -1418,7 +1422,7 @@ describe("Vision route fake Gateway", () => {
           { type: "reasoning-end", id: "reasoning", providerMetadata: { vertex: { thoughtSignature: "retained-reasoning-signature" } } },
           ...(shape === "prose-replay" ? [{ type: "text-delta", id: "intro", delta: "I will inspect the image." }] : []),
           { type: "tool-call", toolCallId: "native_vision", toolName: "vision", input: { image_ids: [1], focus: "inspect" }, providerMetadata: { vertex: { thoughtSignature: "removed-vision-signature" } } },
-          ...(shape === "mixed-replay" ? [{ type: "tool-call", toolCallId: "retained_read", toolName: "read_file", input: { path: "notes.txt" }, providerMetadata: { vertex: { thoughtSignature: "retained-read-signature" } } }] : []),
+          ...(shape === "mixed-replay" ? [{ type: "tool-call", toolCallId: "retained_read", toolName: "run_code", input: verbBody("read_file", { path: "notes.txt" }), providerMetadata: { vertex: { thoughtSignature: "retained-read-signature" } } }] : []),
           { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
         ]),
         sseText("Gemini recovered after rejected Vision"),
@@ -3573,7 +3577,7 @@ describe("request size budget", () => {
         if (answer === "describe") return sseText("done: described the images");
         if (issued < count) {
           issued += 1;
-          return sseToolCall("read_file", { path: sizeImageName(issued) }, `call_img_${issued}`);
+          return sseToolCall("run_code", verbBody("read_file", { path: sizeImageName(issued) }), `call_img_${issued}`);
         }
         return sseText(`done: read ${count} images`);
       },

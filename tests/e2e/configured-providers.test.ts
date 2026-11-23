@@ -4,6 +4,14 @@ import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
 import { completion, toolCompletion, createConfiguredProviderFixture as fixture } from "./fixtures/chat-completions";
 
+function verbCompletion(model: string, verb: string, input: object, callId?: string) {
+  return toolCompletion(model, "run_code", { body: `return gm.${verb}(${JSON.stringify(input)});` }, callId);
+}
+
+function verbReply(content: string) {
+  return JSON.parse(JSON.parse(content).value);
+}
+
 async function withReasoning(response: Response, ...deltas: Record<string, unknown>[]) {
   const prefix = deltas.map(delta => `data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`).join("");
   return new Response(prefix + await response.text(), { headers: response.headers });
@@ -44,7 +52,7 @@ describe("configured providers", () => {
     let calls = 0;
     const f = fixture(body => {
       calls++;
-      if (calls === 1) return withReasoning(toolCompletion(body.model, "read_file", { path: "note.txt" }), { [field]: "Inspect note first." });
+      if (calls === 1) return withReasoning(verbCompletion(body.model, "read_file", { path: "note.txt" }), { [field]: "Inspect note first." });
       return withReasoning(completion(body.model, calls === 2 ? "read complete" : "resumed reply"), { [field]: "Finish answer." });
     });
     try {
@@ -72,7 +80,7 @@ describe("configured providers", () => {
     let calls = 0;
     const f = fixture(body => {
       calls++;
-      if (calls <= 2) return toolCompletion(body.model, "read_file", { path: `note-${calls}.txt` }, `call-${calls}`);
+      if (calls <= 2) return verbCompletion(body.model, "read_file", { path: `note-${calls}.txt` }, `call-${calls}`);
       if (calls === 3) return withReasoning(completion(body.model, ""), { reasoning_content: "Both files have been read." });
       return completion(body.model, "The two files were read.");
     });
@@ -129,7 +137,7 @@ describe("configured providers", () => {
     let calls = 0;
     const f = fixture(body => {
       calls++;
-      if (calls === 1) return withReasoning(toolCompletion(body.model, "read_file", { path: "note.txt" }, callId), { reasoning_details: [firstDetail] }, { reasoning_details: [secondDetail] });
+      if (calls === 1) return withReasoning(verbCompletion(body.model, "read_file", { path: "note.txt" }, callId), { reasoning_details: [firstDetail] }, { reasoning_details: [secondDetail] });
       return completion(body.model, calls === 2 ? "read complete" : "continued");
     });
     try {
@@ -304,7 +312,7 @@ describe("configured providers", () => {
   test("executes a tool and returns its result to the same connection", async () => {
     const f = fixture(body => body.messages.some((message: any) => message.role === "tool")
       ? completion(body.model, "read succeeded")
-      : toolCompletion(body.model, "read_file", { path: "note.txt" }));
+      : verbCompletion(body.model, "read_file", { path: "note.txt" }));
     try {
       writeFileSync(join(f.workspace, "note.txt"), "fixture contents");
       const result = await runFx(["ask", "--json", "--no-save", "Read note.txt"], { cwd: f.workspace, env: f.env, timeoutMs: 20000 });
@@ -319,12 +327,13 @@ describe("configured providers", () => {
   }, 25000);
 
   test("unknown tools and malformed arguments are answered and the turn continues", async () => {
+    const readNoteArguments = JSON.stringify({ body: `return gm.read_file(${JSON.stringify({ path: "note.txt" })});` });
     const f = fixture(body => body.messages.some((message: any) => message.role === "tool")
       ? completion(body.model, "recovered")
       : rawToolCalls(body.model, [
-        { id: "call-read", name: "read_file", arguments: JSON.stringify({ path: "note.txt" }) },
+        { id: "call-read", name: "run_code", arguments: readNoteArguments },
         { id: "call-missing", name: "missing_tool", arguments: "{}" },
-        { id: "call-malformed", name: "read_file", arguments: "{\"path\":\"note.txt\"" },
+        { id: "call-malformed", name: "run_code", arguments: readNoteArguments.slice(0, -2) },
       ]));
     try {
       writeFileSync(join(f.workspace, "note.txt"), "fixture contents");
@@ -334,13 +343,13 @@ describe("configured providers", () => {
       expect(output.output).toBe("recovered");
       expect(output.tool_calls.map((call: any) => [call.name, call.status]).sort()).toEqual([
         ["missing_tool", "error"],
-        ["read_file", "error"],
-        ["read_file", "success"],
+        ["run_code", "error"],
+        ["run_code", "success"],
       ]);
       expect(f.requests).toHaveLength(2);
       const messages = f.requests[1].body.messages;
       const replayed = messages.find((message: any) => message.role === "assistant" && message.tool_calls?.length).tool_calls;
-      expect(replayed.map((call: any) => call.function.arguments)).toEqual([JSON.stringify({ path: "note.txt" }), "{}", "{}"]);
+      expect(replayed.map((call: any) => call.function.arguments)).toEqual([readNoteArguments, "{}", "{}"]);
       const results = Object.fromEntries(messages.filter((message: any) => message.role === "tool").map((message: any) => [message.tool_call_id, message.content]));
       expect(results["call-read"]).toContain("fixture contents");
       expect(results["call-missing"]).toBe("Unsupported tool: missing_tool");
@@ -373,7 +382,7 @@ describe("configured providers", () => {
     const f = fixture(body => {
       if (isChildRequest(body)) return completion(body.model, "child reply");
       if (body.messages.at(-1)?.role === "tool") return completion(body.model, "parent reply");
-      return toolCompletion(body.model, "Agent", { description: "Delegate", prompt: "child-marker", ...(mode === "inherited" ? {} : { model: childModel }) });
+      return verbCompletion(body.model, "Agent", { description: "Delegate", prompt: "child-marker", ...(mode === "inherited" ? {} : { model: childModel }) });
     });
     f.settings.providers.local.model_metadata["local-model"].max_output_tokens = 512;
     (f.settings.providers.local.model_metadata as any)["child-model"] = { context_window: 32768, max_output_tokens: 1024, supports_tool_use: true };
@@ -385,7 +394,7 @@ describe("configured providers", () => {
       expect(f.requests.map(request => isChildRequest(request.body))).toEqual([false, true, false]);
       expect(f.requests[1].body.messages.at(-1)).toEqual({ role: "user", content: "child-marker" });
       expect([f.requests[1].body.model, f.requests[1].body.max_tokens]).toEqual([childModel, mode === "unknown" ? undefined : mode === "override" ? 1024 : 512]);
-      const returned = JSON.parse(f.requests[2].body.messages.at(-1).content);
+      const returned = verbReply(f.requests[2].body.messages.at(-1).content);
       expect(returned.ok).toBe(true);
       expect(returned.result).toContain("child reply");
       expect([f.requests[0], f.requests[2]].map(request => [request.body.model, request.body.max_tokens])).toEqual([["local-model", 512], ["local-model", 512]]);
@@ -400,9 +409,10 @@ describe("configured providers", () => {
       if (isReportTurn(body)) return completion(body.model, "report handled");
       if (body.messages.at(-1)?.role === "tool") return completion(body.model, "parent reply");
       callId++;
-      return toolCompletion(body.model, "Agent", { description: "Read", prompt: "read the child fixture", ...(callId === 1 ? {} : { resume: "agent-child-call-1" }) }, `child-call-${callId}`);
+      return verbCompletion(body.model, "Agent", { description: "Read", prompt: "read the child fixture", ...(callId === 1 ? {} : { resume: "agent-child-call-1-1" }) }, `child-call-${callId}`);
     });
-    const agentResults = (requests: typeof f.requests) => requests.filter(request => request.body.messages.at(-1)?.role === "tool").map(request => JSON.parse(request.body.messages.at(-1).content));
+    const toolReturns = (requests: typeof f.requests) => requests.filter(request => request.body.messages.at(-1)?.role === "tool").map(request => JSON.parse(request.body.messages.at(-1).content));
+    const agentResults = (requests: typeof f.requests) => toolReturns(requests).map(returned => JSON.parse(returned.value));
     f.settings.models.local = "shared-model";
     f.settings.models.remote = "shared-model";
     (f.settings.providers.local as any).model_metadata = { "shared-model": { context_window: 32768, max_output_tokens: 512, supports_tool_use: true } };
@@ -435,9 +445,9 @@ describe("configured providers", () => {
       if (rebound.code !== 0) throw new Error(rebound.stdout + rebound.stderr);
       const reboundRequests = f.requests.slice(afterResumed);
       expect(reboundRequests.every(request => !isChildRequest(request.body) && request.authorization === null && request.path === "/v1/chat/completions")).toBe(true);
-      const failed = agentResults(reboundRequests);
+      const failed = toolReturns(reboundRequests);
       expect(failed.length).toBeGreaterThanOrEqual(1);
-      expect(failed.every(result => result.ok === false && result.result.includes("status: failed"))).toBe(true);
+      expect(failed.every(result => result.ok === false && result.error.includes("status: failed"))).toBe(true);
     } finally { f.close(); }
   }, 100000);
 
@@ -448,7 +458,7 @@ describe("configured providers", () => {
       if (isReportTurn(body)) return completion(body.model, "report handled");
       if (body.messages.at(-1)?.role === "tool") return completion(body.model, "parent reply");
       parentTurns++;
-      return toolCompletion(body.model, "Agent", { description: "Read", prompt: `child context ${parentTurns}`, ...(parentTurns === 1 ? { model: "child-model" } : { resume: "agent-context-call-1" }) }, `context-call-${parentTurns}`);
+      return verbCompletion(body.model, "Agent", { description: "Read", prompt: `child context ${parentTurns}`, ...(parentTurns === 1 ? { model: "child-model" } : { resume: "agent-context-call-1-1" }) }, `context-call-${parentTurns}`);
     });
     (f.settings.providers.local.model_metadata as any)["child-model"] = { context_window: 32768, max_output_tokens: 512, supports_tool_use: true };
     f.save();
@@ -459,8 +469,9 @@ describe("configured providers", () => {
         if (result.code !== 0) throw new Error(result.stdout + result.stderr);
         id = JSON.parse(result.stdout).session_id;
         const returned = f.requests.filter(request => request.body.model === "local-model" && request.body.messages.at(-1)?.role === "tool").at(-1)!.body.messages.at(-1).content;
-        if (!JSON.parse(returned).ok) throw new Error(returned);
-        expect(JSON.parse(returned).result).toContain("agent_id: agent-context-call-1");
+        const reply = verbReply(returned);
+        if (!reply.ok) throw new Error(returned);
+        expect(reply.result).toContain("agent_id: agent-context-call-1");
       }
       const childRequests = f.requests.filter(request => request.body.model === "child-model");
       expect(childRequests.some(request => JSON.stringify(request.body.messages).includes("<compacted_conversation>"))).toBe(true);
@@ -472,7 +483,7 @@ describe("configured providers", () => {
   test("auto mode runs a shell call on the custom connection without a reviewer request", async () => {
     const f = fixture(body => body.messages.some((message: any) => message.role === "tool")
       ? completion(body.model, "command finished")
-      : toolCompletion(body.model, "Bash", { command: "printf ran > auto-ran.txt", description: "Write the marker" }));
+      : verbCompletion(body.model, "Bash", { command: "printf ran > auto-ran.txt", description: "Write the marker" }));
     try {
       f.settings.permission_mode = "auto";
       (f.settings.providers.local as any).reviewer_model = "review-model";

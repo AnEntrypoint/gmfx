@@ -43,8 +43,8 @@ function outerToolCalls(calls: Array<{ id: string; name: string; input: object }
     ...calls.map((call) => ({
       type: "tool-call",
       toolCallId: call.id,
-      toolName: call.name,
-      input: call.input,
+      toolName: "run_code",
+      input: { body: `return gm.${call.name}(${JSON.stringify(call.input)});` },
     })),
     {
       type: "finish",
@@ -370,7 +370,7 @@ describe("FetchURL Gateway fixture", () => {
 
         const json = parseFxJson(result);
         expect(json.tool_calls).toContainEqual({
-          name: "FetchURL",
+          name: "run_code",
           status: "error",
         });
         expect(gateway.requests).toHaveLength(2);
@@ -408,7 +408,7 @@ describe("FetchURL Gateway fixture", () => {
         );
 
         const json = parseFxJson(result);
-        expect(json.tool_calls).toContainEqual({ name: "FetchURL", status: "error" });
+        expect(json.tool_calls).toContainEqual({ name: "run_code", status: "error" });
         expect(gateway.requests).toHaveLength(2);
         expect(gateway.requests[1].body).toContain("FetchURL does not take argument");
         expect(gateway.requests[1].body).toContain("prompt");
@@ -559,8 +559,8 @@ describe("FetchURL Gateway fixture", () => {
 
         const json = parseFxJson(result);
         expect(
-          json.tool_calls.filter((call) => call.name === "FetchURL"),
-        ).toEqual([{ name: "FetchURL", status: "error" }]);
+          json.tool_calls.filter((call) => call.status === "error"),
+        ).toEqual([{ name: "run_code", status: "error" }]);
       } finally {
         gateway.stop();
         rmSync(root.root, { recursive: true, force: true });
@@ -603,17 +603,16 @@ describe("FetchURL Gateway fixture", () => {
         );
 
         expect(fetchStarts).toHaveLength(1);
+        const body = 'return gm.FetchURL({"url":"https://example.com/docs","prompt":"legacy"});';
         expect(fetchStarts[0]?.params.update).toEqual({
           sessionUpdate: "tool_call",
           toolCallId: "fetch_outer_1",
-          name: "FetchURL",
-          title: "Fetching",
-          kind: "fetch",
+          name: "run_code",
+          title: `run_code ${body}`,
+          kind: "execute",
           status: "pending",
-          rawInput: {
-            url: "https://example.com/docs",
-            prompt: "legacy",
-          },
+          rawInput: { body },
+          content: [{ type: "content", content: { type: "text", text: `\`\`\`js\n${body}\n\`\`\`` } }],
           _meta: { fx: { toolCall: { internal: false } } },
         });
       } finally {

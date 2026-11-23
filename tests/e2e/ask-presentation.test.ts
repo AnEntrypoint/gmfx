@@ -21,7 +21,7 @@ import {
   fakeGatewayPermissionDecision,
   fakeGatewaySse,
   fakeGatewaySerializedToolCall,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   fakeShellRun,
   startDynamicFakeGateway,
   startFakeGateway,
@@ -135,6 +135,14 @@ function fakeGatewayStreamingText(lines: string[], delayMs: number) {
   );
 }
 
+function verbBody(verb: string, input: object) {
+  return { body: `return gm.${verb}(${JSON.stringify(input)});` };
+}
+
+function verbArguments(verb: string, input: object) {
+  return JSON.stringify(verbBody(verb, input));
+}
+
 describe("fx ask presentation", () => {
   test("redirected command output separates the next tool header", async () => {
     const root = createRoot();
@@ -143,14 +151,14 @@ describe("fx ask presentation", () => {
         {
           type: "tool-call",
           toolCallId: "no-final-newline",
-          toolName: "Bash",
-          input: { command: "printf no-final-newline" },
+          toolName: "run_code",
+          input: verbBody("Bash", { command: "printf no-final-newline" }),
         },
         {
           type: "tool-call",
           toolCallId: "next-command",
-          toolName: "Bash",
-          input: { command: "printf 'next-output\\n'" },
+          toolName: "run_code",
+          input: verbBody("Bash", { command: "printf 'next-output\\n'" }),
         },
         {
           type: "finish",
@@ -171,8 +179,7 @@ describe("fx ask presentation", () => {
     );
 
     expect(result.code).toBe(0);
-    expect(result.stderr).toContain("Running printf no-final-newline\n");
-    expect(result.stderr).toContain("Running printf 'next-output\\n'\n");
+    expect(result.stderr).toContain("Working \nno-final-newline\nWorking \nnext-output\n");
     expect(JSON.parse(result.stdout).output).toBe("Commands complete.\n");
   }, TIMEOUT);
 
@@ -211,9 +218,9 @@ describe("fx ask presentation", () => {
       "if command -v fx_profile_function >/dev/null; then fx_profile_function; else printf no-function; fi";
     const nestedExecMarker = join(root.workspace, "nested-no-save-ran");
     const gateway = startFakeGateway([
-      fakeGatewayToolCall("bash-profile", "Bash", { command: profileCommand }),
-      fakeGatewayToolCall("bash-removed-tty", "Bash", { command: "printf should-not-start", tty: true }),
-      fakeGatewayToolCall("bash-nested", "Bash", { command: `printf nested > ${JSON.stringify(nestedExecMarker)}` }),
+      fakeGatewayVerbCall("bash-profile", "Bash", { command: profileCommand }),
+      fakeGatewayVerbCall("bash-removed-tty", "Bash", { command: "printf should-not-start", tty: true }),
+      fakeGatewayVerbCall("bash-nested", "Bash", { command: `printf nested > ${JSON.stringify(nestedExecMarker)}` }),
       fakeGatewayFinalText("Bash no-save runs verified.\n"),
     ]);
     gateways.push(gateway);
@@ -234,9 +241,9 @@ describe("fx ask presentation", () => {
     };
     expect(output.output).toBe("Bash no-save runs verified.\n");
     expect(output.tool_calls.map(({ name, status }) => ({ name, status }))).toEqual([
-      { name: "Bash", status: "success" },
-      { name: "Bash", status: "error" },
-      { name: "Bash", status: "success" },
+      { name: "run_code", status: "success" },
+      { name: "run_code", status: "error" },
+      { name: "run_code", status: "success" },
     ]);
     expect(gateway.requests).toHaveLength(4);
 
@@ -303,8 +310,8 @@ describe("fx ask presentation", () => {
     const gateway = startFakeGateway([
       fakeGatewaySerializedToolCall(
         "read_fixture_for_final_output",
-        "read_file",
-        JSON.stringify({ path: "fixture.txt" }),
+        "run_code",
+        verbArguments("read_file", { path: "fixture.txt" }),
         intermediate,
       ),
       fakeGatewayFinalText(final),
@@ -334,10 +341,10 @@ describe("fx ask presentation", () => {
     expect(output.final_output).toBe(final);
     expect(output.final_output).not.toContain(intermediate.trim());
     expect(output.tool_calls).toEqual([
-      { name: "read_file", status: "success" },
+      { name: "run_code", status: "success" },
     ]);
     expect(gateway.requests).toHaveLength(2);
-    expect(result.stderr).toContain("Reading fixture.txt");
+    expect(result.stderr).toContain("Working");
   }, TIMEOUT);
 
   test("tool recovery keeps progress updates ordered before the final response", async () => {
@@ -349,14 +356,14 @@ describe("fx ask presentation", () => {
     const gateway = startFakeGateway([
       fakeGatewaySerializedToolCall(
         "read_missing_for_progress",
-        "read_file",
-        JSON.stringify({ path: "missing.txt" }),
+        "run_code",
+        verbArguments("read_file", { path: "missing.txt" }),
         initial,
       ),
       fakeGatewaySerializedToolCall(
         "read_fallback_for_progress",
-        "read_file",
-        JSON.stringify({ path: "fallback.txt" }),
+        "run_code",
+        verbArguments("read_file", { path: "fallback.txt" }),
         recovery,
       ),
       fakeGatewayFinalText(final),
@@ -404,13 +411,12 @@ describe("fx ask presentation", () => {
     );
     expect(output.final_output).toBe(final);
     expect(output.tool_calls).toEqual([
-      { name: "read_file", status: "error" },
-      { name: "read_file", status: "success" },
+      { name: "run_code", status: "error" },
+      { name: "run_code", status: "success" },
     ]);
     expect(gateway.requests[1]!.body).toContain("Path not found: missing.txt");
     expect(gateway.requests[2]!.body).toContain(recovery);
-    expect(result.stderr).toContain("Reading missing.txt");
-    expect(result.stderr).toContain("Reading fallback.txt");
+    expect(result.stderr.match(/Working/g)).toHaveLength(2);
   }, TIMEOUT);
 
   test.skipIf(!tmuxAvailable())(
@@ -423,11 +429,11 @@ describe("fx ask presentation", () => {
         releaseFinal = resolve;
       });
       const gateway = startFakeGateway([
-        fakeGatewayToolCall("read_fixture", "read_file", { path: "fixture.txt" }),
+        fakeGatewayVerbCall("read_fixture", "read_file", { path: "fixture.txt" }),
         fakeGatewaySerializedToolCall(
           "read_missing",
-          "read_file",
-          JSON.stringify({ path: "missing.txt" }),
+          "run_code",
+          verbArguments("read_file", { path: "missing.txt" }),
           "Between groups.\n",
         ),
         async () => {
@@ -461,10 +467,10 @@ describe("fx ask presentation", () => {
       const scrollback = await session.captureFullScrollback();
       const escaped = await session.captureFullScrollbackEscapes();
       expect(scrollback).toContain("Inspect fixture.txt and render the response.");
-      expect(pane.match(/1 tool call · 1 read/g)).toHaveLength(2);
-      expect(pane).toContain("Reading fixture.txt");
+      expect(pane.match(/1 tool call · 1 command/g)).toHaveLength(2);
+      expect(pane).toContain("Working read_file");
       expect(pane).toContain("Between groups.");
-      expect(pane).toContain("Reading missing.txt");
+      expect(pane).toContain("Failed: Working read_file");
       expect(pane).toContain("failed");
       expect(pane).toContain("Ask presentation");
       expect(pane).toContain("bold and docs");
@@ -947,7 +953,7 @@ function startupLoads(home: string): number {
 }
 
 function userShellRun(id: string, command: string) {
-  return fakeGatewayToolCall(id, "Bash", { command });
+  return fakeGatewayVerbCall(id, "Bash", { command });
 }
 
 function filesContaining(dir: string, needle: string): string[] {

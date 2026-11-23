@@ -26,7 +26,7 @@ import {
   type FakeGatewayOptions,
   fakeGatewayFinalText,
   fakeGatewaySerializedToolCall,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   fakeShellRun,
   heldFakeGatewayFinalText,
   isComposerLine,
@@ -111,6 +111,10 @@ function expectWholeLog(fixture: Fixture, id: string) {
     }
     start = end + 1;
   }
+}
+
+function verbBody(verb: string, input: object) {
+  return { body: `return gm.${verb}(${JSON.stringify(input)});` };
 }
 
 function promptToolParts(body: string) {
@@ -408,7 +412,7 @@ for (const userHeavy of [false, true]) {
       }
       if (phase === "read") {
         if (body.includes("compaction-read-1")) return fakeGatewayFinalText("READ_SAVED_TURN_DONE");
-        return fakeGatewayToolCall("compaction-read-1", "read_tool_result", { request: { handle: "M1", query: "Assistant reference 7000:" } });
+        return fakeGatewayVerbCall("compaction-read-1", "read_tool_result", { request: { handle: "M1", query: "Assistant reference 7000:" } });
       }
       return fakeGatewayFinalText(phase === "seed" ? assistant : "CONTINUED_FROM_COMMITTED_MEMORY");
     }, { models: [{ id: model, type: "language", tags: ["tool-use"], context_window: userHeavy ? 256_000 : 128_000, max_tokens: 8192 }] });
@@ -543,7 +547,7 @@ test("a long command output is kept as one read-only blob, and the model pages i
     if (body.includes("Page the output again.")) {
       if (body.includes("replay-read-1")) return fakeGatewayFinalText("REPLAY_PAGED_DONE");
       const handle = /fx-command-replay-[a-f0-9]{12}-[a-f0-9]{64}\.bin/.exec(body)?.[0] ?? "missing-handle";
-      return fakeGatewayToolCall("replay-read-1", "read_tool_result", {
+      return fakeGatewayVerbCall("replay-read-1", "read_tool_result", {
         request: { handle, query: "150001" },
       });
     }
@@ -588,7 +592,7 @@ test("a long command output is kept as one read-only blob, and the model pages i
 
     const afterRead = gateway.requests.findLast((request: any) => request.body.includes("replay-read-1"))!.body;
     expect(afterRead).toContain("<command_output_query handle=");
-    expect(afterRead).toContain("150001\\\\x0a");
+    expect(afterRead).toContain("150001\\\\\\\\x0a");
     expectWholeLog(fixture, id);
     expectNoV1Sessions(fixture);
   } finally {
@@ -704,15 +708,15 @@ test("a kill while a tool runs keeps the text of the message that issued it", as
   const fixture = createFixture("fx-v2-kill-text-");
   let slowServed: () => void = () => {};
   const slowStarted = new Promise<void>((resolve) => (slowServed = resolve));
-  const shell = (command: string) => JSON.stringify({ command });
+  const shell = (command: string) => JSON.stringify(verbBody("Bash", { command }));
   const gateway = startDynamicFakeGateway(async (body) => {
     if (body.includes("After the text kill.")) return fakeGatewayFinalText("AFTER_TEXT_KILL");
     if (body.includes("Run the build.") && body.includes("FIRST_STEP_OUTPUT_4410")) {
       slowServed();
-      return fakeGatewaySerializedToolCall("v2-slow-2", "Bash", shell("sleep 5"), "RUNNING_PLAN_7731 builds it now.");
+      return fakeGatewaySerializedToolCall("v2-slow-2", "run_code", shell("sleep 5"), "RUNNING_PLAN_7731 builds it now.");
     }
     if (body.includes("Run the build.")) {
-      return fakeGatewaySerializedToolCall("v2-fast-1", "Bash", shell("echo FIRST_STEP_OUTPUT_4410"), "EARLIER_PLAN_2209 reads first.");
+      return fakeGatewaySerializedToolCall("v2-fast-1", "run_code", shell("echo FIRST_STEP_OUTPUT_4410"), "EARLIER_PLAN_2209 reads first.");
     }
     return fakeGatewayFinalText("BEFORE_TEXT_KILL");
   });
@@ -2277,7 +2281,7 @@ test.skipIf(!tmuxAvailable())("ACP load after a compaction shows every earlier t
 const isChildRequest = (body: string) => body.includes("<subagent_role>");
 
 function agentCall(id: string, prompt: string, extra: Record<string, unknown> = {}) {
-  return fakeGatewayToolCall(id, "Agent", { prompt, description: "Delegated work", ...extra });
+  return fakeGatewayVerbCall(id, "Agent", { prompt, description: "Delegated work", ...extra });
 }
 
 const isAppChildRequest = (body: string, typed: string[]) => !typed.some((text) => body.includes(text));
@@ -2311,7 +2315,7 @@ test("fx ask runs a subagent as a v2 child with its own log, recorded in the par
     const childId = lines[0].child;
     expect(lines[1].child).toBe(childId);
     expect(lines[1].work_id).toBe(lines[0].work_id);
-    expect(lines[0].data.agent).toBe("agent-delegate-run");
+    expect(lines[0].data.agent).toBe("agent-delegate-run-1");
 
     expect(lines[1].data.report).toBe(true);
     expect(lines[0].data.fingerprint).toMatch(/^[0-9a-f]{64}$/);
@@ -2354,7 +2358,7 @@ test("a named subagent keeps its id and history across fx ask runs", async () =>
     if (body.includes(call)) return fakeGatewayFinalText(round === 1 ? "FIRST_DONE" : "SECOND_DONE");
     return round === 1
       ? agentCall(call, "Review round one. Follow REVIEWER_RULES.")
-      : agentCall(call, "Review round two.", { resume: "agent-delegate-one" });
+      : agentCall(call, "Review round two.", { resume: "agent-delegate-one-1" });
   }, { classifierDecision: "clear" });
   try {
     const first = await ask(fixture, gateway, ["First review."]);
@@ -2372,8 +2376,8 @@ test("a named subagent keeps its id and history across fx ask runs", async () =>
       ["child_spawned", null], ["child_finished", "ok"], ["child_spawned", null], ["child_finished", "ok"],
     ]);
     expect(new Set(lines.map((line) => line.child)).size).toBe(1);
-    expect(lines[0].data.agent).toBe("agent-delegate-one");
-    expect(lines[2].data.agent).toBe("agent-delegate-one");
+    expect(lines[0].data.agent).toBe("agent-delegate-one-1");
+    expect(lines[2].data.agent).toBe("agent-delegate-one-1");
     expect(lines[2].work_id).not.toBe(lines[0].work_id);
 
 
@@ -2410,7 +2414,7 @@ test("a crash while a named subagent works records it interrupted, and its next 
     if (body.includes(phase === "crash" ? "delegate-lost" : "delegate-again")) return fakeGatewayFinalText("AFTER_LOST_DONE");
     return phase === "crash"
       ? agentCall("delegate-lost", "Start the long job.")
-      : agentCall("delegate-again", "Start it again.", { resume: "agent-delegate-lost" });
+      : agentCall("delegate-again", "Start it again.", { resume: "agent-delegate-lost-1" });
   }, { classifierDecision: "clear" });
   try {
     const { child, exited } = spawnAsk(fixture, gateway, ["Delegate the long job."]);
@@ -2813,7 +2817,7 @@ test("an older session moves off its side folder on its next open, and the model
   const oldHandle = "result-shell-0011223344556677-8899aabbccddeeff.txt";
   const gateway = startFakeGateway([
     fakeGatewayFinalText("MOVE_FIRST"),
-    fakeGatewayToolCall("move-read-1", "read_tool_result", { handle: oldHandle }),
+    fakeGatewayVerbCall("move-read-1", "read_tool_result", { handle: oldHandle }),
     fakeGatewayFinalText("MOVE_READ_DONE"),
     fakeGatewayFinalText("MOVE_AGAIN"),
   ]);
@@ -3198,7 +3202,7 @@ test("a parent killed while a named child runs a tool records that work interrup
       return fakeGatewayFinalText("CHILD_AGAIN_DONE");
     }
     if (body.includes(`delegate-${phase}`)) return fakeGatewayFinalText(`PARENT_${phase.toUpperCase()}_DONE`);
-    return agentCall(`delegate-${phase}`, `Child work ${phase}.`, phase === "first" ? {} : { resume: "agent-delegate-first" });
+    return agentCall(`delegate-${phase}`, `Child work ${phase}.`, phase === "first" ? {} : { resume: "agent-delegate-first-1" });
   }, { classifierDecision: "clear" });
   try {
     const first = await ask(fixture, gateway, ["Start the worker."]);
@@ -3273,7 +3277,7 @@ test.skipIf(!tmuxAvailable())("the app talks to the user while a child runs, and
     if (isReportTurn(raw)) {
       if (!afterChildTool) {
         afterChildTool = true;
-        return fakeGatewayToolCall("after-child", "read_file", { path: "after-child.txt" });
+        return fakeGatewayVerbCall("after-child", "read_file", { path: "after-child.txt" });
       }
       return fakeGatewayFinalText("CHILD_COMPLETE");
     }
@@ -3314,7 +3318,7 @@ test.skipIf(!tmuxAvailable())("the app talks to the user while a child runs, and
     held.release("HELD_CHILD_RESULT");
     const reported = await tui.waitForText("CHILD_COMPLETE", 10000);
 
-    expect(reported).toContain("agent-steering-delegation completed");
+    expect(reported).toContain("agent-steering-delegation-1 completed");
     expect(reported).not.toContain("Subagent report (untrusted");
 
     expect(requests.filter((raw) => isReportTurn(raw) && raw.includes("HELD_CHILD_RESULT"))).toHaveLength(2);
@@ -3704,7 +3708,7 @@ test.skipIf(!tmuxAvailable())("an app killed after a named child finished resume
       return fakeGatewayFinalText(body.includes("CHILD_FIRST_ANSWER") ? "CHILD_REMEMBERED" : "CHILD_FORGOT");
     }
     if (body.includes(`delegate-${phase}`)) return fakeGatewayFinalText(`PARENT_${phase}_DONE`);
-    return agentCall(`delegate-${phase}`, `Worker message ${phase}.`, phase === 1 ? {} : { resume: "agent-delegate-1" });
+    return agentCall(`delegate-${phase}`, `Worker message ${phase}.`, phase === 1 ? {} : { resume: "agent-delegate-1-1" });
   }, { classifierDecision: "clear" });
   try {
     const app = await startApp(fixture, gateway, [], true, { FX_PERMISSION_MODE: "auto" });
@@ -3754,8 +3758,8 @@ function twoToolGateway(prefix: string, prompt: string, after: [string, string])
     if (body.includes("<session_resumed>")) return fakeGatewayFinalText(`${prefix}_RESUMED`);
     if (body.includes(prompt) && body.includes(`${prefix}_FIRST_TOOL_OUTPUT`)) {
       served();
-      const input = JSON.stringify({ command: "sleep 30" });
-      return fakeGatewaySerializedToolCall(`${prefix}-slow-2`, "Bash", input, `${prefix}_RUNNING_PLAN starts the slow one.`);
+      const input = JSON.stringify(verbBody("Bash", { command: "sleep 30" }));
+      return fakeGatewaySerializedToolCall(`${prefix}-slow-2`, "run_code", input, `${prefix}_RUNNING_PLAN starts the slow one.`);
     }
     if (body.includes(prompt)) return fakeShellRun(`${prefix}-fast-1`, `echo ${prefix}_FIRST_TOOL_OUTPUT`);
     return fakeGatewayFinalText(`${prefix}_UNEXPECTED`);
@@ -3907,7 +3911,7 @@ test("a named child whose log is damaged fails that message, and the parent turn
   const gateway = startDynamicFakeGateway(async (body) => {
     if (isChildRequest(body)) return fakeGatewayFinalText(`CHILD_ANSWER_${phase}`);
     if (body.includes(`delegate-${phase}`)) return fakeGatewayFinalText(phase === 1 ? "PARENT_FIRST_DONE" : "PARENT_AFTER_CHILD_FAILED");
-    return agentCall(`delegate-${phase}`, `Child work ${phase}.`, phase === 1 ? {} : { resume: "agent-delegate-1" });
+    return agentCall(`delegate-${phase}`, `Child work ${phase}.`, phase === 1 ? {} : { resume: "agent-delegate-1-1" });
   }, { classifierDecision: "clear" });
   try {
     const first = await ask(fixture, gateway, ["Start the worker."]);
@@ -3924,7 +3928,7 @@ test("a named child whose log is damaged fails that message, and the parent turn
 
 
     expect(JSON.parse(again.stdout).output).toContain("PARENT_AFTER_CHILD_FAILED");
-    expect(JSON.parse(again.stdout).tool_calls).toEqual([{ name: "Agent", status: "error" }]);
+    expect(JSON.parse(again.stdout).tool_calls).toEqual([{ name: "run_code", status: "error" }]);
     const lines = childLines(fixture.home, id);
     expect(lines.map((line) => [line.kind, line.outcome ?? null])).toEqual([
       ["child_spawned", null], ["child_finished", "ok"], ["child_spawned", null], ["child_finished", "failed"],

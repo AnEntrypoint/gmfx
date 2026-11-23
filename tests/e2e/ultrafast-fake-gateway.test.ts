@@ -14,7 +14,7 @@ import { FX_BIN, runFx } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
   fakeGatewaySse,
-  fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   composerContains,
   hasEmptyComposer,
   startDynamicFakeGateway,
@@ -311,8 +311,8 @@ async function startAcpSession(client: AcpClient): Promise<string> {
 function agentToolResult(raw: string): { ok?: boolean; result?: string } {
   const latest = JSON.parse(raw).prompt.at(-1);
   expect(latest.role).toBe("tool");
-  expect(latest.content[0].toolName).toBe("Agent");
-  return JSON.parse(latest.content[0].output.value);
+  expect(latest.content[0].toolName).toBe("run_code");
+  return JSON.parse(JSON.parse(latest.content[0].output.value).value);
 }
 
 describe("ultrafast fake Gateway", () => {
@@ -881,7 +881,7 @@ describe("ultrafast fake Gateway", () => {
       const gateway = startDynamicFakeGateway((body) => {
         if (body.includes("<subagent_role>")) return finishWithServiceTier("child completed", "ultrafast");
         if (body.includes("agent_call_1")) return finishWithServiceTier("parent observed the child", "ultrafast");
-        return fakeGatewayToolCall(
+        return fakeGatewayVerbCall(
           "agent_call_1",
           "Agent",
           { description: "Delegate one task", prompt: "ultrafast-child-marker" },
@@ -931,12 +931,12 @@ describe("ultrafast fake Gateway", () => {
         const tier = round < 3 ? "ultrafast" : "standard";
 
         if (!body.includes(`named-ultra-${round}`)) {
-          return fakeGatewayToolCall(`named-ultra-${round}`, "Agent", {
+          return fakeGatewayVerbCall(`named-ultra-${round}`, "Agent", {
             description: `Review round ${round}`,
             prompt: round === 1
               ? "Follow ULTRA_REVIEWER_RULES. ultrafast named review round 1"
               : `ultrafast named review round ${round}`,
-            ...(round === 1 ? {} : { resume: "agent-named-ultra-1" }),
+            ...(round === 1 ? {} : { resume: "agent-named-ultra-1-1" }),
           });
         }
         return finishWithServiceTier(`ULTRA_PARENT_${round}`, tier);

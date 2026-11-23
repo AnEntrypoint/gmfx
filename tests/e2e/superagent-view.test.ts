@@ -6,6 +6,7 @@ import { FX_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
   fakeGatewayToolCall,
+  fakeGatewayVerbCall,
   LIST_VERBS_BODY,
   runCodeVerbNames,
   serveFakeGateway,
@@ -144,7 +145,7 @@ describe.skipIf(SKIP)("superagent sees a root through its final response and sta
           const results = resultsSinceLastUser(body);
           peerToolResults = Math.max(peerToolResults, results.length);
           if (results.length < FILES) {
-            return fakeGatewayToolCall(`view-read-${results.length}`, "read_file", { path: `file-${results.length}.txt` });
+            return fakeGatewayVerbCall(`view-read-${results.length}`, "read_file", { path: `file-${results.length}.txt` });
           }
           return fakeGatewayFinalText(FINAL_ANSWER);
         }
@@ -162,10 +163,10 @@ describe.skipIf(SKIP)("superagent sees a root through its final response and sta
           }
           if (String(last.toolCallId) === "view-verbs") {
             verbs = runCodeVerbNames(last);
-            return fakeGatewayToolCall("view-start", "superagent", { action: "start", agent: PROJECT });
+            return fakeGatewayVerbCall("view-start", "superagent", { action: "start", agent: PROJECT });
           }
           if (String(last.toolCallId) === "view-start") {
-            return fakeGatewayToolCall("view-instruct", "superagent", { action: "instruct", agent: PROJECT, prompt: PEER_TASK });
+            return fakeGatewayVerbCall("view-instruct", "superagent", { action: "instruct", agent: PROJECT, prompt: PEER_TASK });
           }
           if (String(last.toolCallId) === "view-instruct") return fakeGatewayFinalText(WAITING);
         }
@@ -210,7 +211,7 @@ describe.skipIf(SKIP)("superagent sees a root through its final response and sta
         const user = lastUserText(body);
         if (user.includes(LIST_PROMPT)) {
           const last = resultsSinceLastUser(body).at(-1);
-          if (!last) return fakeGatewayToolCall("view-list", "superagent", { action: "list_projects" });
+          if (!last) return fakeGatewayVerbCall("view-list", "superagent", { action: "list_projects" });
           listed = JSON.stringify(last.output ?? last);
           return fakeGatewayFinalText(LISTED);
         }

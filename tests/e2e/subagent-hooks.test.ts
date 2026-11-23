@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
-import { fakeGatewayFinalText, fakeGatewayToolCall, LIST_VERBS_BODY, runCodeVerbNames, serveFakeGateway } from "./tmux-helpers";
+import { fakeGatewayFinalText, fakeGatewayVerbCall, fakeGatewayToolCall, LIST_VERBS_BODY, runCodeVerbNames, serveFakeGateway } from "./tmux-helpers";
 
 const TIMEOUT = 60_000;
 const MODEL = "openai/gpt-5";
@@ -89,7 +89,7 @@ function route(body: string): Response {
     }
     if (results.length === 1) {
       listedVerbs.push(runCodeVerbNames(results[0]));
-      return fakeGatewayToolCall("agent-child", "Agent", {
+      return fakeGatewayVerbCall("agent-child", "Agent", {
         prompt: CHILD_TASK,
         description: "child task",
         subagent_type: "explore",
