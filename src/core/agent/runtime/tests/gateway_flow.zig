@@ -1258,7 +1258,8 @@ test "required Vision rejects non-Vision before effects and stays required until
     job.permission_mode = .ask;
 
     var config = fixture.config();
-    config.advertised_tool_names = &terminal_advertised_names;
+    const vision_flow_advertised_names = [_][]const u8{ "Bash", "read_file" };
+    config.advertised_tool_names = &vision_flow_advertised_names;
     config.advertised_functions = &terminal_advertised_functions;
     var lifecycle = test_support.testLifecycleContext(
         lifecycle_view,
