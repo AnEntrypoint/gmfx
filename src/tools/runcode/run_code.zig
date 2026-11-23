@@ -255,7 +255,11 @@ fn openCatalogEntry(writer: *std.Io.Writer, first: *bool, name: []const u8, desc
     try writer.writeAll("\",\"input_schema\":");
 }
 
-fn buildCatalog(alloc: std.mem.Allocator, ctx: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry) ![]u8 {
+fn bodyNeedsMcpCatalog(body: []const u8) bool {
+    return std.mem.find(u8, body, "mcp__") != null or std.mem.find(u8, body, "verbs") != null;
+}
+
+fn buildCatalog(alloc: std.mem.Allocator, ctx: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry, with_mcp: bool) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeByte('[');
@@ -274,7 +278,8 @@ fn buildCatalog(alloc: std.mem.Allocator, ctx: tool_dispatch.DispatchContext, re
     }
     var listing = std.heap.ArenaAllocator.init(alloc);
     defer listing.deinit();
-    for (try mcpTools(listing.allocator(), ctx)) |tool| {
+    const listed = if (with_mcp) try mcpTools(listing.allocator(), ctx) else &[_]tool_mcp_runtime.ListedTool{};
+    for (listed) |tool| {
         try openCatalogEntry(&out.writer, &first, tool.name, tool.description, "mcp");
         try out.writer.writeAll(if (tool.input_schema_json.len == 0) "{}" else tool.input_schema_json);
         try out.writer.writeByte('}');
@@ -325,7 +330,7 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
     var managed = managed_execution.Runtime.init(alloc);
     defer managed.deinit();
     ctx.managed_executions = &managed;
-    const catalog = try buildCatalog(alloc, ctx, registry);
+    const catalog = try buildCatalog(alloc, ctx, registry, true);
     defer alloc.free(catalog);
     var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
     const verbs: runcode.Verbs = .{ .context = &bridge, .catalog = catalog, .invoke = invokeVerb };
@@ -338,7 +343,7 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
 
 pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput, registry: tool_dispatch.Registry) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const input = erased.as(Input);
-    const catalog = buildCatalog(ctx.allocator, ctx, registry) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not list its verbs") };
+    const catalog = buildCatalog(ctx.allocator, ctx, registry, bodyNeedsMcpCatalog(input.body)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not list its verbs") };
     defer ctx.allocator.free(catalog);
     var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
     var ledger = call_ledger.Ledger.init(ctx.allocator, &bridge, invokeVerb);
@@ -445,7 +450,7 @@ test "a verb outside the agent's allowed tools is refused by name before dispatc
         const reply = try invokeVerb(&bridge, alloc, verb, "{\"path\":\"build.zig\"}");
         try std.testing.expect(std.mem.indexOf(u8, reply, not_admitted_code) != null);
     }
-    const catalog = try buildCatalog(alloc, ctx, builtin_tools.registry_with_tower);
+    const catalog = try buildCatalog(alloc, ctx, builtin_tools.registry_with_tower, true);
     try std.testing.expect(std.mem.indexOf(u8, catalog, "\"name\":\"glob_files\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog, "\"name\":\"process_info\"") != null);
     for ([_][]const u8{ "\"name\":\"read_file\"", "\"name\":\"fs_read\"", "\"name\":\"Bash\"", "\"name\":\"run_command\"" }) |absent| {
@@ -611,9 +616,9 @@ test "the verb catalog lists each MCP tool of the session with its input schema"
         .mcp_ctx = &runtime_marker,
         .mcp_list_tools = FakeMcpListing.list,
     };
-    const catalog = try buildCatalog(arena.allocator(), ctx, .{ .tools = &.{} });
+    const catalog = try buildCatalog(arena.allocator(), ctx, .{ .tools = &.{} }, true);
     try std.testing.expect(std.mem.indexOf(u8, catalog, "{\"name\":\"mcp__fake__echo\",\"description\":\"Echo text.\",\"kind\":\"mcp\",\"input_schema\":{\"type\":\"object\"}}") != null);
-    const without_mcp = try buildCatalog(arena.allocator(), .{ .allocator = arena.allocator() }, .{ .tools = &.{} });
+    const without_mcp = try buildCatalog(arena.allocator(), .{ .allocator = arena.allocator() }, .{ .tools = &.{} }, true);
     try std.testing.expect(std.mem.indexOf(u8, without_mcp, "mcp__fake__echo") == null);
 }
 
