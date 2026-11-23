@@ -129,7 +129,7 @@ Denial and failure throw (or reject with) instances of the named classes below, 
 | FxInvalidArgs | EFX_INVALID_ARGS | decode or validate failed | `field`, `message` |
 | FxToolFailed | EFX_TOOL_FAILED | tool ran and returned `status: failure` | `text`, `details` |
 | FxDeadline | EFX_DEADLINE | body or call deadline passed | `deadlineMs`, `scope: 'body' | 'call'` |
-| FxUnsupported | ERR_FX_UNSUPPORTED | capability absent (existing code in cordis/fx_runtime.js) | `name` |
+| FxUnsupported | ERR_FX_UNSUPPORTED | capability absent (existing code in cordis/fx_runtime.js) | `target` |
 | FxCanceled | EFX_CANCELED | abort signal or cancel | none |
 | FxDenied | EFX_DENIED | a loader or service call refused by scope (path outside the JS root, host or port not allowed) | `target`, `class` |
 
