@@ -392,14 +392,19 @@ pub const Catalog = struct {
         errdefer listed.deinit(alloc);
         c.mutex.lockUncancelable(c.io);
         defer c.mutex.unlock(c.io);
-        for (c.lists, 0..) |l, i| {
+        for (c.servers, c.lists, 0..) |s, l, i| {
             if (!l.offersTools()) continue;
+            const instructions = try c.runtime.instructions(alloc, s.name);
+            defer if (instructions) |text| alloc.free(text);
             for (l.tools) |tool| {
                 if (permissions.rulesDenyAllTargetsForPermission(permission_rules, tool.prefixed_name)) continue;
                 if (!c.allowsLocked(access, i, tool.prefixed_name)) continue;
                 try listed.append(alloc, .{
                     .name = try alloc.dupe(u8, tool.prefixed_name),
-                    .description = try alloc.dupe(u8, tool.description),
+                    .description = if (instructions) |text|
+                        try alloc.print("{s}\n\nServer instructions: {s}", .{ tool.description, text })
+                    else
+                        try alloc.dupe(u8, tool.description),
                     .input_schema_json = try alloc.dupe(u8, tool.input_schema_json),
                 });
             }
