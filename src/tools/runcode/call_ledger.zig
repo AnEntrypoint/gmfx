@@ -3,7 +3,7 @@ const text_utils = @import("../../core/shared/text_utils.zig");
 
 pub const max_entries = 50;
 const max_args_bytes = 120;
-const max_path_bytes = 4096;
+const max_whole_value_bytes = 4096;
 
 const Entry = struct {
     verb: []const u8,
@@ -106,7 +106,7 @@ fn compactArgs(alloc: std.mem.Allocator, arena: std.mem.Allocator, args_json: []
         switch (field.value_ptr.*) {
             .string => |text| {
                 try json.objectField(field.key_ptr.*);
-                const limit = if (std.mem.eql(u8, field.key_ptr.*, "path")) max_path_bytes else max_args_bytes;
+                const limit = if (std.mem.eql(u8, field.key_ptr.*, "path") or std.mem.eql(u8, field.key_ptr.*, "command")) max_whole_value_bytes else max_args_bytes;
                 try json.write(text_utils.utf8PrefixByBytes(text, limit));
             },
             .integer, .float, .bool => {
@@ -191,6 +191,16 @@ test "the ledger keeps a long path whole" {
     const path = text_utils.repeat("p", max_args_bytes * 2);
     alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{\"path\":\"" ++ path ++ "\"}"));
     try std.testing.expectEqualStrings("{\"path\":\"" ++ path ++ "\"}", ledger.entries.items[0].args);
+}
+
+test "the ledger keeps a long command whole" {
+    const alloc = std.testing.allocator;
+    var unused: u8 = 0;
+    var ledger = Ledger.init(alloc, &unused, testInvoke);
+    defer ledger.deinit();
+    const command = text_utils.repeat("c", max_args_bytes * 2);
+    alloc.free(try Ledger.invoke(&ledger, alloc, "Bash", "{\"command\":\"" ++ command ++ "\"}"));
+    try std.testing.expectEqualStrings("{\"command\":\"" ++ command ++ "\"}", ledger.entries.items[0].args);
 }
 
 test "the ledger records each verb call with a bounded args summary and appends it to the report" {

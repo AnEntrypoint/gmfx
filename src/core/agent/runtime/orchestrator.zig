@@ -2839,6 +2839,7 @@ const InnerPermissionState = struct {
     step_ctx: TraceContext,
     local_grants: ?*std.ArrayList(PermissionGrant),
     grant_arena: Allocator,
+    feedback: *std.ArrayList([]const u8),
 
     fn source(self: *InnerPermissionState) runtime_tool_contracts.InnerPermission {
         return .{ .context = @ptrCast(self), .outcome_fn = innerCallPermissionOutcome };
@@ -2865,6 +2866,9 @@ fn innerCallPermissionOutcome(raw: *anyopaque, arena: Allocator, call: ToolCall)
         state.step_ctx,
     );
     try retainInnerSessionGrants(state, arena, call, outcome);
+    if (outcome.feedback) |text| {
+        if (!outcome.decision.isDenied() and outcome.tool_failure == null) try state.feedback.append(state.grant_arena, try state.grant_arena.dupe(u8, text));
+    }
     return outcome;
 }
 
@@ -12134,6 +12138,7 @@ fn processQueuedPromptLoop(
             else
                 null;
             var inner_cancelled_command: runtime_tool_contracts.CancelledCommandSink = .{ .alloc = arena };
+            var inner_feedback: std.ArrayList([]const u8) = .empty;
             var inner_permission_state: InnerPermissionState = .{
                 .deps = deps,
                 .config = config,
@@ -12146,6 +12151,7 @@ fn processQueuedPromptLoop(
                 .step_ctx = step_ctx,
                 .local_grants = if (live_authority == null) &local_grants else null,
                 .grant_arena = arena,
+                .feedback = &inner_feedback,
             };
             var execution = deps.executeToolCall(.{
                 .inner_context = if (inner_context_state) |*state| state.gather() else null,
@@ -12463,6 +12469,7 @@ fn processQueuedPromptLoop(
                     result_commit_pending = false;
                 }
                 replay_handed_off = true;
+                try appendPermissionFeedbackAfterToolResult(deps, arena, &step_batch, tool_call.id, inner_feedback.items);
                 if (permission_outcome.feedback) |feedback| {
                     try appendPermissionFeedbackAfterToolResult(
                         deps,
@@ -12555,6 +12562,7 @@ fn processQueuedPromptLoop(
                     try deps.push_system_notice(deps.ctx, notice.body);
                 }
             }
+            try appendPermissionFeedbackAfterToolResult(deps, arena, &step_batch, tool_call.id, inner_feedback.items);
             if (permission_outcome.feedback) |feedback| {
                 try appendPermissionFeedbackAfterToolResult(
                     deps,

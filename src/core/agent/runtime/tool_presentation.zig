@@ -99,6 +99,7 @@ pub const ProvisionalToolStatuses = struct {
                 .activity_kind = .read,
             } };
         }
+        if (run_code_presentation.isRunCode(tool_name)) return .ineligible;
         const lookup_name = if (std.mem.eql(u8, tool_name, "run_command"))
             "Bash"
         else
@@ -1832,7 +1833,7 @@ test "fallback tool display never exposes provider search backend names" {
 test "provisional lifecycle preflight distinguishes unknown eligible and ineligible tools" {
     try std.testing.expect(ProvisionalToolStatuses.preflight(test_tool_registry, "unknown_tool") == null);
 
-    for ([_][]const u8{ "AskUserQuestion", "write_file", "edit_file", "Bash", "run_command" }) |name| {
+    for ([_][]const u8{ "AskUserQuestion", "write_file", "edit_file", "Bash", "run_command", "run_code" }) |name| {
         const preflight = ProvisionalToolStatuses.preflight(test_tool_registry, name) orelse return error.TestExpectedEqual;
         switch (preflight) {
             .ineligible => {},
