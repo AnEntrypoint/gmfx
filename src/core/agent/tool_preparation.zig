@@ -294,6 +294,16 @@ fn advertisedTool(names: []const []const u8, name: []const u8) bool {
     return names.len == 0 or std.mem.eql(u8, name, "vision") or containsName(names, name);
 }
 
+/// Name-only form of the advertised gate for runs that skip full preparation
+/// (context off, --bare). Registered tools only; dynamic and unknown names
+/// keep their existing legacy path.
+pub fn unadvertisedRefusal(registry: tool_dispatch.Registry, advertised: []const []const u8, call: ToolCall) ?Result {
+    if (call.provenance == .provider_executed or call.argument_integrity != .valid) return null;
+    if (registry.lookup(call.name) == null) return null;
+    if (advertisedTool(advertised, call.name)) return null;
+    return .{ .terminal = .{ .kind = .unsupported } };
+}
+
 fn containsName(names: []const []const u8, name: []const u8) bool {
     for (names) |candidate| {
         if (std.mem.eql(u8, candidate, name)) return true;
@@ -531,6 +541,20 @@ test "advertised dynamic calls stay opaque while unsupported calls are terminal"
     defer unsupported.deinit(alloc);
     try std.testing.expectEqual(TerminalKind.unsupported, unsupported.terminal.kind);
     try std.testing.expect(unsupported.terminal.model_output == null);
+}
+
+test "the name-only gate refuses an unadvertised registered tool without preparation" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    const tools = [_]tool_dispatch.Tool{ builtin_tools.read_file, builtin_tools.run_code };
+    const registry: tool_dispatch.Registry = .{ .tools = &tools };
+    const one_tool = [_][]const u8{"run_code"};
+    const read: ToolCall = .{ .id = "r", .name = "read_file", .arguments_json = "{\"path\":\"README.md\"}" };
+    const code: ToolCall = .{ .id = "c", .name = "run_code", .arguments_json = "{\"code\":\"1\"}" };
+    const unknown: ToolCall = .{ .id = "u", .name = "not_registered", .arguments_json = "{}" };
+    try std.testing.expectEqual(TerminalKind.unsupported, unadvertisedRefusal(registry, &one_tool, read).?.terminal.kind);
+    try std.testing.expect(unadvertisedRefusal(registry, &one_tool, code) == null);
+    try std.testing.expect(unadvertisedRefusal(registry, &one_tool, unknown) == null);
+    try std.testing.expect(unadvertisedRefusal(registry, &.{}, read) == null);
 }
 
 test "an unadvertised registered tool is unsupported while run_code stays ready" {

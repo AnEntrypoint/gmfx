@@ -10039,6 +10039,18 @@ fn processQueuedPromptLoop(
                     );
                 };
             }
+        } else {
+            for (prepared_tool_calls, 0..) |prepared_call, i| {
+                switch (prepared_call) {
+                    .ready => {},
+                    .blocked, .provider_executed => continue,
+                }
+                preparation_batch.preparations[i] = tool_preparation.unadvertisedRefusal(
+                    deps.tool_registry,
+                    config.advertised_tool_names,
+                    prepared_call.call(),
+                );
+            }
         }
 
         const context_deferred_calls = arena.alloc(bool, prepared_tool_calls.len) catch |err| {
