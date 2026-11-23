@@ -58,6 +58,7 @@ const tool_mcp_registry = @import("tool_mcp_registry.zig");
 const tool_mcp_runtime = @import("tool_mcp_runtime.zig");
 const mcp_call_capability = @import("mcp_call_capability.zig");
 const runtime_lifecycle = @import("../agent/runtime/lifecycle.zig");
+const agent_execution_memory = @import("../agent/runtime/execution_memory.zig");
 const model_tool_schema = @import("model_tool_schema.zig");
 const auto_classifier_context = @import("../permissions/auto_classifier_context.zig");
 const capability_retrieval = @import("capability_retrieval.zig");
@@ -209,6 +210,7 @@ pub const Context = struct {
     command_timeout_started_ms: ?i64 = null,
     command_replay_capture: ?*command_replay_store.Capture = null,
     command_replay_unavailable: bool = false,
+    cancelled_command_sink: ?*tool_contracts.CancelledCommandSink = null,
     tracker: ?*change_tracker.ChangeTracker = null,
     mcp_ctx: ?*anyopaque = null,
     mcp_has_tool: ?tool_mcp_runtime.HasToolFn = null,
@@ -457,6 +459,7 @@ pub fn executeToolCallAuthorized(
     execution_ctx.command_timeout_started_ms = request.command_timeout_started_ms;
     execution_ctx.command_replay_capture = request.command_replay_capture;
     execution_ctx.command_replay_unavailable = request.command_replay_unavailable;
+    execution_ctx.cancelled_command_sink = request.cancelled_command_sink;
 
     const started_at_ms = io_mod.milliTimestamp();
     _ = execution_ctx.session.read_tracker.beginStep();
@@ -1131,6 +1134,7 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
         .lifecycle_id = ctx.output_chunk_lifecycle_id,
         .presentation_group_id = ctx.output_chunk_presentation_group_id,
     });
+    if (result.cancelled) try keepCancelledCommand(ctx, arena, result);
     for (result.context_notices) |notice| try recordContextNoticeForDispatch(state.notices, notice);
     const images = if (result.tool_result_memory) |memory| memory.tool_images else &.{};
     return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json };
@@ -1139,6 +1143,17 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
 fn gatherInnerCallContext(ctx: Context, call: ToolCall) !void {
     const gather = ctx.inner_context orelse return;
     try gather.gather_fn(gather.context, call);
+}
+
+fn keepCancelledCommand(ctx: Context, arena: Allocator, result: ToolExecutionResult) !void {
+    const sink = ctx.cancelled_command_sink orelse return;
+    if (sink.value != null) return;
+    const retained = agent_execution_memory.retainCancelledCommandReplay(
+        arena,
+        result.tool_result_memory,
+        result.command_replay_capture,
+    ) orelse return;
+    sink.value = try types.dupeCancelledCommandPresentation(sink.alloc, retained);
 }
 
 fn runInnerMcpCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_dispatch.InnerCallReply {
@@ -3508,6 +3523,36 @@ test "a context notice produced by a verb inside run_code reaches the run_code r
     const result = try executeToolCall(ctx, arena.allocator(), call);
     try std.testing.expect(result.context_notices.len >= 1);
     try expectContains(result.context_notices[0], "[context] skill resource \"workflow/SKILL.md\" truncated");
+}
+
+test "a cancelled command inside run_code hands its retained replay to the carrier sink" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const temp_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(temp_path);
+    var store = command_replay_store.EphemeralStore.initForTesting(alloc, temp_path);
+    defer store.deinit();
+    var verb_arena = std.heap.ArenaAllocator.init(alloc);
+    defer verb_arena.deinit();
+    const capture = try command_replay_store.Capture.createEphemeral(verb_arena.allocator(), 1024, &store);
+    capture.appendAccepted(verb_arena.allocator(), .stdout, "NEEDLE\n");
+    var rt = TestRuntime{ .workspace_root = "/tmp" };
+    defer rt.deinit(alloc);
+    var sink: tool_contracts.CancelledCommandSink = .{ .alloc = alloc };
+    defer if (sink.value) |value| types.freeCancelledCommandPresentation(alloc, value);
+    var ctx = rt.context();
+    ctx.cancelled_command_sink = &sink;
+
+    try keepCancelledCommand(ctx, verb_arena.allocator(), .{
+        .status = .failure,
+        .cancelled = true,
+        .command_replay_capture = capture,
+    });
+
+    const replay = sink.value.?.output_replay.?;
+    try std.testing.expect(replay == .available);
+    try std.testing.expect(command_replay_store.isReplayHandle(replay.available.handle));
 }
 
 fn expectContains(haystack: []const u8, needle: []const u8) !void {

@@ -140,6 +140,11 @@ pub const InnerContextGather = struct {
     gather_fn: *const fn (context: *anyopaque, call: ToolCall) anyerror!void,
 };
 
+pub const CancelledCommandSink = struct {
+    alloc: Allocator,
+    value: ?types.CancelledCommandPresentation = null,
+};
+
 pub const ToolExecutionRequest = struct {
     observer: ?*observation.Observer = null,
     skill_locations: ?*const skill_contract.Locations = null,
@@ -164,6 +169,7 @@ pub const ToolExecutionRequest = struct {
     command_timeout_started_ms: ?i64 = null,
     command_replay_capture: ?*command_replay_store.Capture = null,
     command_replay_unavailable: bool = false,
+    cancelled_command_sink: ?*CancelledCommandSink = null,
     lifecycle_id: ?types.ToolLifecycleId = null,
     presentation_group_id: ?types.ToolPresentationGroupId = null,
     inner_context: ?InnerContextGather = null,

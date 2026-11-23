@@ -12095,11 +12095,13 @@ fn processQueuedPromptLoop(
                 } else null
             else
                 null;
+            var inner_cancelled_command: runtime_tool_contracts.CancelledCommandSink = .{ .alloc = arena };
             var execution = deps.executeToolCall(.{
                 .inner_context = if (inner_context_state) |*state| state.gather() else null,
                 .skill_locations = if (skills.catalog) |catalog| &catalog.locations else null,
                 .call_allocator = call_allocator,
                 .result_allocator = arena,
+                .cancelled_command_sink = &inner_cancelled_command,
                 .call = execution_call,
                 .authority = execution_authority,
                 .credential = activeCredentialLease(active_api_key, job),
@@ -12162,7 +12164,7 @@ fn processQueuedPromptLoop(
                         execution.command_replay_capture,
                     )
                 else
-                    null;
+                    inner_cancelled_command.value;
                 _ = try stream_ctx.provisional_statuses.finishCancelledCall(
                     deps,
                     stream_ctx.alloc,
@@ -12188,7 +12190,7 @@ fn processQueuedPromptLoop(
                     try deps.push_command_output_complete(deps.ctx, execution_lifecycle_id);
                 }
                 try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                const persist_error = if (execution_is_command)
+                const persist_error = if (cancelled_command != null)
                     runtime_interruption.persistInterruptedCommandTurnOnce(
                         deps,
                         finalization,
