@@ -5295,3 +5295,10 @@ Each change follows in its own commit with its witness command. The Phase B witn
   - tui-compaction-activity: 15 pass, 0 fail (part D).
   - tui-slash-menu: 40 pass, 0 fail (part D).
 - Failing rows on st24 are re-run through run_rows.sh on st25 (tickets fx-rows25-R1, R2, R3; results /workspace/tmp/fx/win_rows25_<R>.out, DONE lines ROWS_<R>_DONE). Open rows not re-run: tui-permissions (14) and tui-interrupt-recovery (2), reverted to HEAD by decision.
+
+## Rows that pass on the st25 binary (re-run parts R1 to R3, tree c294bc5c)
+
+- tui-resume: "command output folding survives flag and picker resume" (R1, /workspace/tmp/fx/e2e25/R1/tui-resume.out).
+- tui-command-permissions: "TUI keeps command output exclusive to Ctrl-O through resize and resume" (R2, e2e25/R2/tui-command-permissions.out).
+- tui-decision-prompts (R2, e2e25/R2/tui-decision-prompts.out): "amended denial follows its denied result without executing the command"; "long approval amendment keeps its tail and cursor visible before exact denial submission"; "exact-command option advertises Tab movement before denial amendment"; "approval amendment supports focused editor shortcut alias parity"; "approval amendment Ctrl+Y cannot yank into the hidden composer".
+- Still failing after R1 to R3 and under triage: the other rows of tui-resume (25), tui-resize (1), tui-command-permissions (2), tui-decision-prompts (2), tui-terminal-tool (4), tui-full-transcript-brutal (2), tui-gateway-stream-lifecycle (4), gateway-stream-lifecycle (7).
