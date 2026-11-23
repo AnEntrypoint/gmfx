@@ -7110,7 +7110,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
             return fakeGatewayFinalText("CANCEL_RESTART_COMPLETE");
           }
           const followUpReadIsCurrent = hasCurrentToolResult(body, "cancel-follow-up-read");
-          if (followUpReadIsCurrent || body.includes("Its tools so far:\\n  T2 run_code: return gm.read_file({\"path\":\"follow-up.txt\"});")) {
+          if (followUpReadIsCurrent || body.includes("Its tools so far:\\n  T2 run_code return gm.read_file({\\\"path\\\":\\\"follow-up.txt\\\"});")) {
             if (followUpReadIsCurrent) expect(toolResultOutput(body, "cancel-follow-up-read")).toContain("FOLLOW_UP_FACT");
             expect(compactions).toBe(trigger === "automatic" ? 1 : 0);
             return fakeGatewayFinalText("CANCEL_FOLLOWUP_COMPLETE");
