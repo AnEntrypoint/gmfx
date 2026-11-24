@@ -5633,3 +5633,11 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Fix (b98da0e4): the inner reply carries the handoff; the run_code bridge keeps a deep copy (parallel_execution.duplicateCommittedFileHandoff, now pub) when exactly one inner write produced one; the run_code dispatch reports it through a new committed_file_handoff_sink; toolExecutionResultFromDispatch carries it into the outer ToolExecutionResult. A run with more than one inner write keeps no handoff (owner question: which handoff wins for multi-file runs).
 - Witness: fx-st43 queued on b98da0e4 (window build and unit suite), then f43-tui-resume on the st43 binary. The per-file witness is pending. No unit test was added for the carry; the e2e rows (large-file edit, file terminal sequences, recorded diffs, large snapshots) are the witness.
 - Groups G2 to G8 remain as recorded in commit 078beae7.
+
+## fx-st43 stopped for memory (round 6)
+
+- Ticket 301924 (gate-ticket.cjs run fx-st43, head 703691f4, granted 09:40:05 UTC) was stopped by PID while still in suite_build, with no RC line and no result. Stopped tree, in order: 302084 (zig maker build), 302083 (timeout 2400 zig build), 302069 (win_st43.sh), 301924 (gate-ticket node). SIGTERM by PID; all four were gone after 8 s. No pkill or killall was used.
+- Reason: memory. Host line at the stop (cycle host line, as read): 956 MB available, swap 4.9 GB used, swap-out about 5.9 MB/s, swap-in about 0.9 MB/s.
+- Witness of the stop: all four PIDs gone (kill -0 failed), no fx-st43 process in ps other than the cycle sender's own shell, and win_st43.out ends at "CHILD suite_build pid=302083" with no RC line.
+- Requeue: only after swap_streak.sh reports clear_streak_seconds of at least 600. The tui-resume G1 fix (b98da0e4) is still unwitnessed; the requeue will be fx-st44 on HEAD.
+- Read after the stop (checker): clear_streak_seconds=0, last si 1508 KB/s; a vmstat sample right after the stop showed si 56280 KB/s, so the hold continues.
