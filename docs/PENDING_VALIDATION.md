@@ -5683,3 +5683,12 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Gate condition: the swap clock is no longer the condition. The gate's own memory rule decided the start; no GATE_MIN_MB is set, so the gate's default floor applies. Host reading at the grant (11:34:26): swap-in 96 KB/s, swap-out 0, MemAvailable 5.7 GB.
 - Previous windows: the stopped run's output is win_st44.out (ended at its build step); it has no result.
 - Per-file witness: f44-tui-resume, queued after ST44_DONE on the st44 binary.
+
+## fx-st44: the zig build does not fit this host even alone (round 6)
+
+- Stopped by PID, deepest first, with SIGTERM: 321844, 321843 (zig subprocesses), 321807 (zig maker child), 321806 (timeout 2400 zig build -j3), 321792 (win_st44.sh), 321776 (gate-ticket node). All gone after 8 s. Ticket 321776 is no longer running. No pkill or killall was used. The window has no result (win_st44_r2.out ends at its suite_build step).
+- Grant: 11:34:20 UTC, exclusive (GATE_EXCLUSIVE=1 in the ticket's environment, verified), detached (ppid 1), zig build capped at -j3. Host reading at the grant (11:34:26): swap-in 96 KB/s, swap-out 0, MemAvailable 5.7 GB.
+- Host reading at 11:38 (the owner's reading): swap-in 7 MB/s, swap 6.8 GB, 1.1 GB available. Worse than at the earlier stop, although the window ran alone.
+- Peak seen by the sampler (/workspace/tmp/fx/swap_watch.log) during the window, from 11:34:20 to the stop: swap-in 37860 KB/s at 11:37:27; swap-out 149883 KB/s at 11:37:12. Of 56 samples in that span, 12 had swap-in at or above 10 MB/s and 19 had swap-out at or above 10 MB/s.
+- Finding: the zig build (install-test with ReleaseSafe, peak 7 to 8 GB per the peer rules) does not fit this host even when it has the gate to itself, and capping the build at -j3 did not stop the swap. The window is not requeued. The fx witness for the tui-resume G1 fix (b98da0e4) is therefore still open.
+- What this needs: a build that peaks well under the host's available memory, or a smaller build (for example, a prebuilt binary, which the peer rules prefer before a new build). Not chosen here.
