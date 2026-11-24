@@ -2541,7 +2541,7 @@ describe("effect-aware command permissions", () => {
       );
 
       expect(result.code).toBe(0);
-      expect(result.stderr).toContain("Running pwd");
+      expect(result.stderr).toContain("Running command");
       expect(result.stderr.toLowerCase()).not.toContain("error");
       expect(JSON.parse(toolResultText(gateway.requests[1].body, "command_1"))).toMatchObject({
         state: "completed",
