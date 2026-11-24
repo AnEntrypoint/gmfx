@@ -544,13 +544,13 @@ test "WaitFor returns the final state of a task that finished before the call" {
     try std.testing.expectEqualStrings("No background task with id shell-missing.", unknown);
 }
 
-test "a completion WaitFor returns is not queued again as a notice" {
+test "a completion WaitFor returns while it waits is not queued again as a notice" {
     if (comptime builtin.target.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = managed_execution.Runtime.init(alloc);
     defer runtime.deinit();
     const command_ctx = command_admission.CommandContext{
-        .command = "printf done",
+        .command = "sleep 0.3; printf done",
         .resolved_cwd = "/tmp",
         .target_os = builtin.target.os.tag,
         .environment = .legacy,
@@ -565,15 +565,14 @@ test "a completion WaitFor returns is not queued again as a notice" {
             .source = .yolo,
         } },
         .max_output_bytes = 4096,
-        .timeout_ms = 2000,
+        .timeout_ms = 5000,
         .command_artifact_dir = null,
         .yield_time_ms = 0,
     });
     defer started.deinit(alloc);
-    while (std.meta.activeTag(runtime.stateFor("wait-notice-once").?) == .running) {
-        io_mod.sleep(10 * std.time.ns_per_ms);
-    }
-    const body = try runWaitFor(alloc, &runtime, "{\"timeout\":1,\"task_id\":\"wait-notice-once\"}");
+    try runtime.commitDelivery(started.snapshot.execution_id, started.reservation_id);
+
+    const body = try runWaitFor(alloc, &runtime, "{\"timeout\":5,\"task_id\":\"wait-notice-once\"}");
     defer alloc.free(body);
     try std.testing.expect(std.mem.find(u8, body, "\"event\":\"completed\"") != null);
 
