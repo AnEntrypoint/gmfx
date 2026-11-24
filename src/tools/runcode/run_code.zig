@@ -121,15 +121,13 @@ const Bridge = struct {
     calls: usize = 0,
     images: std.ArrayList(core_types.ToolImage) = .empty,
     command_result_json: ?[]u8 = null,
-    command_failed: bool = false,
     command_process_presentation: ?core_types.CommandProcessPresentation = null,
     denied: bool = false,
 
     fn keepCommandResult(self: *Bridge, ok: bool, json: ?[]const u8) !void {
-        if (!ok) self.command_failed = true;
-        const kept = json orelse return;
-        if (ok and self.command_failed) return;
-        const copy = try self.ctx.allocator.dupe(u8, kept);
+        const failed_json = json orelse return;
+        if (ok) return;
+        const copy = try self.ctx.allocator.dupe(u8, failed_json);
         if (self.command_result_json) |previous| self.ctx.allocator.free(previous);
         self.command_result_json = copy;
     }
@@ -421,7 +419,7 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     if (bridge.command_result_json) |json| tool_dispatch.reportCommandResultJson(ctx, json);
     if (bridge.command_process_presentation) |presentation| tool_dispatch.reportToolResultMemory(ctx, .{ .command_process_presentation = presentation });
     if (bridge.denied) tool_dispatch.reportPermissionDenied(ctx);
-    const succeeded = outcome.ok and !bridge.command_failed and !bridge.denied;
+    const succeeded = outcome.ok and bridge.command_result_json == null and !bridge.denied;
     if (bridge.images.items.len > 0) return .{ .rich = .{
         .text = report,
         .images = bridge.images.toOwnedSlice(ctx.allocator) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not attach its images") },
@@ -641,33 +639,6 @@ test "a failed inner command's result json reaches the run_code result and fails
         .arguments_json = "{\"body\":\"return gm.glob_files({ pattern: 'a' });\"}",
     });
     try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.failure, result.status);
-    try std.testing.expectEqualStrings(json, result.command_result_json.?);
-    try std.testing.expectEqualStrings(json, captured.?);
-}
-
-test "a successful inner command's result json reaches the run_code result without failing it" {
-    const builtin_tools = @import("../../builtins/tools.zig");
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-    const json = "{\"command\":\"pwd\",\"exit_code\":0}";
-    var recorder = RecordingGate{ .alloc = alloc, .ok = true, .command_result_json = json };
-    var captured: ?[]const u8 = null;
-    const ctx: tool_dispatch.DispatchContext = .{
-        .allocator = alloc,
-        .execution_authority = .ordinary,
-        .workspace_root = ".",
-        .permission_mode = .yolo,
-        .tool_call_id = "call-command",
-        .inner_call_gate = recorder.gate(),
-        .command_result_json_sink = &captured,
-    };
-    const result = try tool_dispatch.dispatchToolCall(ctx, builtin_tools.registry_with_tower, .{
-        .id = "call-command",
-        .name = "run_code",
-        .arguments_json = "{\"body\":\"return gm.Bash({ command: 'pwd' });\"}",
-    });
-    try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.success, result.status);
     try std.testing.expectEqualStrings(json, result.command_result_json.?);
     try std.testing.expectEqualStrings(json, captured.?);
 }
