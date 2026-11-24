@@ -5641,3 +5641,11 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Witness of the stop: all four PIDs gone (kill -0 failed), no fx-st43 process in ps other than the cycle sender's own shell, and win_st43.out ends at "CHILD suite_build pid=302083" with no RC line.
 - Requeue: only after swap_streak.sh reports clear_streak_seconds of at least 600. The tui-resume G1 fix (b98da0e4) is still unwitnessed; the requeue will be fx-st44 on HEAD.
 - Read after the stop (checker): clear_streak_seconds=0, last si 1508 KB/s; a vmstat sample right after the stop showed si 56280 KB/s, so the hold continues.
+
+## fx-st44 requeue (round 6)
+
+- Hold withdrawn by the owner at 11:12 UTC (the ten-minute clear streak and the 1 MB/s threshold are no longer required). Dispatch is held only when swap-in or swap-out is in the tens of MB/s.
+- Check before queuing, at 11:13 UTC: the host line showed swap-in 14 KB/s and swap-out 0 KB/s (under 10 MB/s), MemAvailable 5.7 GB; fx-st43 not running; ticket 301924 gone.
+- Queued: fx-st44 on HEAD b8292580 (script /workspace/tmp/fx/win_st44.sh, output /workspace/tmp/fx/win_st44.out), GATE_EXCLUSIVE=1, launcher pid 317849. Its witness is the tui-resume G1 fix (b98da0e4): build, unit suite, then f44-tui-resume on the st44 binary once granted.
+- The per-file witnesses wait for ST44_DONE and the gate.
+- Swap sampler: /workspace/tmp/fx/swap_watch.log, still running (vmstat -n 5). Any sample above 10 MB/s to be reported.
