@@ -1,5 +1,6 @@
 const std = @import("std");
 const text_utils = @import("../../core/shared/text_utils.zig");
+const result_store = @import("../../core/session/result_store.zig");
 
 pub const max_entries = 50;
 pub const max_inline_output_bytes = 8 * 1024;
@@ -62,6 +63,11 @@ const Outcome = struct {
 
 pub const InvokeFn = *const fn (context: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror!Invoked;
 
+const Substitution = struct {
+    body: []const u8,
+    pointer: []const u8,
+};
+
 pub const Ledger = struct {
     arena: std.heap.ArenaAllocator,
     context: *anyopaque,
@@ -69,6 +75,7 @@ pub const Ledger = struct {
     store: ?Store,
     entries: std.ArrayList(Entry) = .empty,
     dropped: usize = 0,
+    substitutions: std.ArrayList(Substitution) = .empty,
 
     pub fn init(alloc: std.mem.Allocator, context: *anyopaque, inner: InvokeFn, store: ?Store) Ledger {
         return .{ .arena = .init(alloc), .context = context, .inner = inner, .store = store };
@@ -95,6 +102,9 @@ pub const Ledger = struct {
         const arena = self.arena.allocator();
         const outcome = try replyOutcome(alloc, arena, invoked.reply);
         const saved = try self.saveOutput(alloc, arena, name, invoked);
+        if (saved.handle) |handle| {
+            if (saved.output == null) try self.recordSubstitution(alloc, arena, invoked.reply, handle);
+        }
         try self.entries.append(arena, .{
             .verb = try arena.dupe(u8, name),
             .args = try compactArgs(alloc, arena, args_json),
@@ -125,6 +135,41 @@ pub const Ledger = struct {
         return .{ .handle = try arena.dupe(u8, handle), .bytes = text.len };
     }
 
+    fn recordSubstitution(self: *Ledger, alloc: std.mem.Allocator, arena: std.mem.Allocator, reply: []const u8, handle: []const u8) !void {
+        const parsed = std.json.parseFromSlice(Reply, alloc, reply, .{ .ignore_unknown_fields = true }) catch return;
+        defer parsed.deinit();
+        const body = parsed.value.text orelse return;
+        if (body.len <= max_inline_output_bytes) return;
+        const preview = try result_store.previewText(arena, body, result_store.preview_bytes);
+        const pointer = try result_store.formatStoredResultOutput(arena, handle, preview, body.len);
+        try self.substitutions.append(arena, .{
+            .body = try jsonContent(arena, body),
+            .pointer = try jsonContent(arena, pointer),
+        });
+    }
+
+    fn substituteStoredBodies(self: *const Ledger, alloc: std.mem.Allocator, text: []const u8) ![]u8 {
+        var current = try alloc.dupe(u8, text);
+        errdefer alloc.free(current);
+        for (self.substitutions.items) |sub| {
+            var out: std.Io.Writer.Allocating = .init(alloc);
+            defer out.deinit();
+            var rest = current;
+            var replaced = false;
+            while (std.mem.indexOf(u8, rest, sub.body)) |at| {
+                try out.writer.writeAll(rest[0..at]);
+                try out.writer.writeAll(sub.pointer);
+                rest = rest[at + sub.body.len ..];
+                replaced = true;
+            }
+            if (!replaced) continue;
+            try out.writer.writeAll(rest);
+            alloc.free(current);
+            current = try out.toOwnedSlice();
+        }
+        return current;
+    }
+
     pub fn report(self: *const Ledger, alloc: std.mem.Allocator, base: []u8) ![]u8 {
         defer alloc.free(base);
         const shown = try alloc.dupe(Entry, self.entries.items);
@@ -133,9 +178,11 @@ pub const Ledger = struct {
             const notice = entry.notice orelse continue;
             if (std.mem.indexOf(u8, base, notice) != null) entry.notice = null;
         }
+        const substituted = try self.substituteStoredBodies(alloc, base);
+        defer alloc.free(substituted);
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
-        try out.writer.writeAll(base[0 .. base.len - 1]);
+        try out.writer.writeAll(substituted[0 .. substituted.len - 1]);
         try out.writer.writeAll(",\"calls\":");
         try std.json.Stringify.value(shown, .{ .emit_null_optional_fields = false }, &out.writer);
         try out.writer.print(",\"calls_dropped\":{d}}}", .{self.dropped});
@@ -187,6 +234,14 @@ fn replyOutcome(alloc: std.mem.Allocator, arena: std.mem.Allocator, reply: []con
         .notice = if (body.value.notice) |notice| try arena.dupe(u8, notice) else null,
         .deferred = parsed.value.deferred,
     };
+}
+
+fn jsonContent(arena: std.mem.Allocator, text: []const u8) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    defer out.deinit();
+    try std.json.Stringify.value(text, .{}, &out.writer);
+    const quoted = try out.toOwnedSlice();
+    return quoted[1 .. quoted.len - 1];
 }
 
 const Canned = struct {
@@ -343,6 +398,34 @@ test "the ledger marks a context-deferred verb reply as deferred rather than fai
     const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true}"));
     defer alloc.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"deferred\":true") != null);
+}
+
+fn bodyInvoke(context: *anyopaque, alloc: std.mem.Allocator, _: []const u8, _: []const u8) anyerror!Invoked {
+    const body: *const []const u8 = @ptrCast(@alignCast(context));
+    var reply: std.Io.Writer.Allocating = .init(alloc);
+    defer reply.deinit();
+    try reply.writer.writeAll("{\"ok\":true,\"text\":");
+    try std.json.Stringify.value(body.*, .{}, &reply.writer);
+    try reply.writer.writeByte('}');
+    return .{ .reply = try reply.toOwnedSlice(), .output = try alloc.dupe(u8, body.*) };
+}
+
+test "a stored verb body the script returns is replaced by its pointer in the report" {
+    const alloc = std.testing.allocator;
+    var body: []const u8 = big_output;
+    var fake: FakeStore = .{};
+    var ledger = Ledger.init(alloc, &body, bodyInvoke, fake.store());
+    defer ledger.deinit();
+    alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{}"));
+    var value_json: std.Io.Writer.Allocating = .init(alloc);
+    try std.json.Stringify.value(big_output, .{}, &value_json.writer);
+    const encoded = try value_json.toOwnedSlice();
+    defer alloc.free(encoded);
+    const base = try std.fmt.allocPrint(alloc, "{{\"ok\":true,\"value\":{s}}}", .{encoded});
+    const text = try ledger.report(alloc, base);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, big_output) == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "handle=\\\"result-read_file-8193.txt\\\" stored_bytes=\\\"8193\\\"") != null);
 }
 
 test "the ledger carries a notice found in a verb's result body into the report" {
