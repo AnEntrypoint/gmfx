@@ -5570,3 +5570,9 @@ FIX_IN_ST36. Output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out: RES
 - Cause: my fix 055ff130 changed that design (carrying a successful inner command result) without the owner's decision. The e2e row tui-command-permissions "yolo executes pwd ... process-scoped replay" expects the successful result, and the unit test forbids it. The two cannot both hold.
 - Action: 055ff130 is reverted in 3383bd39 (git revert, no test changed). The yolo e2e row stays an OWNER DECISION: (a) carry successful command results under a field that does not mark failure, or (b) drop the successful command_result expectation from the e2e row.
 - fx-st42: queued on 3383bd39 (clean head), the suite witness for the reverted tree. Output: /workspace/tmp/fx/win_st42.out.
+
+## fx-st40 unit failures: causes and fixes (round 6)
+
+- Failure A, "an inner call that succeeds leaves the run_code result without command json" (run_code.zig:700): cause, my 055ff130 changed the success design that ae0ece08 tests. Fix: 3383bd39 (git revert of 055ff130). The yolo e2e row stays an owner decision.
+- Failure B, "active repaint window keeps a transcript band that starts inside preserved rows out of them" (paint_plan.zig, expected 12, found 14): cause, my test (488c3242) put the footer band at rows 13-14, adjacent to the transcript segment 8-12. Adjacent ranges merge, so the product returned 8-14 correctly and the expectation was wrong. Fix: the footer band moves to rows 15-16 (separate), with the same assertions on the transcript segment and validation, and len 2. No product change.
+- Witness: fx-st42 (queued before this fix started, on head after this commit). Output /workspace/tmp/fx/win_st42.out.
