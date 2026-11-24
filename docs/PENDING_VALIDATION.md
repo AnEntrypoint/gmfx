@@ -5501,3 +5501,10 @@ Read-only pass. No behaviour change in this pass. A fix is applied only when its
 - web-fetch-fake-network: fix 7783ef84 (provisional FetchURL label). Witness: fx-st38 and f38.
 - gateway-stream-lifecycle: blob count fix f6539294. Witness: fx-st38 and f38. Replay and held-skill rows remain (owner decision and open).
 - st38 (tree e337022b) is the window carrying 7783ef84 and f6539294; st39 (tree at its launch) carries 488c3242.
+
+## Per-file results, round 4
+
+- plan-approval-notice on st37 (f37): GREEN. Ticket f37-plan-approval-notice (GRANTED f37-plan-approval-notice 001795504392743); fixture commit a002724a (direct ExitPlanMode replaced by gm.ExitPlanMode). Output /workspace/tmp/fx/win_f37_plan-approval-notice.out: 1 pass, 0 fail.
+- approval-panel on st37 (f37): GREEN. Ticket f37-approval-panel (GRANTED f37-approval-panel 001795504395761); fixture commit de5b6a7f. Output /workspace/tmp/fx/win_f37_approval-panel.out: 1 pass, 0 fail, 3 expect() calls.
+- fx-st38 (tree e337022b): FAILED to build, ST38_DONE 2. Cause: a compile error in the new ledger test (call_ledger.zig:417), a pointer to a slice passed as the opaque context. Fixed by 87b1909f (struct context, as the other ledger tests). The run_code suite and witness then did not run. st38 is superseded by st39.
+- fx-st39 (tree 87b1909f or later) carries every committed fix (web-fetch 7783ef84, pointer f6539294, tasks-browser 488c3242, ledger test 87b1909f). Queued; its result is the witness for the tasks-browser, web-fetch and gateway fixes.
