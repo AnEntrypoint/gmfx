@@ -5369,3 +5369,14 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Green: /workspace/tmp/fx/st31/suite_run.out line 3512: "ui.full_transcript_screen.test.stored run_code read_file output is shown unwrapped, not as its envelope...OK" (st31 suite 12262 passed, 0 failed).
 - Red: the unwrap call in appendStoredResultContent replaced by a null optional (/workspace/tmp/fx/redgreen_apply.py), built as /workspace/tmp/fx/red31 (RED_BUILD_RC 0), file restored from HEAD. /workspace/tmp/fx/red31/red_full.out line 3512: the same test FAIL (TestUnexpectedResult); suite 12261 passed, 1 failed (ticket fx-redrun, REDRUN_DONE 1).
 - The tree was restored to HEAD after the red build; git status was clean before the red run.
+
+## Kitty duplicate row: cause confirmed by trace (st31, tree 123a3597)
+
+- Trace: /workspace/tmp/fx/e2e31/G9b/trace.log (diagnostic run, ticket fx-kitty-diag, KITTY_DIAG_DONE 1; the test file was restored from HEAD afterwards).
+- Lines 254-257: the inner AskUserQuestion call (question_outer_1:1) opens its provisional tool status, which becomes transcript entry 6.
+- Lines 317-319: cancel_requested source=input_question. cancelQuestionPrompt appends the question card resolution as entry 7 ("▪ Cancelled", question_resolution).
+- Lines 363-370 and 380-390: aborted tool output persisted (call_id=question_outer_1 name=run_code), then the tracked status is finished as cancelled through finishTrackedCancelled (src/core/agent/runtime/tool_presentation.zig:428-460, called from orchestrator.zig:5174 and :8568), which pushes a cancelled terminal for entry 6. Entry 6 becomes a second "▪ Cancelled" row (bytes 242 to 356 at the 481320 render).
+- Two rows come from two writers: the question card resolution (entry 7) and the cancelled terminal of the AskUserQuestion status (entry 6). The unit tests in app_input_runtime.zig expect the question_resolution row, so that row stays.
+- The raw Escape test passes because its waitForText returns before the second row is painted (about 11 ms later); the kitty test reads the count after that frame. The raw pass is therefore a timing result, not proof that the raw path writes one row.
+- Fix still open: removing entry 6 needs a lifecycle outcome that retires a provisional status without printing a Cancelled row. No such outcome exists (the ToolOutcomeKind terminal always prints its summary). Recommended: add a retired outcome and push it for AskUserQuestion statuses in finishTrackedCancelled. This crosses the agent and UI layers, so it is not done in this pass.
+- The trace harness gap: the scenario launcher sets FX_TRACE_LOG to a per-test file and defaults FX_TRACE_SCOPES to input; the prepared env variant never reached fx because tests pass only their own env to the session. The diagnostic run changed the scope filter and copied the log; that edit was restored.
