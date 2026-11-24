@@ -5404,3 +5404,11 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - The question card row has no call id: appendQuestionResolution (src/core/app/input_question_runtime.zig:147) appends a raw line with no call id, so the check has nothing to match. A call id on that row needs an input-layer change.
 - Skipping the outer write leaves the outer status entry (entry 6) with its pre-cancel text, an unfinished row. Clearing it needs a drop in the terminal apply (dropEntriesAtomic, src/ui/transcript/store.zig:659), and the outer call's record still references that entry, so the drop can leave a dangling reference.
 - No change made. Witness for the row remains the traced run: e2e31/G9b/trace.log lines 317 and 363-390.
+
+## Kitty duplicate row fixed (tree 7610608f, st32)
+
+- Change: the question card records the focused call id (ui/transcript/runtime.zig recordQuestionCancelRow, input_question_runtime.zig appendQuestionResolution, main.zig forwarder, core/output/activity_runtime.zig noteQuestionCancelRow); the outer lifecycle terminal skips its Cancelled line write when that call id has a recorded question card row (runtime.zig applyToolTerminal, skip_cancelled_write). Commit 7610608f.
+- Zig test: "a cancelled question leaves exactly one Cancelled row" (src/ui/transcript/runtime.zig). Green: /workspace/tmp/fx/st32/suite_run.out line 841 "...exactly one Cancelled row...OK"; suite 12263 passed, 0 failed (ST32_DONE 0, /workspace/tmp/fx/win_st32.out).
+- Red check: the guard condition replaced by false (/workspace/tmp/fx/red32_apply.py), built as red32, tree restored from HEAD. Red suite: "...exactly one Cancelled row...expected 1, found 2"; 12262 passed, 1 failed (win_redcheck32.out, REDCHECK_DONE build=0 suite=1).
+- Kitty row witness: /workspace/tmp/fx/e2e32/G11/tui-decision-prompts.out, ticket fx-rows32-G11 (win_rows32_G11.out): "RES tui-decision-prompts fail=0 2pass", ROWS_G11_DONE 0. The two rows are the kitty and the raw Escape cancel.
+- Open: the whole tui-decision-prompts file regression run, and the visible effect of skipping the outer status write (the outer status entry keeps its pre-cancel text).
