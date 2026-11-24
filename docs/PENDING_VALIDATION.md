@@ -5673,3 +5673,13 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Sampler since the requeue at 11:23 (71 samples, /workspace/tmp/fx/swap_watch.log): swap-in at or above 10 MB/s in 8 samples (max 28897 KB/s, at 11:28:37), swap-out at or above 10 MB/s in 26 samples (max 85551 KB/s). Last samples: 11:28:42 si 10601 so 1825; 11:28:47 si 877 so 13; 11:28:52 si 3639 so 0 (free 5.0 GB).
 - Requeue rule (owner): swap-in and swap-out under 10 MB/s and available memory above 4 GB for a sustained period, reported with the samples. No sustained clean period has started. Current clean run starts at 11:28:47 (the first sample with both rates under 10 MB/s after the storm); it is not yet long enough to report.
 - Not requeued.
+
+## fx-st44 requeued under the peer rules (round 6, third queueing)
+
+- Requeued at 11:34:20 UTC, granted at once: gate ticket node pid 321776 (gate-ticket.cjs run fx-st44), window pid 321792, suite_build pid 321806. Result file: /workspace/tmp/fx/win_st44_r2.out. Head adac823e (ledger-only changes since b8292580, so the code under test is the tui-resume G1 fix b98da0e4).
+- Started detached, as the peer rules require: setsid nohup node /workspace/hyperagent/scripts/gate-ticket.cjs run fx-st44 -- sh /workspace/tmp/fx/win_st44.sh > /workspace/tmp/fx/win_st44_r2.out 2>&1 < /dev/null &. Verified: the ticket's parent is init (ppid 1).
+- GATE_EXCLUSIVE=1 is set in the ticket's environment (verified in /proc/321776/environ), so nothing else in the gate runs beside it. The window peaks at 7 to 8 GB, per the peer rules.
+- Parallel jobs capped: the host has 12 cores, so the zig build would default to 12 jobs. The peer rules set no job count for zig, but cap parallel test processes at about three; the window's zig build now runs with -j3 (win_st44.sh, suite_build step). The fx-test suite step is one binary; its internal threading is not capped here (not checked).
+- Gate condition: the swap clock is no longer the condition. The gate's own memory rule decided the start; no GATE_MIN_MB is set, so the gate's default floor applies. Host reading at the grant (11:34:26): swap-in 96 KB/s, swap-out 0, MemAvailable 5.7 GB.
+- Previous windows: the stopped run's output is win_st44.out (ended at its build step); it has no result.
+- Per-file witness: f44-tui-resume, queued after ST44_DONE on the st44 binary.
