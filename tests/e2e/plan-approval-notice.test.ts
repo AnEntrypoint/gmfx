@@ -29,8 +29,8 @@ test.skipIf(!tmuxAvailable())("an approved plan is saved and the approval report
           {
             type: "tool-call",
             toolCallId: "exit-plan",
-            toolName: "ExitPlanMode",
-            input: { plan: PLAN, options: [{ label: "Ship it" }, { label: "Split work" }] },
+            toolName: "run_code",
+            input: { body: `return gm.ExitPlanMode(${JSON.stringify({ plan: PLAN, options: [{ label: "Ship it" }, { label: "Split work" }] })});` },
           },
           {
             type: "finish",
