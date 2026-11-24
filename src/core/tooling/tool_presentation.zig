@@ -385,6 +385,16 @@ pub fn formatRunCommandActivity(
     workspace_root: []const u8,
     call: ToolCall,
 ) !?RunCommandActivity {
+    return formatRunCommandActivityBounded(alloc, registry, workspace_root, call, max_run_command_activity_bytes);
+}
+
+pub fn formatRunCommandActivityBounded(
+    alloc: Allocator,
+    registry: tool_dispatch.Registry,
+    workspace_root: []const u8,
+    call: ToolCall,
+    max_encoded_bytes: usize,
+) !?RunCommandActivity {
     var scratch_state = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer mem_utils.deinit_arena(scratch_state);
     const scratch = scratch_state.allocator();
@@ -396,7 +406,7 @@ pub fn formatRunCommandActivity(
         alloc,
         command,
         workspace_root,
-        max_run_command_activity_bytes,
+        max_encoded_bytes,
     )) orelse return null;
     return .{
         .detail = detail,
@@ -616,7 +626,8 @@ pub fn formatPlainAction(alloc: Allocator, input: ToolActionInput) ![]const u8 {
     var scratch_state = std.heap.ArenaAllocator.init(alloc);
     defer mem_utils.deinit_arena(scratch_state);
     const scratch = scratch_state.allocator();
-    const call = try run_code_presentation.leadingCall(scratch, input.tool_registry, input.call) orelse input.call;
+    const leading = try run_code_presentation.leadingCall(scratch, input.tool_registry, input.call);
+    const call: ToolCall = if (leading) |verb| .{ .id = verb.id, .name = verb.name, .arguments_json = "{}" } else input.call;
     if (run_code_presentation.isRunCode(call.name)) {
         return alloc.print("{s} {s}", .{ run_code_presentation.tool_name, try run_code_presentation.firstBodyLine(scratch, call) });
     }

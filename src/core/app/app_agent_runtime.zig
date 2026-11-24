@@ -1724,7 +1724,7 @@ fn formatToolAction(
         const label = if (state == .denied) denied_label.? else run_code_presentation.tool_name;
         return formatToolActionValue(arena, label, display_target orelse try run_code_presentation.firstBodyLine(arena, call));
     }
-    if (try tool_presentation.formatRunCommandActivity(arena, ctx.tool_registry, ctx.workspace_root, call)) |activity| {
+    if (try tool_presentation.formatRunCommandActivityBounded(arena, ctx.tool_registry, ctx.workspace_root, call, tool_presentation.max_run_command_reflow_bytes)) |activity| {
         defer arena.free(activity.detail);
         const label = if (activity.compatibility_tool) |compatibility_tool|
             specLabel(compatibility_tool, state, denied_label)

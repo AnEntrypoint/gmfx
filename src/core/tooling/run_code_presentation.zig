@@ -148,24 +148,9 @@ pub fn leadingCall(arena: Allocator, registry: tool_dispatch.Registry, call: Too
         rest = rest[at + "gm.".len ..];
         var end: usize = 0;
         while (end < rest.len and (std.ascii.isAlphanumeric(rest[end]) or rest[end] == '_')) end += 1;
-        if (registry.lookup(rest[0..end]) != null) return .{ .id = call.id, .name = rest[0..end], .arguments_json = try leadingArguments(arena, rest[end..]) };
+        if (registry.lookup(rest[0..end]) != null) return .{ .id = call.id, .name = rest[0..end], .arguments_json = "{}" };
     }
     return null;
-}
-
-fn leadingArguments(arena: Allocator, after_name: []const u8) Allocator.Error![]const u8 {
-    if (!std.mem.startsWith(u8, after_name, "(")) return "{}";
-    const inside = after_name[1..];
-    for (inside, 0..) |byte, index| {
-        if (byte != ')') continue;
-        const candidate = inside[0..index];
-        const value = std.json.parseFromSliceLeaky(std.json.Value, arena, candidate, .{}) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => continue,
-        };
-        if (value == .object) return candidate;
-    }
-    return "{}";
 }
 
 fn argsSummary(arena: Allocator, registry: tool_dispatch.Registry, inner: InnerCall) Allocator.Error![]const u8 {
