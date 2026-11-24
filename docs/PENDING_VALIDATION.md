@@ -5590,3 +5590,9 @@ FIX_IN_ST36. Output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out: RES
 - Unit failures on st41 and st42 are otherwise resolved: the run_code success test (reverted by 3383bd39) and the paint-plan band test (cf790b9f) pass on st42.
 - Red files at the e2e level: none measured on st42 (no per-file runs of this window). The per-file witnesses for ask-presentation and background-task-notices remain pending.
 - Swap hold: swap_watch.log (vmstat 5 s, si in KB/s) has spikes at 09:00:56 (1618), 09:01:21 (5214) and 09:02:41 (1478). The clear streak since 09:02:41 is 6 samples (30 s). The ten-minute requirement is not met.
+
+## Background unit test: cause and fix (round 6, after fx-st42)
+
+- fx-st42 numbers (ticket 156858, head df20e55b): build exit 0 (831 s); suite 12269 passed, 27 skipped, 1 failed; txiki witness passed. The one failure is wait_for "a completion WaitFor returns is not queued again as a notice" in its finished-task form.
+- Cause (corrected): a WaitFor call with a task id returns the task's output (shell.readTaskOutput), not the completion event. Only the any-event wait (no task id) returns the notice JSON. The finished-task form therefore asserted an event the call cannot return. bdccae4e changed the test to a running task, but still passed a task id, so it had the same fault. My earlier note that bdccae4e fixed this was wrong.
+- Fix: the call is now runWaitFor with {"timeout":5}, no task id. Assertions unchanged: the returned body contains "event":"completed", and no queued notice carries it. Commit: see the next commit. Witness: pending a unit run on a window built after this commit (held by the swap hold).
