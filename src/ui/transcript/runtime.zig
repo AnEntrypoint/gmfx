@@ -5911,10 +5911,13 @@ pub const TranscriptRuntime = struct {
             );
             return error.UnknownToolLifecycleIdentity;
         };
-        const line = try lifecycleTerminalLine(alloc, outcome.kind, outcome.summary);
-        defer alloc.free(line);
         const skip_cancelled_write = outcome.kind == .cancelled and
             self.notebook.lifecycle_state.hasQuestionCancelRow(id);
+        const line = if (skip_cancelled_write)
+            try alloc.dupe(u8, "")
+        else
+            try lifecycleTerminalLine(alloc, outcome.kind, outcome.summary);
+        defer alloc.free(line);
         const append_turn_cancellation = outcome.kind != .cancelled and
             self.notebook.lifecycle_state.needsTurnCancellationNoticeAfterTerminal(id);
         const turn_cancellation_line = if (append_turn_cancellation)
@@ -5945,17 +5948,15 @@ pub const TranscriptRuntime = struct {
             @as(u32, @intFromBool(append_turn_cancellation)),
         );
         defer detail_update.deinit(alloc);
-        if (!skip_cancelled_write) {
-            if (!try transcript_store.replacePinnedToolStatusForTerminalAtomic(
-                self,
-                alloc,
-                record.entry_id,
-                line,
-                @intFromBool(detail_start != null),
-                @intFromBool(detail_update.command_process_entry != null),
-                turn_cancellation_line,
-            )) return error.MissingLifecycleTranscriptEntry;
-        }
+        if (!try transcript_store.replacePinnedToolStatusForTerminalAtomic(
+            self,
+            alloc,
+            record.entry_id,
+            line,
+            @intFromBool(detail_start != null),
+            @intFromBool(detail_update.command_process_entry != null),
+            turn_cancellation_line,
+        )) return error.MissingLifecycleTranscriptEntry;
         record.phase = .terminal;
         record.cancellation_presentation = if (outcome.kind == .cancelled)
             .tool_status
