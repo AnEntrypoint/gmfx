@@ -402,11 +402,12 @@ pub fn formatRunCommandActivityBounded(
     const args = tool_args.parseToolArgsObject(scratch, call.arguments_json) catch return null;
     if (!isCapturedCommandCall(registry, call, args)) return null;
     const command = tool_args.optionalStringArg(args, "command") orelse return null;
+    const encoded_cap = if (std.mem.findScalar(u8, command, '\n') != null) max_run_command_activity_bytes else max_encoded_bytes;
     const detail = (try formatRunCommandDetailBounded(
         alloc,
         command,
         workspace_root,
-        max_encoded_bytes,
+        encoded_cap,
     )) orelse return null;
     return .{
         .detail = detail,
