@@ -5508,3 +5508,9 @@ Read-only pass. No behaviour change in this pass. A fix is applied only when its
 - approval-panel on st37 (f37): GREEN. Ticket f37-approval-panel (GRANTED f37-approval-panel 001795504395761); fixture commit de5b6a7f. Output /workspace/tmp/fx/win_f37_approval-panel.out: 1 pass, 0 fail, 3 expect() calls.
 - fx-st38 (tree e337022b): FAILED to build, ST38_DONE 2. Cause: a compile error in the new ledger test (call_ledger.zig:417), a pointer to a slice passed as the opaque context. Fixed by 87b1909f (struct context, as the other ledger tests). The run_code suite and witness then did not run. st38 is superseded by st39.
 - fx-st39 (tree 87b1909f or later) carries every committed fix (web-fetch 7783ef84, pointer f6539294, tasks-browser 488c3242, ledger test 87b1909f). Queued; its result is the witness for the tasks-browser, web-fetch and gateway fixes.
+
+## Per-file result, f36 tui-auth-source-selection (st36 binary)
+
+- GREEN: GRANTED f36-tui-auth-source-selection 001795502595355
+FIX_IN_ST36. Output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out: RES fail=0, 168 pass, 496 s.
+- Fix in the st36 binary: 5d54e826 (run_code leading label argument-free, so "Reading file" not "Reading notes.txt"). Verified as an ancestor of the st36 head 9505840a.
