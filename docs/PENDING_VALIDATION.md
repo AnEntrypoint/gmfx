@@ -5563,3 +5563,10 @@ FIX_IN_ST36. Output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out: RES
 
 - fx-st40 (ticket 109398): granted at 07:48:50 UTC with head 7ac1865a and dirty=1. The dirty file was the uncommitted ddd27e8f change (orchestrator.zig), so st40 may carry the ask-presentation fix. The background-task-notices fix (e82f7447) was written after the build started, so st40 does not witness it. st40 is a witness for tui-command-permissions (fixes 81c2dd8e and 055ff130 are ancestors of its head) and nothing else in round 6.
 - fx-st41: queued on a clean head a15aa2cb, which carries ddd27e8f (ask) and e82f7447 (background). Its per-file tickets (f41-ask-presentation, f41-background-task-notices) are the witnesses for those two fixes. Output: /workspace/tmp/fx/win_st41.out.
+
+## fx-st40 result and the revert of 055ff130 (round 6)
+
+- fx-st40 (ticket 109398): ST40_DONE 1. Build exit 0. Suite 12268 passed, 27 skipped, 2 failed. One failure is named: "an inner call that succeeds leaves the run_code result without command json" (src/tools/runcode/run_code.zig:700), an existing unit test that encodes the design from ae0ece08 (a successful inner command leaves the run_code result without command json). The second failure is not named in the window output. txiki witness passed. Output: /workspace/tmp/fx/win_st40.out.
+- Cause: my fix 055ff130 changed that design (carrying a successful inner command result) without the owner's decision. The e2e row tui-command-permissions "yolo executes pwd ... process-scoped replay" expects the successful result, and the unit test forbids it. The two cannot both hold.
+- Action: 055ff130 is reverted in 3383bd39 (git revert, no test changed). The yolo e2e row stays an OWNER DECISION: (a) carry successful command results under a field that does not mark failure, or (b) drop the successful command_result expectation from the e2e row.
+- fx-st42: queued on 3383bd39 (clean head), the suite witness for the reverted tree. Output: /workspace/tmp/fx/win_st42.out.
