@@ -5758,3 +5758,26 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Finding: with -fincremental, a no-op rebuild re-runs the test compile. That is about 110 s of CPU for a build that changed nothing. This is the largest measured waste in the default loop so far.
 - Not measured by fx-bench3: the touch, the edit, the revert and the targeted test (the guard stopped the tree before them).
 - Queued as fx-bench4 (ticket 387206 in the gate, result file /workspace/tmp/fx/bench/bench4.out, records results4.jsonl). It is behind two other projects' tickets (bevy-wasm-release, oscraft-browser). Its steps: the incremental no-op, the whitespace edit and the revert, the incremental targeted test, then the same set without -fincremental (cold, no-op, whitespace edit) in its own cache directory.
+
+### fx-bench4 result and the default loop (round 7)
+
+- Ticket fx-bench4 (387206), granted 17:36:44 UTC under GATE_EXCLUSIVE=1, head 95e0cb70. Debug, -Dtest-llvm=false, -j2. Records: results4.jsonl; output: bench4.out. The guard never fired (guard4.out: GUARD_END only).
+- With -fincremental, cache dbgcache:
+  - incr_noop: rc 0, 94.4 s wall, 165.9 s user, peak 1468 MB.
+  - incr_edit_whitespace: rc 0, 90.5 s, 159.0 s user, 1465 MB.
+  - incr_revert: rc 0, 85.9 s, 156.8 s user, 1453 MB.
+  - incr_targeted_test (zig build test -Dtest-area=runcode -Dtest-filter="call ledger"): rc 1, 104.8 s. The compile of the fx executable failed to link: "multiple definitions of '__dso_handle'" and "multiple definitions of '_Unwind_RaiseException'" (bench4.out lines 22 to 28). zig build test depends on the executable install, so the test binary never ran.
+- Without -fincremental, cache ncache:
+  - nonincr_cold: rc 0, 236.2 s wall, 260.0 s user, 1562 MB, 1368 cache files.
+  - nonincr_noop: rc 0, 5.8 s wall, 0.3 s user, 33 MB.
+  - nonincr_edit_whitespace: rc 0, 76.9 s wall, 111.0 s user, 1436 MB. This is the targeted edit under the new loop command.
+- Verification after bench4, same cache, no whole-tree run:
+  - verify_noop: 132.9 s wall, 116.3 s user. The first no-op after bench4's edit-and-restore recompiled the test binary once. This is not explained yet.
+  - verify_noop2: 5.2 s wall, 0.3 s user, 33 MB, rc 0, a cache hit. The steady-state no-op is about 5 s.
+- The installed test binary cannot take a filter. prefix4/bin/fx-test --test-filter 'call ledger' panics: "unrecognized command line argument: --test-filter" (Zig 0.17 lib/compiler/test_runner.zig:62). The repo's filter is read only by tests/test_runner.zig, and only when zig build test is given -Dtest-filter.
+
+Default loop (replaces the round 7 loop above; -fincremental is removed):
+
+- Build: zig build install-test -Doptimize=Debug -Dtest-llvm=false -j2 --cache-dir <dir> --prefix <dir>
+- Targeted test: not available yet. zig build test in Debug fails to link the executable (above), and the installed binary takes no filter. Next step: fix the Debug executable link (the discovered libstdc++.a and libgcc_eh.a in build.zig conflict with the self-hosted linker), or run the filtered gate on ReleaseSafe, which is heavy. Not done this round.
+- The repo gate is unchanged: zig build test, which CI runs (AGENTS.md:206).
