@@ -5781,3 +5781,9 @@ Default loop (replaces the round 7 loop above; -fincremental is removed):
 - Build: zig build install-test -Doptimize=Debug -Dtest-llvm=false -j2 --cache-dir <dir> --prefix <dir>
 - Targeted test: not available yet. zig build test in Debug fails to link the executable (above), and the installed binary takes no filter. Next step: fix the Debug executable link (the discovered libstdc++.a and libgcc_eh.a in build.zig conflict with the self-hosted linker), or run the filtered gate on ReleaseSafe, which is heavy. Not done this round.
 - The repo gate is unchanged: zig build test, which CI runs (AGENTS.md:206).
+
+### Cross-reference to docs/BUILD_LEDGER.md (round 7)
+
+- The ledger already measured -fincremental (C_incr, W_incr, E_incr; lines 24 to 27 and 77 to 79). Its warm no-op was a full rebuild (571.4 s), and it is only settable from the CLI. fx-bench4 confirms this on the install-test path: an incremental no-op took 94.4 s.
+- The ledger also records -Dtest-llvm=false (no-LLVM) as 5.0 percent slower cold and as having one failed run, E_nollvm (line 91: failed without output at load 10.9 to 12.2, passed on rerun, cause not established). The default loop keeps -Dtest-llvm=false because fx-bench measured its peak at 1.4 GB against 3.6 GB for the LLVM test build on this host. That trade-off is open: it is a memory choice against the ledger's one failed run, and it has not been re-measured here.
+- The repo gate is unchanged: zig build test (AGENTS.md:206), which CI runs.
