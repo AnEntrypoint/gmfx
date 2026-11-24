@@ -151,6 +151,7 @@ pub fn QuestionRuntime(comptime App: type) type {
                 try app.appendReplaceableTranscriptLineClassified(body, .question_resolution)
             else
                 try app.appendReplaceableTranscriptLine(body);
+            if (cancelled and comptime @hasDecl(App, "recordQuestionCancelRow")) try app.recordQuestionCancelRow();
             app.shell.render_requests.request(.modal);
         }
 

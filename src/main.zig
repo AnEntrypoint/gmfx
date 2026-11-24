@@ -2868,6 +2868,10 @@ const App = struct {
         return self.shell.appendReplaceableTranscriptLineClassified(self.alloc, &self.metrics, text, class);
     }
 
+    pub fn recordQuestionCancelRow(self: *App) !void {
+        return self.shell.recordQuestionCancelRow(self.alloc);
+    }
+
     pub fn appendReplaceableTranscriptLineSilent(self: *App, text: []const u8) !u32 {
         return self.shell.appendReplaceableTranscriptLineSilent(self.alloc, text);
     }

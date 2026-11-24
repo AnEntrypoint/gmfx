@@ -145,18 +145,41 @@ const RecordMap = std.HashMapUnmanaged(
     std.hash_map.default_max_load_percentage,
 );
 
+pub const QuestionCancelRow = struct {
+    turn_id: u64,
+    call_id: []u8,
+};
+
 pub const ToolActivityState = struct {
     records: RecordMap = .empty,
     batch_finalized_turn_watermark: ?u64 = null,
     finalized_turn_watermark: u64 = 0,
     turn_cancellation: ?TurnCancellationState = null,
     next_focus_seq: u64 = 0,
+    question_cancel_row: ?QuestionCancelRow = null,
 
     pub fn deinit(self: *ToolActivityState, alloc: std.mem.Allocator) void {
         var iterator = self.records.valueIterator();
         while (iterator.next()) |record_ptr| freeRecord(alloc, record_ptr.*);
         self.records.deinit(alloc);
+        if (self.question_cancel_row) |row| alloc.free(row.call_id);
         self.* = .{};
+    }
+
+    pub fn noteQuestionCancelRow(
+        self: *ToolActivityState,
+        alloc: std.mem.Allocator,
+        turn_id: u64,
+        call_id: []const u8,
+    ) !void {
+        const owned = try alloc.dupe(u8, call_id);
+        if (self.question_cancel_row) |row| alloc.free(row.call_id);
+        self.question_cancel_row = .{ .turn_id = turn_id, .call_id = owned };
+    }
+
+    pub fn hasQuestionCancelRow(self: *const ToolActivityState, id: types.ToolLifecycleId) bool {
+        const row = self.question_cancel_row orelse return false;
+        return row.turn_id == id.turn_id and std.mem.eql(u8, row.call_id, id.call_id);
     }
 
     pub fn ensureRecordCapacity(

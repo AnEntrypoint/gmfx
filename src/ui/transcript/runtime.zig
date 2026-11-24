@@ -2670,6 +2670,42 @@ test "authoritative lifecycle detail is retained by its compact status entry" {
     try std.testing.expect(std.mem.find(u8, source.bytes, "full result") == null);
 }
 
+test "a cancelled question leaves exactly one Cancelled row" {
+    const alloc = std.testing.allocator;
+    var runtime = TranscriptRuntime{ .layout = .{
+        .rows = 24,
+        .cols = 80,
+        .content_bottom = 20,
+        .divider_top_row = 21,
+        .input_row = 22,
+        .divider_bottom_row = 23,
+        .hint_row = 24,
+    } };
+    defer runtime.deinit(alloc);
+    var metrics: Metrics = .{};
+
+    const id = types.ToolLifecycleId{ .turn_id = 1, .call_id = "question-outer" };
+    _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
+        .id = id,
+        .presentation_group_id = .{ .turn_id = 1, .anchor_step_id = 4 },
+        .reconciles_provisional_call_id = null,
+        .tool_name = "run_code",
+        .activity_kind = .ask,
+        .arguments_json = "{}",
+    } });
+    _ = try runtime.appendReplaceableTranscriptLineClassified(alloc, &metrics, "▪ Cancelled", .question_resolution);
+    try runtime.recordQuestionCancelRow(alloc);
+    _ = try runtime.applyToolLifecycle(alloc, .{ .terminal = .{
+        .id = id,
+        .outcome = .{ .kind = .cancelled, .summary = "Cancelled" },
+        .result = null,
+    } });
+
+    var source = try runtime.prepareTranscriptSource(alloc, null);
+    defer source.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, source.bytes, "Cancelled"));
+}
+
 test "paused tool turn can resume the same lifecycle identity before finalization" {
     const alloc = std.testing.allocator;
     var runtime = TranscriptRuntime{};
@@ -5877,6 +5913,8 @@ pub const TranscriptRuntime = struct {
         };
         const line = try lifecycleTerminalLine(alloc, outcome.kind, outcome.summary);
         defer alloc.free(line);
+        const skip_cancelled_write = outcome.kind == .cancelled and
+            self.notebook.lifecycle_state.hasQuestionCancelRow(id);
         const append_turn_cancellation = outcome.kind != .cancelled and
             self.notebook.lifecycle_state.needsTurnCancellationNoticeAfterTerminal(id);
         const turn_cancellation_line = if (append_turn_cancellation)
@@ -5907,15 +5945,17 @@ pub const TranscriptRuntime = struct {
             @as(u32, @intFromBool(append_turn_cancellation)),
         );
         defer detail_update.deinit(alloc);
-        if (!try transcript_store.replacePinnedToolStatusForTerminalAtomic(
-            self,
-            alloc,
-            record.entry_id,
-            line,
-            @intFromBool(detail_start != null),
-            @intFromBool(detail_update.command_process_entry != null),
-            turn_cancellation_line,
-        )) return error.MissingLifecycleTranscriptEntry;
+        if (!skip_cancelled_write) {
+            if (!try transcript_store.replacePinnedToolStatusForTerminalAtomic(
+                self,
+                alloc,
+                record.entry_id,
+                line,
+                @intFromBool(detail_start != null),
+                @intFromBool(detail_update.command_process_entry != null),
+                turn_cancellation_line,
+            )) return error.MissingLifecycleTranscriptEntry;
+        }
         record.phase = .terminal;
         record.cancellation_presentation = if (outcome.kind == .cancelled)
             .tool_status
@@ -10850,6 +10890,11 @@ pub const TranscriptRuntime = struct {
         class: RawEntryClass,
     ) !u32 {
         return transcript_store.appendReplaceableTranscriptLineClassified(self, alloc, metrics, text, class);
+    }
+
+    pub fn recordQuestionCancelRow(self: *TranscriptRuntime, alloc: Allocator) !void {
+        const focused = self.notebook.lifecycle_state.focusedRecord() orelse return;
+        try self.notebook.lifecycle_state.noteQuestionCancelRow(alloc, focused.id.turn_id, focused.id.call_id);
     }
 
     pub fn replaceTrailingTranscriptLine(self: *TranscriptRuntime, alloc: Allocator, metrics: *Metrics, text: []const u8) !bool {
