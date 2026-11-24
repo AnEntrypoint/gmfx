@@ -5649,3 +5649,11 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Queued: fx-st44 on HEAD b8292580 (script /workspace/tmp/fx/win_st44.sh, output /workspace/tmp/fx/win_st44.out), GATE_EXCLUSIVE=1, launcher pid 317849. Its witness is the tui-resume G1 fix (b98da0e4): build, unit suite, then f44-tui-resume on the st44 binary once granted.
 - The per-file witnesses wait for ST44_DONE and the gate.
 - Swap sampler: /workspace/tmp/fx/swap_watch.log, still running (vmstat -n 5). Any sample above 10 MB/s to be reported.
+
+## fx-st44 stopped for memory (round 6, after the requeue)
+
+- Ticket 317860 (gate-ticket.cjs run fx-st44, head b8292580, window start 11:13:21 UTC, still in suite_build pid 317882) was stopped by PID, not by name. Stopped tree, deepest first: 317883 (zig maker child of 317882), 317882 (timeout 2400 zig build), 317868 (win_st44.sh), 317860 (gate-ticket node). Launcher 317849 had already exited. SIGTERM by PID; all five were gone after 8 s. No pkill or killall was used.
+- Reason: swap storm. Host line at the stop, as the owner reported it: swap-out about 50 MB/s, swap about 7 GB, about 1 GB available.
+- Host line read after the stop (11:18:41 UTC, vmstat and meminfo): swap-in 342 and 844 KB/s, swap-out 0, MemAvailable 6.8 GB, SwapFree 16.1 GB of 21.0 GB. The sampler log has swap-in above 10 MB/s at 11:18:22 (26163 KB/s) and 11:18:27 (15450 KB/s), so the storm has not clearly passed.
+- Requeue criteria (owner, this turn): cycle host line shows swap-in and swap-out under 10 MB/s and available memory above 4 GB. Not requeued. The host reading and the sampler disagree at 11:18, so the next requeue waits for a clean reading on the host line.
+- Witness: the ticket and launcher are gone (kill -0 fails for 317849, 317860, 317868, 317882, 317883); win_st44.out ends at CHILD suite_build pid=317882 with no RC line.
