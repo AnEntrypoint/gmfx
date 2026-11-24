@@ -5389,3 +5389,11 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Smallest change that yields one row: drop the question card's resolution entry when the outer cancelled terminal arrives for the same turn. Needs (1) the id returned by appendReplaceableTranscriptLineClassified in input_question_runtime.zig, carried to the transcript runtime, and (2) store.dropEntriesAtomic (src/ui/transcript/store.zig:659) in the terminal apply. Alternative: a silent terminal outcome for question cancels.
 - Not done in this pass: the change touches the input, transcript and store layers and needs a Zig test plus a red check. Its row witness is still pending.
 - Raw Escape: the same two writers exist there. Its pass depends on timing (its waitForText returns before the second row is painted).
+
+## Kitty duplicate: guard blocked by write order (tree ee0665f8)
+
+- Requested guard: the question card skips its Cancelled write when the outer run_code terminal is already recorded for that call.
+- Trace order (e2e31/G9b/trace.log): the question card resolution is written at 481309 (replace append, entry 7); the outer call's cancelled terminal is applied at 481311 (lifecycle_reduced kind=terminal). The outer terminal is not recorded when the question card writes, so the guard cannot skip anything in this order.
+- Placements that can see both writes need a change in the input layer (input_question_runtime.zig, where the card writes) or in the store (dropEntriesAtomic at the terminal apply). Both were ruled out for this change.
+- Write sites of the Cancelled row (grep of src/ui, src/core/app, src/core/agent, src/core/tooling): transcript runtime lifecycleTerminalLine uses at runtime.zig:798, 846, 859-860, 5312, 5878-5883, 6016, 10807, 10825; question card in input_question_runtime.zig via finalizeQuestionTranscript; outer call terminal from orchestrator.zig:12078-12226 and tool_presentation.zig:1080-1094; worker cancel in app_worker_runtime.zig:4701.
+- No change made. Needs a decision on which constraint gives way: the input layer, or a drop in the terminal apply.
