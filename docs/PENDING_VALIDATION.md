@@ -5397,3 +5397,10 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Placements that can see both writes need a change in the input layer (input_question_runtime.zig, where the card writes) or in the store (dropEntriesAtomic at the terminal apply). Both were ruled out for this change.
 - Write sites of the Cancelled row (grep of src/ui, src/core/app, src/core/agent, src/core/tooling): transcript runtime lifecycleTerminalLine uses at runtime.zig:798, 846, 859-860, 5312, 5878-5883, 6016, 10807, 10825; question card in input_question_runtime.zig via finalizeQuestionTranscript; outer call terminal from orchestrator.zig:12078-12226 and tool_presentation.zig:1080-1094; worker cancel in app_worker_runtime.zig:4701.
 - No change made. Needs a decision on which constraint gives way: the input layer, or a drop in the terminal apply.
+
+## Kitty duplicate: outer-terminal guard, blocked (tree 0903dc2f)
+
+- Requested guard: the outer run_code terminal skips its Cancelled write when a Cancelled row for the same call id is already in the transcript.
+- The question card row has no call id: appendQuestionResolution (src/core/app/input_question_runtime.zig:147) appends a raw line with no call id, so the check has nothing to match. A call id on that row needs an input-layer change.
+- Skipping the outer write leaves the outer status entry (entry 6) with its pre-cancel text, an unfinished row. Clearing it needs a drop in the terminal apply (dropEntriesAtomic, src/ui/transcript/store.zig:659), and the outer call's record still references that entry, so the drop can leave a dangling reference.
+- No change made. Witness for the row remains the traced run: e2e31/G9b/trace.log lines 317 and 363-390.
