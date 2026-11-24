@@ -8,6 +8,7 @@ import {
   fakeGatewaySse,
   startDynamicFakeGateway,
   fakeGatewayFinalText,
+  fakeGatewayVerbCall,
   composerContains,
   TmuxSession,
   tmuxAvailable,
@@ -47,6 +48,7 @@ function text(id: string, delta: string): Response {
 }
 
 function toolCall(id: string, tool: string, input: object): Response {
+  if (tool !== "run_code") return fakeGatewayVerbCall(id, tool, input);
   return fakeGatewaySse([
     { type: "tool-call", toolCallId: id, toolName: tool, input },
     { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
@@ -54,7 +56,7 @@ function toolCall(id: string, tool: string, input: object): Response {
 }
 
 function agentCall(id: string, prompt: string, extra: object = {}): Response {
-  return toolCall(id, "Agent", { description: "Do the task", prompt, run_in_background: true, ...extra });
+  return toolCall(id, "run_code", { body: `return gm.Agent(${JSON.stringify({ description: "Do the task", prompt, run_in_background: true, ...extra })});` });
 }
 
 function userTexts(body: string): string[] {
@@ -1532,8 +1534,8 @@ describe.skipIf(!tmuxAvailable())("TUI agent switching", () => {
 
           const command = `touch ${started}; i=0; while [ ! -f ${gate} ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done; echo MAIN_WAITED`;
           return fakeGatewaySse([
-            { type: "tool-call", toolCallId: "main_solo", toolName: "Agent", input: { description: "Answer at once", prompt: "SOLO_TASK answer at once", run_in_background: true } },
-            { type: "tool-call", toolCallId: "main_wait", toolName: "Bash", input: { command, description: "Wait for the gate" } },
+            { type: "tool-call", toolCallId: "main_solo", toolName: "run_code", input: { body: 'return gm.Agent({"description":"Answer at once","prompt":"SOLO_TASK answer at once","run_in_background":true});' } },
+            { type: "tool-call", toolCallId: "main_wait", toolName: "run_code", input: { body: `return gm.Bash(${JSON.stringify({ command, description: "Wait for the gate" })});` } },
             { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
           ]);
         }
