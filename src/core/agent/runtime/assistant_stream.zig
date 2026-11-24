@@ -10,6 +10,7 @@ const assistant_presentation = @import("../assistant_presentation.zig");
 const io_mod = @import("../../shared/io.zig");
 const file_mutation = @import("../../tooling/file_mutation.zig");
 const tool_dispatch = @import("../../tooling/tool_dispatch.zig");
+const url_policy = @import("../../../tools/web/url_policy.zig");
 const worker_runtime = @import("../worker_runtime.zig");
 const test_builtin_tools = if (@import("builtin").is_test)
     @import("../../../builtins/tools.zig")
@@ -44,6 +45,7 @@ const test_tools = [_]tool_dispatch.Tool{
     test_builtin_tools.edit_file,
     test_builtin_tools.shell,
     test_builtin_tools.ask_user_question,
+    test_builtin_tools.web_fetch,
 };
 const test_tool_registry = tool_dispatch.Registry{ .tools = test_tools[0..] };
 
@@ -293,6 +295,37 @@ pub fn pushTokenProgressUpdate(stream_ctx: *StreamChunkContext, update: runtime_
     }
 }
 
+const ProvisionalLabel = struct {
+    publish: bool,
+    value: ?[]const u8,
+    owned: bool = false,
+
+    fn release(self: ProvisionalLabel, alloc: Allocator) void {
+        if (self.owned) if (self.value) |text| alloc.free(@constCast(text));
+    }
+};
+
+fn provisionalLabel(alloc: Allocator, registry: tool_dispatch.Registry, tool_name: []const u8, label_value: ?[]const u8) !ProvisionalLabel {
+    const raw = label_value orelse return .{ .publish = true, .value = null };
+    const spec = registry.lookup(tool_name) orelse return .{ .publish = true, .value = raw };
+    if (spec.label_arg_kind != .url) return .{ .publish = true, .value = raw };
+    var validated = url_policy.normalize(alloc, raw) catch return .{ .publish = false, .value = null };
+    validated.deinit(alloc);
+    return .{ .publish = true, .value = try text_utils.redactUrlForDisplay(alloc, raw), .owned = true };
+}
+
+test "a provisional FetchURL label is redacted and a rejected URL is not shown" {
+    const alloc = std.testing.allocator;
+    const registry = tool_dispatch.Registry{ .tools = &[_]tool_dispatch.Tool{test_builtin_tools.web_fetch} };
+    const rejected = try provisionalLabel(alloc, registry, "FetchURL", "https://user:pass@example.com/docs");
+    defer rejected.release(alloc);
+    try std.testing.expect(!rejected.publish);
+    const clean = try provisionalLabel(alloc, registry, "FetchURL", "https://example.com/docs?sig=secret");
+    defer clean.release(alloc);
+    try std.testing.expect(clean.publish);
+    try std.testing.expect(std.mem.indexOf(u8, clean.value.?, "secret") == null);
+}
+
 pub fn onStreamToolStart(ctx: *anyopaque, tool_id: []const u8, tool_name: []const u8, label_value: ?[]const u8, arguments_json: ?[]const u8) void {
     const stream_ctx: *StreamChunkContext = @ptrCast(@alignCast(ctx));
     const first_tool_in_step = !stream_ctx.saw_tool_start;
@@ -320,17 +353,22 @@ pub fn onStreamToolStart(ctx: *anyopaque, tool_id: []const u8, tool_name: []cons
     publishTurnPhase(stream_ctx, .running);
     switch (preflight) {
         .ineligible => {},
-        .eligible => |metadata| stream_ctx.provisional_statuses.publish(
-            stream_ctx.hooks,
-            stream_ctx.alloc,
-            stream_ctx.turn_id,
-            tool_id,
-            tool_name,
-            metadata.activity_kind,
-            metadata.action_label,
-            label_value,
-            arguments_json,
-        ) catch {},
+        .eligible => |metadata| {
+            const label = provisionalLabel(stream_ctx.alloc, stream_ctx.hooks.tool_registry, tool_name, label_value) catch return;
+            defer label.release(stream_ctx.alloc);
+            if (!label.publish) return;
+            stream_ctx.provisional_statuses.publish(
+                stream_ctx.hooks,
+                stream_ctx.alloc,
+                stream_ctx.turn_id,
+                tool_id,
+                tool_name,
+                metadata.activity_kind,
+                metadata.action_label,
+                label.value,
+                arguments_json,
+            ) catch {};
+        },
     }
 }
 
