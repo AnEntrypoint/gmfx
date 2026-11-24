@@ -15,8 +15,8 @@ test.skipIf(!tmuxAvailable())("a bash tool call opens the approval panel with it
           {
             type: "tool-call",
             toolCallId: "echo-approval",
-            toolName: "Bash",
-            input: { command: "echo approval" },
+            toolName: "run_code",
+            input: { body: 'return gm.Bash({"command":"echo approval"});' },
           },
           {
             type: "finish",
