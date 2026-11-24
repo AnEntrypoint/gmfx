@@ -153,7 +153,7 @@ pub fn build(b: *std.Build) void {
             .sanitize_thread = sanitize_thread,
         }),
     });
-    if (target.result.os.tag == .linux) exe.linkage = .static;
+    if (target.result.os.tag == .linux and optimize != .debug) exe.linkage = .static;
     exe.root_module.addImport("build_options", build_options.createModule());
     if (edgejs) |dir| linkEdgejs(b, exe, dir);
     exe.root_module.addImport("fuzz_corpus", fuzz_corpus);
