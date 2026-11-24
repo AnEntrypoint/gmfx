@@ -5657,3 +5657,11 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Host line read after the stop (11:18:41 UTC, vmstat and meminfo): swap-in 342 and 844 KB/s, swap-out 0, MemAvailable 6.8 GB, SwapFree 16.1 GB of 21.0 GB. The sampler log has swap-in above 10 MB/s at 11:18:22 (26163 KB/s) and 11:18:27 (15450 KB/s), so the storm has not clearly passed.
 - Requeue criteria (owner, this turn): cycle host line shows swap-in and swap-out under 10 MB/s and available memory above 4 GB. Not requeued. The host reading and the sampler disagree at 11:18, so the next requeue waits for a clean reading on the host line.
 - Witness: the ticket and launcher are gone (kill -0 fails for 317849, 317860, 317868, 317882, 317883); win_st44.out ends at CHILD suite_build pid=317882 with no RC line.
+
+## fx-st44 requeued (round 6), after the swap criteria were met
+
+- Requeued at 11:23 UTC through the gate: ticket 319767 (gate-ticket.cjs run fx-st44), window launcher 319775 (win_st44.sh), GRANTED 11:23:14 UTC. Output /workspace/tmp/fx/win_st44.out. Head c1cfe6fa; the only change since b8292580 is the ledger, so the code under test is b8292580 unchanged.
+- Host reading at 11:23 (cycle host line, as the owner gave it): swap-in 136 KB/s, swap-out 0, 5.8 GB available.
+- Sampler check before the grant (swap_watch.log): the last swap-out above 10 MB/s was at 11:18:17 to 11:18:27 (39554, 23138, 22527 KB/s), before this requeue, so the stop rule for swap-out did not apply. Swap-in above 10 MB/s was logged at 11:22:22 (12185) and 11:22:57 (11225), before the 11:23 host reading, which disagrees with it.
+- Witness of the requeue: GRANTED line in win_st44.out, and pid 319775 running.
+- Per-file witness for the tui-resume G1 fix: f44-tui-resume, queued after ST44_DONE on the st44 binary.
