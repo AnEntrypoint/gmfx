@@ -1641,9 +1641,24 @@ pub const Runtime = struct {
         const terminal = entry.delivery_terminal;
         if (terminal) entry.settleRecordLocked();
         const should_remove = terminal and !entry.published_running;
+        const task_hash = taskHash(entry.execution_id);
         if (terminal and entry.published_running) self.clearAuthorityLocked(entry);
         entry.mutex.unlock(zio);
+        if (terminal) self.dropTerminalNotices(task_hash);
         if (should_remove) self.markDelete(entry);
+    }
+
+    fn dropTerminalNotices(self: *Runtime, task_hash: u64) void {
+        const zio = io_mod.getIo();
+        self.notice_mutex.lockUncancelable(zio);
+        defer self.notice_mutex.unlock(zio);
+        var index: usize = 0;
+        while (index < self.pending_notices.items.len) {
+            const pending = self.pending_notices.items[index];
+            if (pending.terminal and pending.task_hash == task_hash) {
+                self.alloc.free(self.pending_notices.orderedRemove(index).text);
+            } else index += 1;
+        }
     }
 
     pub fn cancelDelivery(
