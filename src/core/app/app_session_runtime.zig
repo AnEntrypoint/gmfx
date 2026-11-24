@@ -4482,12 +4482,12 @@ pub fn Runtime(comptime App: type) type {
                 const base = if (row.ok)
                     try app.describeToolActionCompletedWithAdvertised(agent, arena, row.call, target, &.{})
                 else
-                    try app.describeToolActionDeniedWithAdvertised(agent, arena, row.call, target, "Failed", &.{});
+                    try app.describeToolActionDeniedWithAdvertised(agent, arena, row.call, target, if (row.deferred) types.context_deferred_tool_status_label else "Failed", &.{});
                 const line = try tool_presentation.formatToolStatusWithStats(arena, base, row.additions, row.deletions, .{
                     .added = ui_render.diff_added_marker_style,
                     .removed = ui_render.diff_removed_marker_style,
                 });
-                const entry_id = try writeCompletedToolStatus(sink, if (row.ok) .completed else .failed, line);
+                const entry_id = try writeCompletedToolStatus(sink, if (row.ok) .completed else if (row.deferred) .deferred else .failed, line);
                 if (runCodeRowOutput(arena, reader, row)) |text| {
                     const row_result = runCodeRowResult(row, text);
                     if (row.ok) try recordHistoricalSessionLabel(app, labels, row.call, row_result);
