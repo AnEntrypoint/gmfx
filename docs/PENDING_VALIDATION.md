@@ -5809,3 +5809,14 @@ Default loop (replaces the round 7 loop above; -fincremental is removed):
 - Ticket fx-verify-target2 (PID 399559, result file verify_target2.out, records results7.jsonl): targeted_build rc 1 (2.8 s) and targeted_test rc 1 (3.2 s), VERIFY2_DONE 18:04:15. Both failed at build.zig:184 with "no field named 'Debug' in enum 'lang.Optimize'". Zig 0.17 keeps Debug only as a deprecated declaration alias (lib/std/lang.zig:113 onward); the enum tag is debug, which build.zig:152 already uses.
 - Change: build.zig:184 compares optimize != .debug, matching line 152. Commit only after verify.
 - Verification queued: ticket fx-verify-target3 (PID 408256, result file verify_target3.out, records results8.jsonl, guard guard8.out). It runs the same two commands as before: one targeted build (zig build install -Doptimize=Debug -Dtest-llvm=false) and one targeted test (zig build test -Dtest-area=runcode -Dtest-filter="call ledger"). There is no whole-tree run.
+
+### Verify ticket ids and the test-binary link (round 7)
+
+- Ticket ids, in order (queued PID, result file, outcome):
+  - fx-verify-target, PID 397245, verify_target.out, results6.jsonl: targeted build failed "self-hosted backends do not support linking with LLD" (exe.use_lld, reverted).
+  - fx-verify-target2, PID 399559, verify_target2.out, results7.jsonl: both steps failed at build.zig:184 "no field named 'Debug' in enum 'lang.Optimize'" (fixed to .debug).
+  - fx-verify-target3, PID 408256, verify_target3.out, results8.jsonl: targeted_build rc 0 (49.9 s, 991 MB); targeted_test rc 1 (42.3 s), "compile test debug native 11 errors": undefined _Unwind_Resume, _Unwind_RaiseException and 9 more, referenced from libfx_txiki.a(ada.cpp.o).
+  - fx-verify-target4, PID 411116, verify_target4.out, results9.jsonl: queued (see below).
+- Cause of the 11 errors: the libgcc_eh.a condition sat on exe.root_module, which the unit-test binaries share. The test binary links dynamically, so Zig does not add its own libunwind.a, and nothing supplies _Unwind_* to it. The condition was the wrong place for the Debug-only fix.
+- Change: libgcc_eh.a is added unconditionally again, as in the original build. The Debug exe is linked dynamically (build.zig:156, exe.linkage = .static only when optimize != .debug). The duplicate came from the static link of libc.a and Zig's libunwind.a next to libgcc_eh.a; the dynamic Debug exe does not link libc.a, so the duplicate goes away and the test binary keeps the archive. Release is unchanged.
+- Verification queued: ticket fx-verify-target4 (PID 411116, result verify_target4.out, records results9.jsonl, guard guard9.out). One targeted build and one targeted test, no whole-tree run. build.zig is committed only if both pass.
