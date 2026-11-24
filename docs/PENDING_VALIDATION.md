@@ -5491,3 +5491,13 @@ Read-only pass. No behaviour change in this pass. A fix is applied only when its
 - Witness: /workspace/tmp/fx/win_st37.out. ST37_DONE 0. Build exit 0 (578 s). Unit suite 12264 passed, 27 skipped, 0 failed (221 s). txiki witness all checks passed.
 - st37 is a build and unit witness only. It has no per-file e2e rows; per-file rows for files with recorded fixes run on the st37 binary as tickets f37-*: plan-approval-notice, approval-panel, ask-presentation, background-task-notices, tui-auth-source-selection, tui-compaction-activity, tui-host-switch (logs: /workspace/tmp/fx/win_f37_<file>.out, outputs in e2e37/).
 - Fixes committed after st37 (witness pending on st38, window fx-st38 at 7783ef84): f6539294 (ledger pointer), a002724a (plan-approval fixture), 7783ef84 (FetchURL provisional label: rejected URL publishes nothing, shown URL redacted; unit test "a provisional FetchURL label is redacted and a rejected URL is not shown").
+
+## Per-file results and causes, round 3 (st37 binary, f36 binary st36)
+
+- fx-st37 (tree f904d178): ST37_DONE 0; suite 12264 passed, 0 failed; txiki ok. Build and unit only.
+- plan-approval-notice on st37 (f37): RES fail=0, 1 pass (/workspace/tmp/fx/win_f37_plan-approval-notice.out). Fix: a002724a (fixture to gm.ExitPlanMode). Witness: green.
+- tasks-browser on st36 (f36): red. Cause: "fx: invalid band" is error.InvalidBand from FrameRepaintWindow.validate (src/ui/render_engine/paint_plan.zig:206), raised because fromPlan appended the transcript, blank, activity, gap and footer bands whole while invalidation ranges were already clipped around the preserved rows. A transcript viewport starting at row 1 overlapped the preserved rows. Fix: 488c3242 (every band clipped around the preserved rows; unit test "active repaint window keeps a transcript band that starts inside preserved rows out of them"). Witness: pending, fx-st39 then f39-tasks-browser.
+- plan-command on st36 (f36): red at "/plan on" with the plan path. Cause: environment. The gate runner set TMPDIR to /workspace/tmp/fx/tmp, so the test home path made "Plan will be created here: <path>" wrap at the 120-column pane, and the test waits for the whole path on one line. With the default TMPDIR (/tmp) the line fits. No product or test change. Fix: run_file39.sh sets TMPDIR=/tmp. Witness: pending, f39-plan-command.
+- web-fetch-fake-network: fix 7783ef84 (provisional FetchURL label). Witness: fx-st38 and f38.
+- gateway-stream-lifecycle: blob count fix f6539294. Witness: fx-st38 and f38. Replay and held-skill rows remain (owner decision and open).
+- st38 (tree e337022b) is the window carrying 7783ef84 and f6539294; st39 (tree at its launch) carries 488c3242.
