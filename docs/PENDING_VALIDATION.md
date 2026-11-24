@@ -5412,3 +5412,11 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Red check: the guard condition replaced by false (/workspace/tmp/fx/red32_apply.py), built as red32, tree restored from HEAD. Red suite: "...exactly one Cancelled row...expected 1, found 2"; 12262 passed, 1 failed (win_redcheck32.out, REDCHECK_DONE build=0 suite=1).
 - Kitty row witness: /workspace/tmp/fx/e2e32/G11/tui-decision-prompts.out, ticket fx-rows32-G11 (win_rows32_G11.out): "RES tui-decision-prompts fail=0 2pass", ROWS_G11_DONE 0. The two rows are the kitty and the raw Escape cancel.
 - Open: the whole tui-decision-prompts file regression run, and the visible effect of skipping the outer status write (the outer status entry keeps its pre-cancel text).
+
+## Regression from the Kitty guard (st32, tree 7610608f)
+
+- Whole-file run tui-decision-prompts (ticket fx-file32-G12, /workspace/tmp/fx/win_file32_G12.out, FILE_DONE G12): 57 pass, 1 fail.
+- Failing: "resized question cancellation keeps the footer bottom anchored through the first edit" (/workspace/tmp/fx/e2e32/G12/tui-decision-prompts.out; first error "[bottom-anchored question cancellation] timed out waiting for grid state"). This row passed on st24 (not in its failing list).
+- Final grid in the error (60x12 resize): "● 1 tool call · 1 command · 1 cancelled", "└ Asking", "● Asking", "┃". There is no "▪ Cancelled" row. The outer status keeps its pre-cancel "Asking" text, because the guard skips its terminal write.
+- Cause not confirmed: the trace for the resized layout is not yet taken. The guard skips replacePinnedToolStatusForTerminalAtomic for the outer terminal; that call is the only write the guard removes.
+- Status: the Kitty and raw rows pass on st32 (ROWS_G11_DONE 0), and the unit test passes (ST32_DONE 0). The regression row blocks a green witness, so nothing is pushed.
