@@ -5692,3 +5692,21 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Peak seen by the sampler (/workspace/tmp/fx/swap_watch.log) during the window, from 11:34:20 to the stop: swap-in 37860 KB/s at 11:37:27; swap-out 149883 KB/s at 11:37:12. Of 56 samples in that span, 12 had swap-in at or above 10 MB/s and 19 had swap-out at or above 10 MB/s.
 - Finding: the zig build (install-test with ReleaseSafe, peak 7 to 8 GB per the peer rules) does not fit this host even when it has the gate to itself, and capping the build at -j3 did not stop the swap. The window is not requeued. The fx witness for the tui-resume G1 fix (b98da0e4) is therefore still open.
 - What this needs: a build that peaks well under the host's available memory, or a smaller build (for example, a prebuilt binary, which the peer rules prefer before a new build). Not chosen here.
+
+## OPEN BLOCKER: the fx zig build does not fit this host (round 6)
+
+- Status: open. No fx-st window is to be queued until someone changes the host (more memory) or the build (smaller peak). Nothing is pushed: no whole-tree witness exists.
+- Four exclusive grants have ended in swap storms. The first is fx-st43; the owner counted three st44 grants, and the list below includes all four:
+  1. fx-st43, granted 09:40:05 UTC, head 703691f4. Stopped by PID for memory (owner's host reading at the stop: 956 MB available, swap-out about 5.9 MB/s). Stop time not logged; window 09:40 to 09:50 used for the peaks.
+  2. fx-st44, granted 11:13:21 UTC, head b8292580. Stopped by PID in a swap storm at about 11:18:41 (host reading after the stop: swap-in 342 and 844 KB/s).
+  3. fx-st44, granted 11:23:14 UTC, head c1cfe6fa. Stopped by PID in a swap storm at 11:28:49 (host reading: swap-out 45 MB/s, swap 7.2 GB, 1.4 GB available).
+  4. fx-st44, granted 11:34:20 UTC, head adac823e, exclusive (GATE_EXCLUSIVE=1), detached, zig build at -j3. Stopped by PID at about 11:39:00 (host reading at 11:38: swap-in 7 MB/s, swap 6.8 GB, 1.1 GB available).
+- Peaks from the sampler (/workspace/tmp/fx/swap_watch.log, vmstat 5 s; free is the vmstat free column, KB):
+  - grant 1 (09:40–09:50): peak swap-out 160055 KB/s at 09:41:06; peak swap-in 29301 KB/s at 09:41:56; min free 2511560 KB at 09:40:06; 10 samples with swap-in and 21 with swap-out at or above 10 MB/s.
+  - grant 2 (11:13:21–11:18:41): peak swap-out 146120 KB/s at 11:15:27; peak swap-in 40639 KB/s at 11:15:22; min free 3209184 KB at 11:14:37; 13 and 26 samples at or above 10 MB/s.
+  - grant 3 (11:23:14–11:28:49): peak swap-out 85551 KB/s at 11:25:47; peak swap-in 28897 KB/s at 11:28:37; min free 4301320 KB at 11:25:02; 8 and 26 samples.
+  - grant 4 (11:34:20–11:39:00): peak swap-out 149883 KB/s at 11:37:12; peak swap-in 37860 KB/s at 11:37:27; min free 4692920 KB at 11:36:17; 12 and 19 samples.
+- The earlier fx-st42 build completed on df20e55b (build 831 s, suite 12269 passed, one failure in the superseded background test). So the build fit the host at that time, when the host was not under a second tenant's load; the failures start with the st43 grant.
+- Witnesses waiting on a host with more memory: the tui-resume G1 fix (b98da0e4, witness fx-st44 with its f44-tui-resume per-file run); the background-test rewrite (f0345a83, witness in a unit run); the ask-presentation and background-task-notices fixes (ddd27e8f, e82f7447, witnesses f41/f43 per-file runs); the paint-plan and run_code unit fixes (cf790b9f, 3383bd39; the unit run on df20e55b showed them green); and the fixes for tui-command-permissions (81c2dd8e, the yolo command_result row is an owner decision).
+- Committed locally, not pushed: every fix above, with the ledger. Stop records: b8292580 (st43), c1cfe6fa and adac823e line items (st44), c05f053d (requeue), 53eb7049 (third stop).
+- Next step, for the owner: either a host with more memory (the build needs more than the host's free memory at its peak, about 150 MB/s of swap-out under one exclusive window), or a smaller build (a prebuilt binary or a lower-memory optimise setting), then one whole-tree window.
