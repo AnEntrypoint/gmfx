@@ -5485,3 +5485,9 @@ Read-only pass. No behaviour change in this pass. A fix is applied only when its
 - tui-render-lab: "command -v zsh" fails on this host. Environment, not product. CI installs zsh (ci.yml:114). Install needed before the file can run.
 - tui-resume (line 2726): waits for "Ran pwd" and the review output after C-o; the pane shows the session header. Open.
 - tui-terminal-tool (line 473): the completed row is cut to "echo fff…>/dev/null;..." where the test expects the full command. Candidate: the "Ran" row builder (tool_presentation.zig:379) uses a narrower cap than the reflow cap (formatRunCommandActivityBounded). Open until the producer of the row is confirmed.
+
+## fx-st37 result (tree f904d178)
+
+- Witness: /workspace/tmp/fx/win_st37.out. ST37_DONE 0. Build exit 0 (578 s). Unit suite 12264 passed, 27 skipped, 0 failed (221 s). txiki witness all checks passed.
+- st37 is a build and unit witness only. It has no per-file e2e rows; per-file rows for files with recorded fixes run on the st37 binary as tickets f37-*: plan-approval-notice, approval-panel, ask-presentation, background-task-notices, tui-auth-source-selection, tui-compaction-activity, tui-host-switch (logs: /workspace/tmp/fx/win_f37_<file>.out, outputs in e2e37/).
+- Fixes committed after st37 (witness pending on st38, window fx-st38 at 7783ef84): f6539294 (ledger pointer), a002724a (plan-approval fixture), 7783ef84 (FetchURL provisional label: rejected URL publishes nothing, shown URL redacted; unit test "a provisional FetchURL label is redacted and a rejected URL is not shown").
