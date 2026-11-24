@@ -5428,3 +5428,9 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Witness: /workspace/tmp/fx/win_file33_G15.out "RES tui-decision-prompts fail=0 58pass", FILE_DONE G15 (binary st33, /workspace/tmp/fx/e2e33/G15/tui-decision-prompts.out). This file includes the Kitty row and the raw Escape row.
 - Build witness: /workspace/tmp/fx/win_st33.out ST33_DONE 0; suite 12263 passed, 0 failed.
 - Pending: the red check on this tree (guard condition replaced by false), and the one-tool e2e witness for the whole suite.
+
+## Red check on the current guard (tree 632569bc)
+
+- Guard condition replaced by false (/workspace/tmp/fx/red33_apply.py), built as red33, tree restored from HEAD (git status clean).
+- Red suite: /workspace/tmp/fx/win_redcheck33.out: "a cancelled question leaves exactly one Cancelled row...expected 1, found 2"; 12262 passed, 1 failed (REDCHECK_DONE build=0 suite=1).
+- Green on the same tree: ST33_DONE 0 (12263 passed, 0 failed).
