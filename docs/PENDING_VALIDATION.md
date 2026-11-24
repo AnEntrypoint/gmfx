@@ -5363,3 +5363,9 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 ## Still failing on st31
 
 - tui-decision-prompts "kitty Escape cancels a question turn before a new prompt" (/workspace/tmp/fx/e2e31/G9/tui-decision-prompts.out): first error expect(received).toBe(expected) at tui-decision-prompts.test.ts:2883, Expected 1, Received 2. Cause: unconfirmed. The two Escape branches that can cancel a question are app_input_runtime.zig:2933 (armed cancel) and :984 (question route); a decoded kitty Escape can reach the question cancel through one of them and produce a second question_resolution row. The replay path (app_session_runtime.zig:3853) is not on the live path. The FX_TRACE_LOG run produced no trace file (the trace was never written from the harness), so the branch that fires is not yet confirmed.
+
+## Red-green check for the stored run_code unwrap (commit 24e27bad)
+
+- Green: /workspace/tmp/fx/st31/suite_run.out line 3512: "ui.full_transcript_screen.test.stored run_code read_file output is shown unwrapped, not as its envelope...OK" (st31 suite 12262 passed, 0 failed).
+- Red: the unwrap call in appendStoredResultContent replaced by a null optional (/workspace/tmp/fx/redgreen_apply.py), built as /workspace/tmp/fx/red31 (RED_BUILD_RC 0), file restored from HEAD. /workspace/tmp/fx/red31/red_full.out line 3512: the same test FAIL (TestUnexpectedResult); suite 12261 passed, 1 failed (ticket fx-redrun, REDRUN_DONE 1).
+- The tree was restored to HEAD after the red build; git status was clean before the red run.
