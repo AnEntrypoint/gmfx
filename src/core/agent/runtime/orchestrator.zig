@@ -105,6 +105,24 @@ fn emptyReplyNotice(arena: Allocator, provider_reason: []const u8, next_step: []
     return try arena.print("The model stopped without a reply (provider reason: {s}). {s}", .{ provider_reason, next_step });
 }
 
+fn contextNoticesNotShown(alloc: std.mem.Allocator, shown: []const u8, notices: []const []const u8) ![]const []const u8 {
+    var kept: std.ArrayList([]const u8) = .empty;
+    for (notices) |notice| {
+        if (std.mem.find(u8, shown, notice) != null) continue;
+        try kept.append(alloc, notice);
+    }
+    return kept.toOwnedSlice(alloc);
+}
+
+test "a context notice already in the tool result is not pushed again" {
+    const alloc = std.testing.allocator;
+    const notices = [_][]const u8{ "shell snapshot unavailable", "scope note" };
+    const kept = try contextNoticesNotShown(alloc, "{\"ok\":true,\"value\":\"shell snapshot unavailable (the captured state)\"}", notices[0..]);
+    defer alloc.free(kept);
+    try std.testing.expectEqual(@as(usize, 1), kept.len);
+    try std.testing.expectEqualStrings("scope note", kept[0]);
+}
+
 test "empty reply notice names the provider's reason and the next step" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -11394,7 +11412,7 @@ fn processQueuedPromptLoop(
                             advertised_dynamic_tool_names,
                         );
                         try runtime_tool_admission.recordRejectedToolCall(deps, arena, tool_call, prepared.model_output, null);
-                        for (execution.context_notices) |notice| try deps.pushContextNotice(notice);
+                        for (try contextNoticesNotShown(arena, execution.model_output, execution.context_notices)) |notice| try deps.pushContextNotice(notice);
                         try runtime_tool_batch.appendToolResultContent(
                             arena,
                             &within_turn_suffix,
@@ -12441,7 +12459,7 @@ fn processQueuedPromptLoop(
             if (execution_is_command) {
                 try deps.push_command_output_complete(deps.ctx, execution_lifecycle_id);
             }
-            for (execution.context_notices) |notice| {
+            for (try contextNoticesNotShown(arena, execution.model_output, execution.context_notices)) |notice| {
                 try deps.pushContextNotice(notice);
             }
 
