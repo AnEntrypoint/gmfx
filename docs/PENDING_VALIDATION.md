@@ -5665,3 +5665,11 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Sampler check before the grant (swap_watch.log): the last swap-out above 10 MB/s was at 11:18:17 to 11:18:27 (39554, 23138, 22527 KB/s), before this requeue, so the stop rule for swap-out did not apply. Swap-in above 10 MB/s was logged at 11:22:22 (12185) and 11:22:57 (11225), before the 11:23 host reading, which disagrees with it.
 - Witness of the requeue: GRANTED line in win_st44.out, and pid 319775 running.
 - Per-file witness for the tui-resume G1 fix: f44-tui-resume, queued after ST44_DONE on the st44 binary.
+
+## fx-st44 stopped for a swap storm (round 6), second stop
+
+- Ticket 319767 (gate-ticket.cjs run fx-st44), window launcher 319775, timeout 319789 and its zig maker child 319790 were stopped by PID, deepest first, with SIGTERM. All four were gone after 8 s (kill -0 failed). Ticket no longer running. No pkill or killall was used. The window had no result (win_st44.out ends at its suite_build step).
+- Reason: swap storm. Host line at 11:28 as the owner reported it: swap-out 45 MB/s, swap 7.2 GB, 1.4 GB available. The vmstat read at the stop (11:28:49) showed swap-in 8382 KB/s, swap-out 0, free 5.6 GB, MemAvailable 6.4 GB; the sampler then showed the storm peaks in the minutes before.
+- Sampler since the requeue at 11:23 (71 samples, /workspace/tmp/fx/swap_watch.log): swap-in at or above 10 MB/s in 8 samples (max 28897 KB/s, at 11:28:37), swap-out at or above 10 MB/s in 26 samples (max 85551 KB/s). Last samples: 11:28:42 si 10601 so 1825; 11:28:47 si 877 so 13; 11:28:52 si 3639 so 0 (free 5.0 GB).
+- Requeue rule (owner): swap-in and swap-out under 10 MB/s and available memory above 4 GB for a sustained period, reported with the samples. No sustained clean period has started. Current clean run starts at 11:28:47 (the first sample with both rates under 10 MB/s after the storm); it is not yet long enough to report.
+- Not requeued.
