@@ -5582,3 +5582,11 @@ FIX_IN_ST36. Output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out: RES
 - fx-st41 (ticket for st41, head 4aebac46): ST41_DONE 1. Build exit 0. Suite 12268 passed, 3 failed: (1) paint_plan "keeps a transcript band that starts inside preserved rows" expected 12 found 14 (fixed cf790b9f); (2) run_code "an inner call that succeeds leaves the run_code result without command json" (reverted 3383bd39); (3) wait_for "a completion WaitFor returns is not queued again as a notice" (my test assumed a finished task returns the completion event; it returns a state snapshot). Output: /workspace/tmp/fx/win_st41.out and st41/suite_run.out.
 - Fix for (3): the test now starts a task that is still running, delivers its running snapshot, and waits, which is the path where WaitFor returns the completion event. Commit: see the next commit. The product fix e82f7447 is unchanged. Witness pending (a unit run on a window built after this commit).
 - Per-file witnesses for the two f37 fixes: pending the hold (swap-in above 1 MB/s at the last check). f41-ask-presentation and f41-background-task-notices have not been queued.
+
+## fx-st42 result (ticket 156858, head df20e55b)
+
+- ST42_DONE 1. Build exit 0 (831 s). Suite: 12269 passed, 27 skipped, 1 failed. txiki witness: all checks passed. Output: /workspace/tmp/fx/win_st42.out and /workspace/tmp/fx/st42/suite_run.out.
+- The one failure is tools.task.wait_for.test "a completion WaitFor returns is not queued again as a notice" (wait_for.zig:5799 in the run order). It is the OLD version of that test (the finished-task form), which bdccae4e replaces with the running-task form; st42 does not include bdccae4e. The product fix e82f7447 is in st42. The new test has no witness yet: it needs a unit run on a window built after bdccae4e.
+- Unit failures on st41 and st42 are otherwise resolved: the run_code success test (reverted by 3383bd39) and the paint-plan band test (cf790b9f) pass on st42.
+- Red files at the e2e level: none measured on st42 (no per-file runs of this window). The per-file witnesses for ask-presentation and background-task-notices remain pending.
+- Swap hold: swap_watch.log (vmstat 5 s, si in KB/s) has spikes at 09:00:56 (1618), 09:01:21 (5214) and 09:02:41 (1478). The clear streak since 09:02:41 is 6 samples (30 s). The ten-minute requirement is not met.
