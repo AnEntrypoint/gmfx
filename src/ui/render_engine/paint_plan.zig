@@ -680,12 +680,12 @@ test "active repaint window keeps a transcript band that starts inside preserved
     var plan = validPlan();
     plan.preserved_band = .{ .top = 1, .bottom = 7, .owner = .preserved_shell };
     plan.transcript_band = .{ .top = 1, .bottom = 12, .owner = .transcript };
-    plan.footer.top = 13;
-    plan.footer_band = .{ .top = 13, .bottom = 14, .owner = .footer };
+    plan.footer.top = 15;
+    plan.footer_band = .{ .top = 15, .bottom = 16, .owner = .footer };
 
     const window = FrameRepaintWindow.fromPlan(plan, .{ .include_transcript = true });
 
-    try std.testing.expectEqual(@as(u8, 1), window.set.len);
+    try std.testing.expectEqual(@as(u8, 2), window.set.len);
     try std.testing.expectEqual(@as(u16, 8), window.ranges()[0].top);
     try std.testing.expectEqual(@as(u16, 12), window.ranges()[0].bottom);
     try window.validate(plan);
