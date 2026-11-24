@@ -5716,3 +5716,29 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - All fx-st44 wakeups are stopped. No wakeup is set for fx-st44. fx-st44 is stopped (ticket 321776, window 321792 gone), nothing is queued, and no fx window or zig build is running.
 - Waiting for the dispatcher's message, which comes after the owner decides the witness host (more memory or a smaller build).
 - Still open: the witnesses listed in the open blocker above (commit 22c2c4bf). Nothing is pushed; 137 local commits are ahead of origin.
+
+## Build and test cost: measurements and the default loop (round 7, 2026-11-24)
+
+- Direction: specs/fx-run-code-only.md (owner, 2026-11-24). Make the build as efficient as can be achieved, with incremental builds and targeted tests as the default loop. No whole-tree zig end-to-end witness on this host unless the owner asks.
+- Host, read 17:00 to 17:10 UTC: 12 cores, 15.6 GB RAM, /tmp on the overlay disk (not tmpfs). Other tenants held about 2.3 GB at the time (one bevy rustc at 1.9 GB RSS, six Claude sessions at 0.1 to 0.3 GB each, a bevy gm-core worker at 96 MB) and a bevy-wasm-release gate ticket was running. The fx build needs about 3.6 GB at its peak for the test binary alone, so the memory of other tenants decides whether it storms.
+
+### Measured
+
+1. e2e, one full run (win_rco2.out): 16 bun files total 1668 s (27.8 min). A second run (win_rco.out) totals 2245 s (37.4 min), inflated by a 935 s file that ran during a swap storm. Largest files in the first run: 337 s (83 tests), 300 s (103), 237 s (184), 167 s (176), 160 s (66), 160 s (115), 140 s (38).
+2. The slowest single tests are real-time waits built into them, not build time: "provider route recovery counts down, then shows the thinking row while the resend waits on silent headers" 61.8 s; "reopened recovery shows progress before response text and can finish" 41.2 s; "reopened recovery ... can cancel" 35.7 s; "interrupted response recovers autonomously without a second user turn" 31.3 s (win_rco.out). Cutting them means changing the tests, which this round does not do.
+3. Unit binary: install-test (ReleaseSafe, LLVM, -j3, -Dcpu=baseline) compiles the whole fx root into fx-test. -Dtest-area and -Dtest-filter only choose which tests run, so every targeted run still compiles everything. The unit run has 12297 tests (win_st44 output). Peak RSS of the zig test process was 3.63 GB (ps, 17:08).
+4. Catch-up build on the ReleaseSafe path (fx-bench1, 17:01 to 17:09): stopped by PID after the sampler showed swap-out of 8 to 25 MB/s for 25 s. No timing was recorded, because the timer writes only on exit. No source file was changed (the edit steps come after the catch-up); the tree was clean at 5c7a56c7 after the stop.
+
+### Unnecessary work in the build graph (read from build.zig)
+
+- txiki_build (build.zig:171-174) is an addSystemCommand running cmake --build with no declared outputs, so it runs on every install-test and every exe build. txiki_configure (164-170) is cached by its inputs. Each run prints "Built target" for fx_quickjs_ng, uv_a and fx_txiki (bench1 and st44 suite_build.out).
+- exe depends on txiki_build (build.zig:178) and pgso_tests depends on it again (build.zig:241). install-test depends only on install_pgso_tests.
+- prune_zig_cache (build.zig:221-228) runs before every test run and walks .zig-cache/o and /h, deleting entries older than two days. It is cheap, but it is a system command that always runs.
+- Cache: the repo .zig-cache is 153 GB. The disk is 731 GB, 88 percent used, 92 GB free. The prune removes only entries older than two days.
+
+### The default loop (to be confirmed by fx-bench2)
+
+- Incremental build: zig build install-test -Doptimize=Debug -Dtest-llvm=false -fincremental -j2 --cache-dir <dedicated dir>
+- Targeted unit test: zig build test -Doptimize=Debug -Dtest-llvm=false -fincremental -j2 --cache-dir <same dir> -Dtest-area=<area> -Dtest-filter="<text>"
+- Targeted e2e: one file with FX_E2E_BIN set to the built binary, under the per-file runner.
+- Pending: fx-bench2 measures the cold Debug build, a no-op rebuild, a touch with unchanged content, a whitespace-only edit of call_ledger.zig (AST-equal, so a lower bound), the revert, and the targeted unit test. Its guard stops the bench by PID after three samples of swap-out at 10 MB/s or more.
