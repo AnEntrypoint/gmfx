@@ -5803,3 +5803,9 @@ Default loop (replaces the round 7 loop above; -fincremental is removed):
 - Corrected cause: the duplicates come from the static link of libgcc_eh.a next to Zig's libunwind.a, which Zig adds itself. libunwind provides _Unwind_RaiseException and __gcc_personality_v0, so libgcc_eh.a adds nothing the static link lacks.
 - Change: build.zig line 184 now adds libgcc_eh.a only when optimize is not Debug. libstdc++.a is still added in every mode. The release link keeps both archives, so the production binary's link is unchanged. Debug uses the self-hosted backend, as before.
 - Verification queued: ticket fx-verify-target2 (PID 399559, result file verify_target2.out, records results7.jsonl, guard guard7.out). It runs exactly two commands: one targeted build, zig build install -Doptimize=Debug -Dtest-llvm=false, which links the fx executable, and one targeted test, zig build test ... -Dtest-area=runcode -Dtest-filter="call ledger". There is no whole-tree run. The change is committed only if both pass.
+
+### Second verify: the enum tag (round 7)
+
+- Ticket fx-verify-target2 (PID 399559, result file verify_target2.out, records results7.jsonl): targeted_build rc 1 (2.8 s) and targeted_test rc 1 (3.2 s), VERIFY2_DONE 18:04:15. Both failed at build.zig:184 with "no field named 'Debug' in enum 'lang.Optimize'". Zig 0.17 keeps Debug only as a deprecated declaration alias (lib/std/lang.zig:113 onward); the enum tag is debug, which build.zig:152 already uses.
+- Change: build.zig:184 compares optimize != .debug, matching line 152. Commit only after verify.
+- Verification queued: ticket fx-verify-target3 (PID 408256, result file verify_target3.out, records results8.jsonl, guard guard8.out). It runs the same two commands as before: one targeted build (zig build install -Doptimize=Debug -Dtest-llvm=false) and one targeted test (zig build test -Dtest-area=runcode -Dtest-filter="call ledger"). There is no whole-tree run.
