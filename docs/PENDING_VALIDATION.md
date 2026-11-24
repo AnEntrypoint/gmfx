@@ -5820,3 +5820,19 @@ Default loop (replaces the round 7 loop above; -fincremental is removed):
 - Cause of the 11 errors: the libgcc_eh.a condition sat on exe.root_module, which the unit-test binaries share. The test binary links dynamically, so Zig does not add its own libunwind.a, and nothing supplies _Unwind_* to it. The condition was the wrong place for the Debug-only fix.
 - Change: libgcc_eh.a is added unconditionally again, as in the original build. The Debug exe is linked dynamically (build.zig:156, exe.linkage = .static only when optimize != .debug). The duplicate came from the static link of libc.a and Zig's libunwind.a next to libgcc_eh.a; the dynamic Debug exe does not link libc.a, so the duplicate goes away and the test binary keeps the archive. Release is unchanged.
 - Verification queued: ticket fx-verify-target4 (PID 411116, result verify_target4.out, records results9.jsonl, guard guard9.out). One targeted build and one targeted test, no whole-tree run. build.zig is committed only if both pass.
+
+## Round 7 summary: build loop, tickets and the fix (2026-11-24)
+
+Tickets, by gate id (granted under GATE_EXCLUSIVE=1 unless noted). Result files are in /workspace/tmp/fx/bench:
+
+- fx-bench2, gate 001795540731282, bench2.out, results2.jsonl. Cold Debug incremental install-test: 179.9 s, 1648 MB peak, rc 0. The no-op was stopped by the swap guard on a storm (guard2.out).
+- fx-bench3, gate 001795541256861, bench3.out, results3.jsonl. Incremental no-op: 66 s wall, 110.5 s CPU, stopped by the guard (guard3.out). That shows the no-op re-runs the test compile under -fincremental. The later steps did not run.
+- fx-bench4, gate 001795541503392, bench4.out, results4.jsonl, guard4.out. With -fincremental: no-op 94.4 s (165.9 s CPU), whitespace edit 90.5 s, revert 85.9 s, targeted test rc 1 (executable link failure). Without it: cold 236.2 s (1562 MB), no-op 5.8 s, whitespace edit 76.9 s (1436 MB).
+- fx-verify-target4, gate 001795544676427, verify_target4.out, results9.jsonl, guard9.out. Targeted build rc 0 (58.0 s, 945 MB). Targeted test rc 0 (81.3 s, 943 MB), zig build test -Dtest-area=runcode -Dtest-filter="call ledger". No whole-tree run.
+- Earlier verify tickets, by queued PID: 397245 (LLD rejected), 399559 (enum tag), 408256 (11 unwinder errors), 411116 (the fix that passed, verified by 001795544676427). The record's earlier ticket id 387245 was wrong and is corrected to 397245.
+
+Default loop, as verified: install-test with -Doptimize=Debug -Dtest-llvm=false, without -fincremental; targeted test with zig build test -Doptimize=Debug -Dtest-llvm=false -Dtest-area=<area> -Dtest-filter="<text>".
+
+Committed fix: build.zig. The Debug fx executable links dynamically, so the duplicate unwinder from the static link (Zig libunwind.a next to libgcc_eh.a) does not arise. libgcc_eh.a stays in every mode, so the unit-test binary keeps its unwinder. The LLD and enum-tag edits were reverted before the verify that passed; the net diff against the previous commit is the linkage line only. Release is unchanged.
+
+Push: not pushed. Phase B (peer-rules.md) runs every listed witness before a push, and the listed witnesses are the whole open set, which the owner has ruled out on this host. origin/main is fc48b57290c62b1c0d439d7c970947b76d9f7614, and the local branch is ahead of it by the commits listed in this file and in the round 7 ledger.
