@@ -5420,3 +5420,11 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Final grid in the error (60x12 resize): "● 1 tool call · 1 command · 1 cancelled", "└ Asking", "● Asking", "┃". There is no "▪ Cancelled" row. The outer status keeps its pre-cancel "Asking" text, because the guard skips its terminal write.
 - Cause not confirmed: the trace for the resized layout is not yet taken. The guard skips replacePinnedToolStatusForTerminalAtomic for the outer terminal; that call is the only write the guard removes.
 - Status: the Kitty and raw rows pass on st32 (ROWS_G11_DONE 0), and the unit test passes (ST32_DONE 0). The regression row blocks a green witness, so nothing is pushed.
+
+## Regression fixed: whole tui-decision-prompts file green on st33 (tree 632569bc)
+
+- Cause of the resized-row regression: the skipped outer terminal write removed the replace call, which left the outer status with its pre-cancel "Asking" text and changed the replaceable row state. Traced by comparing /workspace/tmp/fx/e2e33/G13/trace.log (guard) with e2e33/G14/trace.log (guard disabled on red32): the row-6 and row-8 paint hashes differed (guard: 25 and 30 bytes; no guard: 28 and 94 bytes).
+- Fix (commit 632569bc): the outer terminal still makes its replace call; when a question card row is recorded for that call, the line is empty, so the Cancelled text is skipped and the bookkeeping matches the no-guard path.
+- Witness: /workspace/tmp/fx/win_file33_G15.out "RES tui-decision-prompts fail=0 58pass", FILE_DONE G15 (binary st33, /workspace/tmp/fx/e2e33/G15/tui-decision-prompts.out). This file includes the Kitty row and the raw Escape row.
+- Build witness: /workspace/tmp/fx/win_st33.out ST33_DONE 0; suite 12263 passed, 0 failed.
+- Pending: the red check on this tree (guard condition replaced by false), and the one-tool e2e witness for the whole suite.
