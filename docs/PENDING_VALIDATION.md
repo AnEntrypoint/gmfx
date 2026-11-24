@@ -5742,3 +5742,11 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Targeted unit test: zig build test -Doptimize=Debug -Dtest-llvm=false -fincremental -j2 --cache-dir <same dir> -Dtest-area=<area> -Dtest-filter="<text>"
 - Targeted e2e: one file with FX_E2E_BIN set to the built binary, under the per-file runner.
 - Pending: fx-bench2 measures the cold Debug build, a no-op rebuild, a touch with unchanged content, a whitespace-only edit of call_ledger.zig (AST-equal, so a lower bound), the revert, and the targeted unit test. Its guard stops the bench by PID after three samples of swap-out at 10 MB/s or more.
+
+### fx-bench2 result (round 7)
+
+- Ticket fx-bench2 (001795540731282), granted 17:21:52 UTC under GATE_EXCLUSIVE=1, head 1df92570. Debug, -Dtest-llvm=false, -fincremental, -j2, dedicated cache /workspace/tmp/fx/bench/dbgcache, prefix /workspace/tmp/fx/bench/prefix2. Result file: /workspace/tmp/fx/bench/bench2.out; records: results2.jsonl.
+- dbg_cold (install-test, from an empty cache): rc 0, wall 179.9 s, user 229.4 s, sys 25.3 s, peak RSS 1648 MB, 1367 cache files written. The ReleaseSafe test binary (LLVM) peaked at 3.63 GB under the same host, so this build needs under half the memory.
+- dbg_noop: killed after 0.5 s (rc -15), not measured. The guard stopped it at 17:24:53 on three consecutive samples of swap-out at or above 10 MB/s: 17:24:39 (15.0 MB/s), 17:24:44 (11.7 MB/s), 17:24:49 (52.0 MB/s). The storm ran from 17:24:34 to 17:25:19 (swap-out 1 to 52 MB/s) while the sampler showed 3.8 to 4.6 GB free. The guard stopped the bench tree by PID (382594 and its children). The ticket ended; nothing of fx was left running; the tree was clean.
+- The storm began before the cold build's final link, so the swap-out is not explained by the fx build alone. Other tenants were on the host (see the round 7 measurements above).
+- Not measured by fx-bench2: the no-op, the touch with unchanged content, the whitespace-only edit, the revert, and the targeted unit test. They are queued as fx-bench3 (result file /workspace/tmp/fx/bench/bench3.out, records results3.jsonl).
