@@ -5710,3 +5710,9 @@ Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build 
 - Witnesses waiting on a host with more memory: the tui-resume G1 fix (b98da0e4, witness fx-st44 with its f44-tui-resume per-file run); the background-test rewrite (f0345a83, witness in a unit run); the ask-presentation and background-task-notices fixes (ddd27e8f, e82f7447, witnesses f41/f43 per-file runs); the paint-plan and run_code unit fixes (cf790b9f, 3383bd39; the unit run on df20e55b showed them green); and the fixes for tui-command-permissions (81c2dd8e, the yolo command_result row is an owner decision).
 - Committed locally, not pushed: every fix above, with the ledger. Stop records: b8292580 (st43), c1cfe6fa and adac823e line items (st44), c05f053d (requeue), 53eb7049 (third stop).
 - Next step, for the owner: either a host with more memory (the build needs more than the host's free memory at its peak, about 150 MB/s of swap-out under one exclusive window), or a smaller build (a prebuilt binary or a lower-memory optimise setting), then one whole-tree window.
+
+## Status: waiting for the dispatcher (round 6)
+
+- All fx-st44 wakeups are stopped. No wakeup is set for fx-st44. fx-st44 is stopped (ticket 321776, window 321792 gone), nothing is queued, and no fx window or zig build is running.
+- Waiting for the dispatcher's message, which comes after the owner decides the witness host (more memory or a smaller build).
+- Still open: the witnesses listed in the open blocker above (commit 22c2c4bf). Nothing is pushed; 137 local commits are ahead of origin.
