@@ -572,7 +572,7 @@ test "a completion WaitFor returns while it waits is not queued again as a notic
     defer started.deinit(alloc);
     try runtime.commitDelivery(started.snapshot.execution_id, started.reservation_id);
 
-    const body = try runWaitFor(alloc, &runtime, "{\"timeout\":5,\"task_id\":\"wait-notice-once\"}");
+    const body = try runWaitFor(alloc, &runtime, "{\"timeout\":5}");
     defer alloc.free(body);
     try std.testing.expect(std.mem.find(u8, body, "\"event\":\"completed\"") != null);
 
