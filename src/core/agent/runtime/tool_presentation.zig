@@ -1198,6 +1198,27 @@ pub fn publishSubagentCompletionPreview(
     return true;
 }
 
+const CommandResultCommand = struct {
+    command: ?[]const u8 = null,
+};
+
+fn commandTextFromResult(arena: Allocator, command_result_json: ?[]const u8) !?[]const u8 {
+    const encoded = command_result_json orelse return null;
+    const parsed = std.json.parseFromSliceLeaky(CommandResultCommand, arena, encoded, .{
+        .ignore_unknown_fields = true,
+    }) catch return null;
+    return parsed.command;
+}
+
+test "a command result's command text names a failed command row" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const command = try commandTextFromResult(arena, "{\"command\":\"./fxc110-failed.sh\",\"exit_code\":7}");
+    try std.testing.expectEqualStrings("./fxc110-failed.sh", command.?);
+    try std.testing.expect((try commandTextFromResult(arena, null)) == null);
+}
+
 pub fn finishExecutedToolStatus(
     hooks: *const AgentRuntimeDeps,
     arena: Allocator,
@@ -1223,6 +1244,7 @@ pub fn finishExecutedToolStatus(
     else
         null;
     const outcome_decision = command_decision orelse terminal_action_decision;
+    const outcome_target = display_target orelse if (command_decision != null) try commandTextFromResult(arena, result.command_result_json) else null;
     const base_line = if (try tooling_presentation.subagentStatusLine(arena, call, result.model_output)) |line|
         line
     else if (outcome_decision) |decision| blk: {
@@ -1230,7 +1252,7 @@ pub fn finishExecutedToolStatus(
             hooks.ctx,
             arena,
             call,
-            display_target,
+            outcome_target,
             decision.label,
             advertised_dynamic_tool_names,
         );
