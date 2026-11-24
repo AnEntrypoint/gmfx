@@ -185,14 +185,15 @@ pub const FrameRepaintWindow = struct {
         var window = FrameRepaintWindow{};
         const transcript_exclusion = transcriptExclusion(options, plan);
         if (transcript_exclusion.isEmpty()) {
-            if (options.include_transcript) window.appendBand(plan.transcript_band);
+            if (options.include_transcript) window.appendBandExcludingAll(plan.transcript_band, plan.preserved_band, transcript_exclusion);
         } else {
-            window.appendBandExcluding(plan.transcript_band, transcript_exclusion);
+            window.appendBandExcludingAll(plan.transcript_band, plan.preserved_band, transcript_exclusion);
         }
-        window.appendBand(plan.blank_band);
-        window.appendBand(plan.activity_band);
-        window.appendBand(plan.footer_gap_band);
-        window.appendBand(plan.footer_band);
+        const no_exclusion = FrameBand.empty(.preserved_shell);
+        window.appendBandExcludingAll(plan.blank_band, plan.preserved_band, no_exclusion);
+        window.appendBandExcludingAll(plan.activity_band, plan.preserved_band, no_exclusion);
+        window.appendBandExcludingAll(plan.footer_gap_band, plan.preserved_band, no_exclusion);
+        window.appendBandExcludingAll(plan.footer_band, plan.preserved_band, no_exclusion);
         for (plan.invalidation.ranges()) |range| {
             window.appendInvalidationRange(plan, options, range);
         }
@@ -240,6 +241,22 @@ pub const FrameRepaintWindow = struct {
             .top = band.top,
             .bottom = band.bottom,
         });
+    }
+
+    fn appendBandExcludingAll(self: *FrameRepaintWindow, band: FrameBand, first: FrameBand, second: FrameBand) void {
+        if (band.isEmpty()) return;
+        var segments: [4]FrameInvalidationRange = undefined;
+        segments[0] = .{
+            .reason = .owned_band_change,
+            .top = band.top,
+            .bottom = band.bottom,
+        };
+        var len: usize = 1;
+        len = excludeBandFromRanges(&segments, len, first);
+        len = excludeBandFromRanges(&segments, len, second);
+        for (segments[0..len]) |segment| {
+            self.appendRange(segment);
+        }
     }
 
     fn appendBandExcluding(self: *FrameRepaintWindow, band: FrameBand, excluded: FrameBand) void {
@@ -652,6 +669,21 @@ test "active repaint window clips broad invalidation below preserved rows" {
     try plan.invalidation.append(.{ .reason = .owned_band_change, .top = 1, .bottom = 12 });
 
     const window = FrameRepaintWindow.fromPlan(plan, .{ .include_transcript = false });
+
+    try std.testing.expectEqual(@as(u8, 1), window.set.len);
+    try std.testing.expectEqual(@as(u16, 8), window.ranges()[0].top);
+    try std.testing.expectEqual(@as(u16, 12), window.ranges()[0].bottom);
+    try window.validate(plan);
+}
+
+test "active repaint window keeps a transcript band that starts inside preserved rows out of them" {
+    var plan = validPlan();
+    plan.preserved_band = .{ .top = 1, .bottom = 7, .owner = .preserved_shell };
+    plan.transcript_band = .{ .top = 1, .bottom = 12, .owner = .transcript };
+    plan.footer.top = 13;
+    plan.footer_band = .{ .top = 13, .bottom = 14, .owner = .footer };
+
+    const window = FrameRepaintWindow.fromPlan(plan, .{ .include_transcript = true });
 
     try std.testing.expectEqual(@as(u8, 1), window.set.len);
     try std.testing.expectEqual(@as(u16, 8), window.ranges()[0].top);
