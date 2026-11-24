@@ -121,6 +121,7 @@ const Bridge = struct {
     calls: usize = 0,
     images: std.ArrayList(core_types.ToolImage) = .empty,
     command_result_json: ?[]u8 = null,
+    command_process_presentation: ?core_types.CommandProcessPresentation = null,
     denied: bool = false,
 
     fn keepCommandResult(self: *Bridge, ok: bool, json: ?[]const u8) !void {
@@ -129,6 +130,11 @@ const Bridge = struct {
         const copy = try self.ctx.allocator.dupe(u8, failed_json);
         if (self.command_result_json) |previous| self.ctx.allocator.free(previous);
         self.command_result_json = copy;
+    }
+
+    fn keepCommandProcessPresentation(self: *Bridge, ok: bool, presentation: ?core_types.CommandProcessPresentation) void {
+        if (ok) return;
+        if (presentation) |value| self.command_process_presentation = value;
     }
 
     fn keepImages(self: *Bridge, images: []const core_types.ToolImage) !void {
@@ -177,6 +183,7 @@ fn invokeCountedVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []cons
     const reply = if (host) try hostVerbReply(ctx, bridge.registry, verb_call) else try gate.run_fn(gate.context, verb_alloc, verb_call);
     try bridge.keepImages(reply.images);
     try bridge.keepCommandResult(reply.ok, reply.command_result_json);
+    bridge.keepCommandProcessPresentation(reply.ok, reply.command_process_presentation);
     bridge.denied = bridge.denied or reply.denied;
     gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
     const reply_text = if (host) try alloc.dupe(u8, reply.body) else if (reply.deferred) try deferredVerbReply(alloc, reply.body) else try verbReply(alloc, reply.ok, reply.body);
@@ -409,6 +416,7 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     const base = runcode.reportJson(ctx.allocator, outcome, batchingNotice(ctx.single_verb_bodies, bridge.calls)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     const report = ledger.report(ctx.allocator, base) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     if (bridge.command_result_json) |json| tool_dispatch.reportCommandResultJson(ctx, json);
+    if (bridge.command_process_presentation) |presentation| tool_dispatch.reportToolResultMemory(ctx, .{ .command_process_presentation = presentation });
     if (bridge.denied) tool_dispatch.reportPermissionDenied(ctx);
     const succeeded = outcome.ok and bridge.command_result_json == null and !bridge.denied;
     if (bridge.images.items.len > 0) return .{ .rich = .{
