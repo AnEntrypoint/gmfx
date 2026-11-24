@@ -5626,3 +5626,10 @@ G7. Ctrl-O pane predicates that never appear (hypothesis, not traced): active co
 G8. Resumed history and crash tests (not yet read): zero-output cancelled command restores its row without an output block; resumed tool history survives continuation (and after full detail resize); a crash while a tool runs resumes with that tool answered as possibly run; grouped command status stays compact while Ctrl-O keeps detail (1764 ms).
 
 Swap hold: the checker reported clear_streak_seconds=155 at 09:28 UTC. No build is run during the hold.
+
+## tui-resume: G1 fix (diff handoff carry), commit b98da0e4 (round 6)
+
+- Cause (G1, confirmed): runInnerCall (src/core/tooling/tool_runtime.zig) returned the inner write's diff counts and command presentation but not its committed_file_handoff, so the outer run_code result had no handoff to save the full diff from.
+- Fix (b98da0e4): the inner reply carries the handoff; the run_code bridge keeps a deep copy (parallel_execution.duplicateCommittedFileHandoff, now pub) when exactly one inner write produced one; the run_code dispatch reports it through a new committed_file_handoff_sink; toolExecutionResultFromDispatch carries it into the outer ToolExecutionResult. A run with more than one inner write keeps no handoff (owner question: which handoff wins for multi-file runs).
+- Witness: fx-st43 queued on b98da0e4 (window build and unit suite), then f43-tui-resume on the st43 binary. The per-file witness is pending. No unit test was added for the carry; the e2e rows (large-file edit, file terminal sequences, recorded diffs, large snapshots) are the witness.
+- Groups G2 to G8 remain as recorded in commit 078beae7.
