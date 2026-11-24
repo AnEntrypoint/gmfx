@@ -26,6 +26,7 @@ pub const Invoked = struct {
     output: ?[]u8 = null,
     output_handle: ?[]u8 = null,
     output_bytes: usize = 0,
+    notice_pushed: bool = false,
 
     fn releaseOutput(self: Invoked, alloc: std.mem.Allocator) void {
         if (self.output) |text| alloc.free(text);
@@ -98,7 +99,7 @@ pub const Ledger = struct {
             .verb = try arena.dupe(u8, name),
             .args = try compactArgs(alloc, arena, args_json),
             .ok = outcome.ok,
-            .notice = outcome.notice,
+            .notice = if (invoked.notice_pushed) null else outcome.notice,
             .deferred = if (outcome.deferred) true else null,
             .additions = if (invoked.additions > 0) invoked.additions else null,
             .deletions = if (invoked.deletions > 0) invoked.deletions else null,
@@ -365,6 +366,24 @@ test "the ledger leaves out a notice the result value already carries" {
     const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true,\"value\":\"shell snapshot unavailable\"}"));
     defer alloc.free(text);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "shell snapshot unavailable"));
+}
+
+fn pushedNoticeInvoke(ctx: *anyopaque, alloc: std.mem.Allocator, name: []const u8, args_json: []const u8) anyerror!Invoked {
+    var invoked = try noticeInvoke(ctx, alloc, name, args_json);
+    invoked.notice_pushed = true;
+    return invoked;
+}
+
+test "the ledger leaves out a notice already pushed as context" {
+    const alloc = std.testing.allocator;
+    var unused: u8 = 0;
+    var ledger = Ledger.init(alloc, &unused, pushedNoticeInvoke, null);
+    defer ledger.deinit();
+    alloc.free(try Ledger.invoke(&ledger, alloc, "Bash", "{}"));
+    try std.testing.expect(ledger.entries.items[0].notice == null);
+    const text = try ledger.report(alloc, try alloc.dupe(u8, "{\"ok\":true}"));
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "shell snapshot unavailable") == null);
 }
 
 test "the ledger keeps a write's args parseable and carries its diff counts into the report" {

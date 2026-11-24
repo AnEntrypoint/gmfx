@@ -298,6 +298,7 @@ pub const InnerCallReply = struct {
     output_handle: ?[]const u8 = null,
     output_bytes: usize = 0,
     command_process_presentation: ?core_types.CommandProcessPresentation = null,
+    notice_pushed: bool = false,
 };
 
 pub const InnerCallGate = struct {

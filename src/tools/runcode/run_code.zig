@@ -195,6 +195,7 @@ fn invokeCountedVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []cons
         .output = if (reply.output_handle == null) try alloc.dupe(u8, reply.body) else null,
         .output_handle = if (reply.output_handle) |handle| try alloc.dupe(u8, handle) else null,
         .output_bytes = reply.output_bytes,
+        .notice_pushed = reply.notice_pushed,
     };
 }
 

@@ -1147,7 +1147,7 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
     const output_bytes = if (result.tool_result_memory) |memory| memory.stored_output_bytes else 0;
     const command_process_presentation = if (result.tool_result_memory) |memory| memory.command_process_presentation else null;
     const counts = innerDiffCounts(result);
-    return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json, .additions = counts.additions, .deletions = counts.deletions, .output_handle = output_handle, .output_bytes = output_bytes, .command_process_presentation = command_process_presentation };
+    return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json, .additions = counts.additions, .deletions = counts.deletions, .output_handle = output_handle, .output_bytes = output_bytes, .command_process_presentation = command_process_presentation, .notice_pushed = result.context_notices.len > 0 };
 }
 
 fn innerDiffCounts(result: ToolExecutionResult) struct { additions: u32, deletions: u32 } {
