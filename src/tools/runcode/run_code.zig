@@ -16,6 +16,8 @@ const tool_mcp_runtime = @import("../../core/tooling/tool_mcp_runtime.zig");
 const tool_args = @import("../../core/tooling/tool_args.zig");
 const call_ledger = @import("call_ledger.zig");
 const result_store = @import("../../core/session/result_store.zig");
+const parallel_execution = @import("../../core/agent/runtime/parallel_execution.zig");
+const file_mutation = @import("../../core/tooling/file_mutation.zig");
 
 pub const tool_name = "run_code";
 
@@ -121,6 +123,8 @@ const Bridge = struct {
     calls: usize = 0,
     images: std.ArrayList(core_types.ToolImage) = .empty,
     command_result_json: ?[]u8 = null,
+    committed_file_handoff: ?file_mutation.CommittedFileHandoff = null,
+    inner_handoff_count: usize = 0,
     command_process_presentation: ?core_types.CommandProcessPresentation = null,
     denied: bool = false,
 
@@ -130,6 +134,17 @@ const Bridge = struct {
         const copy = try self.ctx.allocator.dupe(u8, failed_json);
         if (self.command_result_json) |previous| self.ctx.allocator.free(previous);
         self.command_result_json = copy;
+    }
+
+    fn keepCommittedFileHandoff(self: *Bridge, handoff: ?file_mutation.CommittedFileHandoff) void {
+        const value = handoff orelse return;
+        self.inner_handoff_count += 1;
+        if (self.inner_handoff_count > 1) {
+            if (self.committed_file_handoff) |previous| previous.deinit(self.ctx.allocator);
+            self.committed_file_handoff = null;
+            return;
+        }
+        self.committed_file_handoff = parallel_execution.duplicateCommittedFileHandoff(self.ctx.allocator, value) catch return;
     }
 
     fn keepCommandProcessPresentation(self: *Bridge, ok: bool, presentation: ?core_types.CommandProcessPresentation) void {
@@ -184,6 +199,7 @@ fn invokeCountedVerb(context: *anyopaque, alloc: std.mem.Allocator, name: []cons
     try bridge.keepImages(reply.images);
     try bridge.keepCommandResult(reply.ok, reply.command_result_json);
     bridge.keepCommandProcessPresentation(reply.ok, reply.command_process_presentation);
+    bridge.keepCommittedFileHandoff(reply.committed_file_handoff);
     bridge.denied = bridge.denied or reply.denied;
     gate.finish_fn(gate.context, verb_alloc, verb_call, reply);
     const reply_text = if (host) try alloc.dupe(u8, reply.body) else if (reply.deferred) try deferredVerbReply(alloc, reply.body) else try verbReply(alloc, reply.ok, reply.body);
@@ -417,6 +433,7 @@ pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput,
     const base = runcode.reportJson(ctx.allocator, outcome, batchingNotice(ctx.single_verb_bodies, bridge.calls)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     const report = ledger.report(ctx.allocator, base) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not format its result") };
     if (bridge.command_result_json) |json| tool_dispatch.reportCommandResultJson(ctx, json);
+    if (bridge.committed_file_handoff) |handoff| tool_dispatch.reportCommittedFileHandoff(ctx, handoff);
     if (bridge.command_process_presentation) |presentation| tool_dispatch.reportToolResultMemory(ctx, .{ .command_process_presentation = presentation });
     if (bridge.denied) tool_dispatch.reportPermissionDenied(ctx);
     const succeeded = outcome.ok and bridge.command_result_json == null and !bridge.denied;

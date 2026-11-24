@@ -684,7 +684,7 @@ fn duplicateSubagentStatus(
     };
 }
 
-fn duplicateCommittedFileHandoff(
+pub fn duplicateCommittedFileHandoff(
     alloc: Allocator,
     source: file_mutation.CommittedFileHandoff,
 ) Allocator.Error!file_mutation.CommittedFileHandoff {

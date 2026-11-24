@@ -9,6 +9,7 @@ const core_types = @import("../shared/types.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const command_environment = @import("../execution/command_environment.zig");
 const file_mutation_contract = @import("file_mutation_contract.zig");
+const file_mutation = @import("file_mutation.zig");
 const io_mod = @import("../shared/io.zig");
 const message = @import("../shared/message.zig");
 const mod_registry = @import("../mods/registry.zig");
@@ -299,6 +300,7 @@ pub const InnerCallReply = struct {
     output_bytes: usize = 0,
     command_process_presentation: ?core_types.CommandProcessPresentation = null,
     notice_pushed: bool = false,
+    committed_file_handoff: ?file_mutation.CommittedFileHandoff = null,
 };
 
 pub const InnerCallGate = struct {
@@ -395,6 +397,7 @@ pub const DispatchContext = struct {
     tool_result_memory_sink: ?*?core_types.ToolResultMemory = null,
     model_content_kind_sink: ?*ModelContentKind = null,
     command_result_json_sink: ?*?[]const u8 = null,
+    committed_file_handoff_sink: ?*?file_mutation.CommittedFileHandoff = null,
     permission_denied_sink: ?*bool = null,
     result_commit_sink: ?*?result_commit.Token = null,
     goal: ?goal_state.View = null,
@@ -1310,6 +1313,11 @@ pub fn reportToolResultMemory(ctx: DispatchContext, memory: core_types.ToolResul
 pub fn reportCommandResultJson(ctx: DispatchContext, json: []const u8) void {
     const sink = ctx.command_result_json_sink orelse return;
     sink.* = json;
+}
+
+pub fn reportCommittedFileHandoff(ctx: DispatchContext, handoff: file_mutation.CommittedFileHandoff) void {
+    const sink = ctx.committed_file_handoff_sink orelse return handoff.deinit(ctx.allocator);
+    sink.* = handoff;
 }
 
 pub fn reportPermissionDenied(ctx: DispatchContext) void {

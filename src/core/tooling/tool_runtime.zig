@@ -1147,7 +1147,7 @@ fn runInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool
     const output_bytes = if (result.tool_result_memory) |memory| memory.stored_output_bytes else 0;
     const command_process_presentation = if (result.tool_result_memory) |memory| memory.command_process_presentation else null;
     const counts = innerDiffCounts(result);
-    return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json, .additions = counts.additions, .deletions = counts.deletions, .output_handle = output_handle, .output_bytes = output_bytes, .command_process_presentation = command_process_presentation, .notice_pushed = result.context_notices.len > 0 };
+    return .{ .ok = result.status == .success, .body = result.model_output, .images = images, .command_result_json = result.command_result_json, .additions = counts.additions, .deletions = counts.deletions, .output_handle = output_handle, .output_bytes = output_bytes, .command_process_presentation = command_process_presentation, .notice_pushed = result.context_notices.len > 0, .committed_file_handoff = result.committed_file_handoff };
 }
 
 fn innerDiffCounts(result: ToolExecutionResult) struct { additions: u32, deletions: u32 } {
@@ -1518,6 +1518,7 @@ const DispatchMetadata = struct {
     subagent_completion: ?types.SubagentStatus = null,
     tool_result_memory: ?types.ToolResultMemory = null,
     command_result_json: ?[]const u8 = null,
+    committed_file_handoff: ?file_mutation.CommittedFileHandoff = null,
     permission_denied: bool = false,
 
     fn attach(self: *DispatchMetadata, ctx: *tool_dispatch.DispatchContext) void {
@@ -1527,6 +1528,7 @@ const DispatchMetadata = struct {
         ctx.web_fetch_completion_sink = &self.web_fetch_completion;
         ctx.tool_result_memory_sink = &self.tool_result_memory;
         ctx.command_result_json_sink = &self.command_result_json;
+        ctx.committed_file_handoff_sink = &self.committed_file_handoff;
         ctx.permission_denied_sink = &self.permission_denied;
     }
 };
@@ -1551,6 +1553,7 @@ fn toolExecutionResultFromDispatch(
             .subagent_completion = metadata.subagent_completion,
             .tool_result_memory = memory,
             .command_result_json = metadata.command_result_json,
+            .committed_file_handoff = metadata.committed_file_handoff,
         },
         .failure => .{
             .status = .failure,
@@ -1562,6 +1565,7 @@ fn toolExecutionResultFromDispatch(
             .subagent_completion = metadata.subagent_completion,
             .tool_result_memory = memory,
             .command_result_json = metadata.command_result_json,
+            .committed_file_handoff = metadata.committed_file_handoff,
         },
     };
 }
