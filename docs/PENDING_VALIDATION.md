@@ -5444,3 +5444,15 @@ Still failing on st27 (31 rows, triage in progress): tui-resume 14; tui-command-
 - Failing files, first errors (from /workspace/tmp/fx/e2e34/all/<file>.out): approval-panel 1 (pane predicate timeout); ask-presentation 4 (toContain); background-task-notices 2; cli 1 (toContain, fx ask usage); file-tool-paths 1 (toBe); gateway-stream-lifecycle 14 (toHaveLength/toBe/toContain); mcp-stdio 1 (not.toContain, paging); notifications 3 (notification trace timeout); permission-errors 1; plan-approval-notice 1; plan-command 1; tasks-browser 1; tui-auth-source-selection 1 (toMatch, reasoning snapshots); tui-command-permissions 6 (Ctrl-O, reprojection, yolo command results); tui-compaction-activity 14 (toBe, held compaction); tui-direct-write-audit 1 (17 unclassified sites); tui-gateway-stream-lifecycle 9 (steering and retry); tui-host-switch 26 (agent switching, pane predicate timeouts); tui-interrupt-recovery 3; tui-permissions 14 (file approval panels); tui-render-lab 5 (script render-lab exited with code 1); tui-resume 13 (full diff, Ctrl-O replay); tui-terminal-tool 2 (reclip, foreground timeout); web-fetch-fake-network 5 (not.toMatch, invalid FetchURL before transport).
 - Push: blocked; the e2e run is not green. Nothing pushed.
 - Next window: split into groups of 30 minutes or less, one ticket per file group, each with its own DONE line.
+
+## Regression fix pass (window st36, tree 9505840a)
+
+- Commits (local, not pushed): 5d54e826 (argument-free run_code labels in ask headers and the live row), 7e7d3b3e (inner command timeout presentation carried through run_code), ed50f683 (deferred instruction label on resume), 92b7cb51 (yolo fixture back to Running command), 9505840a (multiline command labels keep the 120-byte activity cap).
+- Build and unit suite on 9505840a: ST36_DONE 0 (/workspace/tmp/fx/win_st36.out; 12263 passed, 0 failed; txiki witness passed).
+- Per-file tickets on st36 (run_file36.sh, one ticket per file, outputs /workspace/tmp/fx/win_f36_<file>.out and e2e36/<file>/):
+  - approval-panel: fail=1 (direct Bash tool call refused by the one-tool surface, the owner-approved fixture conversion is pending).
+  - ask-presentation: fail=1 of 20 (startup-files notice counted twice in the request body; see the duplicate-notice note below).
+  - 21 other files queued at the time of writing.
+- Duplicate-notice note: a notice reaches the request body through two channels: the pushed context notice (tool_runtime.zig recordContextNoticeForDispatch, orchestrator.zig pushContextNotice) and the run_code ledger entry notice (call_ledger.zig report, which only drops a notice found in base). The fix is to drop ledger notices delivered as context notices. Not yet done.
+- Host-switch (tui-host-switch, 26 tests): the driver still emits a direct Agent tool call that the one-tool surface refuses (commit 475d7fbe); the owner-approved fixture conversion (tests/e2e/tui-host-switch.test.ts agentCall) is pending, not run.
+- Environment: tui-render-lab needs /bin/zsh, absent on this host.
