@@ -400,21 +400,25 @@ test "the ledger marks a context-deferred verb reply as deferred rather than fai
     try std.testing.expect(std.mem.indexOf(u8, text, "\"deferred\":true") != null);
 }
 
+const BodyHolder = struct {
+    body: []const u8,
+};
+
 fn bodyInvoke(context: *anyopaque, alloc: std.mem.Allocator, _: []const u8, _: []const u8) anyerror!Invoked {
-    const body: *const []const u8 = @ptrCast(@alignCast(context));
+    const holder: *const BodyHolder = @ptrCast(@alignCast(context));
     var reply: std.Io.Writer.Allocating = .init(alloc);
     defer reply.deinit();
     try reply.writer.writeAll("{\"ok\":true,\"text\":");
-    try std.json.Stringify.value(body.*, .{}, &reply.writer);
+    try std.json.Stringify.value(holder.body, .{}, &reply.writer);
     try reply.writer.writeByte('}');
-    return .{ .reply = try reply.toOwnedSlice(), .output = try alloc.dupe(u8, body.*) };
+    return .{ .reply = try reply.toOwnedSlice(), .output = try alloc.dupe(u8, holder.body) };
 }
 
 test "a stored verb body the script returns is replaced by its pointer in the report" {
     const alloc = std.testing.allocator;
-    var body: []const u8 = big_output;
+    var holder = BodyHolder{ .body = big_output };
     var fake: FakeStore = .{};
-    var ledger = Ledger.init(alloc, &body, bodyInvoke, fake.store());
+    var ledger = Ledger.init(alloc, &holder, bodyInvoke, fake.store());
     defer ledger.deinit();
     alloc.free(try Ledger.invoke(&ledger, alloc, "read_file", "{}"));
     var value_json: std.Io.Writer.Allocating = .init(alloc);
