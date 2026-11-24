@@ -5558,3 +5558,8 @@ FIX_IN_ST36. Output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out: RES
 - f37_tui-auth-source-selection: RES tui-auth-source-selection fail=0 168pass; ticket f37-tui-auth-source-selection 001795504402556; output /workspace/tmp/fx/win_f37_tui-auth-source-selection.out
 
 - Fixes committed this round (witnesses pending on fx-st40 or a later window): ddd27e8f (ask: a context notice already in the tool result is not pushed again; unit test contextNoticesNotShown), e82f7447 (background: a terminal delivery drops the queued completion notice; unit test "a completion WaitFor returns is not queued again as a notice").
+
+## fx-st40 and fx-st41 (witness windows for round 6)
+
+- fx-st40 (ticket 109398): granted at 07:48:50 UTC with head 7ac1865a and dirty=1. The dirty file was the uncommitted ddd27e8f change (orchestrator.zig), so st40 may carry the ask-presentation fix. The background-task-notices fix (e82f7447) was written after the build started, so st40 does not witness it. st40 is a witness for tui-command-permissions (fixes 81c2dd8e and 055ff130 are ancestors of its head) and nothing else in round 6.
+- fx-st41: queued on a clean head a15aa2cb, which carries ddd27e8f (ask) and e82f7447 (background). Its per-file tickets (f41-ask-presentation, f41-background-task-notices) are the witnesses for those two fixes. Output: /workspace/tmp/fx/win_st41.out.
