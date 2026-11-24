@@ -5533,3 +5533,28 @@ FIX_IN_ST36. Output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out: RES
 - f36 tui-compaction-activity (st36, ticket f36-tui-compaction-activity): GREEN. RES fail=0, 15 pass, 59 s. Output /workspace/tmp/fx/win_f36_tui-compaction-activity.out. Fix in the binary: 5d54e826 (argument-free leading label, "Reading file").
 - f37 ask-presentation (st37, f904d178; dabf1709 is an ancestor): RED, fail=1, 19 pass. First error: test "startup files the snapshot cannot capture fall back with one notice" line 1054: the notice "shell snapshot unavailable (the captured state exceeded 8 MiB)" occurs 2 times in the request body (expected 1). Cause: the notice reaches the request once as a context notice (tool_runtime.zig recordContextNoticeForDispatch) and once inside the run_code value, because the script returns the verb's JSON, which carries the notice field. dabf1709 removed only the ledger copy. Fix: not applied yet (delivery-side dedupe of a pushed context notice that the same request's tool result already carries). Witness: pending.
 - f37 background-task-notices (st37): RED, fail=2. First error: "WaitFor returns the completion notice as its result" line 85: "event":"completed" appears 2 times in the waited request (expected 1). Cause: the completion event is in the WaitFor result and also still in the pending background-notice channel, which is delivered again in the same request; WaitFor does not consume it. Fix: not applied yet (WaitFor marks the notice it returned as delivered). Witness: pending.
+
+## Per-file results, landed since round 5 (one line per file: RES line, ticket id, output)
+
+- f36_approval-panel: RES approval-panel fail=1 0pass; ticket f36-approval-panel 001795502561899; output /workspace/tmp/fx/win_f36_approval-panel.out
+- f36_ask-presentation: RES ask-presentation fail=1 19pass; ticket f36-ask-presentation 001795502564681; output /workspace/tmp/fx/win_f36_ask-presentation.out
+- f36_background-task-notices: RES background-task-notices fail=2 4pass; ticket f36-background-task-notices 001795502567556; output /workspace/tmp/fx/win_f36_background-task-notices.out
+- f36_cli: RES cli fail=0 150pass; ticket f36-cli 001795502570222; output /workspace/tmp/fx/win_f36_cli.out
+- f36_file-tool-paths: RES file-tool-paths fail=0 23pass; ticket f36-file-tool-paths 001795502572898; output /workspace/tmp/fx/win_f36_file-tool-paths.out
+- f36_gateway-stream-lifecycle: RES gateway-stream-lifecycle fail=6 178pass; ticket f36-gateway-stream-lifecycle 001795502575565; output /workspace/tmp/fx/win_f36_gateway-stream-lifecycle.out
+- f36_mcp-stdio: RES mcp-stdio fail=1 114pass; ticket f36-mcp-stdio 001795502578417; output /workspace/tmp/fx/win_f36_mcp-stdio.out
+- f36_notifications: RES notifications fail=3 2pass; ticket f36-notifications 001795502581065; output /workspace/tmp/fx/win_f36_notifications.out
+- f36_permission-errors: RES permission-errors fail=0 5pass; ticket f36-permission-errors 001795502583738; output /workspace/tmp/fx/win_f36_permission-errors.out
+- f36_plan-approval-notice: RES plan-approval-notice fail=1 0pass; ticket f36-plan-approval-notice 001795502586570; output /workspace/tmp/fx/win_f36_plan-approval-notice.out
+- f36_plan-command: RES plan-command fail=1 2pass; ticket f36-plan-command 001795502589241; output /workspace/tmp/fx/win_f36_plan-command.out
+- f36_tasks-browser: RES tasks-browser fail=1 0pass; ticket f36-tasks-browser 001795502592296; output /workspace/tmp/fx/win_f36_tasks-browser.out
+- f36_tui-auth-source-selection: RES tui-auth-source-selection fail=0 168pass; ticket f36-tui-auth-source-selection 001795502595355; output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out
+- f36_tui-command-permissions: RES tui-command-permissions fail=2 33pass; ticket f36-tui-command-permissions 001795502599347; output /workspace/tmp/fx/win_f36_tui-command-permissions.out
+- f36_tui-compaction-activity: RES tui-compaction-activity fail=0 15pass; ticket f36-tui-compaction-activity 001795502602269; output /workspace/tmp/fx/win_f36_tui-compaction-activity.out
+- f37_approval-panel: RES approval-panel fail=0 1pass; ticket f37-approval-panel 001795504395761; output /workspace/tmp/fx/win_f37_approval-panel.out
+- f37_ask-presentation: RES ask-presentation fail=1 19pass; ticket f37-ask-presentation 001795504398064; output /workspace/tmp/fx/win_f37_ask-presentation.out
+- f37_background-task-notices: RES background-task-notices fail=2 4pass; ticket f37-background-task-notices 001795504400323; output /workspace/tmp/fx/win_f37_background-task-notices.out
+- f37_plan-approval-notice: RES plan-approval-notice fail=0 1pass; ticket f37-plan-approval-notice 001795504392743; output /workspace/tmp/fx/win_f37_plan-approval-notice.out
+- f37_tui-auth-source-selection: RES tui-auth-source-selection fail=0 168pass; ticket f37-tui-auth-source-selection 001795504402556; output /workspace/tmp/fx/win_f37_tui-auth-source-selection.out
+
+- Fixes committed this round (witnesses pending on fx-st40 or a later window): ddd27e8f (ask: a context notice already in the tool result is not pushed again; unit test contextNoticesNotShown), e82f7447 (background: a terminal delivery drops the queued completion notice; unit test "a completion WaitFor returns is not queued again as a notice").
