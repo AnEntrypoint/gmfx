@@ -5514,3 +5514,9 @@ Read-only pass. No behaviour change in this pass. A fix is applied only when its
 - GREEN: GRANTED f36-tui-auth-source-selection 001795502595355
 FIX_IN_ST36. Output /workspace/tmp/fx/win_f36_tui-auth-source-selection.out: RES fail=0, 168 pass, 496 s.
 - Fix in the st36 binary: 5d54e826 (run_code leading label argument-free, so "Reading file" not "Reading notes.txt"). Verified as an ancestor of the st36 head 9505840a.
+
+## Per-file result, f36 tui-command-permissions (st36 binary)
+
+- RED: GRANTED f36-tui-command-permissions 001795502599347. Output /workspace/tmp/fx/win_f36_tui-command-permissions.out: RES fail=2, 33 pass, 49 s.
+- Failure 1, "TUI keeps command output exclusive to Ctrl-O through resize and resume" (test line 1176): the scrollback shows "└ Exited 7 command"; the failed command's name is missing (the failed row had no target, so the word command stood in). Cause: finishExecutedToolStatus (src/core/agent/runtime/tool_presentation.zig) passed a null target for a run_code call. Fix: 81c2dd8e (target taken from the failed command result's command text; unit test "a command result's command text names a failed command row"). Witness: pending (st39 or later, then f39-tui-command-permissions).
+- Failure 2, "fx ask yolo executes pwd through the default user profile with process-scoped replay" (line 2555): tool_calls[0].command_result is undefined on a successful run. Cause: keepCommandResult (run_code.zig, commit ae0ece08) keeps a command result only for a failed inner call, and both the run_code and the CLI read a non-null command_result_json as "command failed" (run_code succeeded check; cli_ask.zig command_failed status). The success result cannot be carried without changing that status signal. OWNER DECISION, not changed: (a) carry successful command results in tool_calls under a field that does not mark failure, or (b) drop the command_result expectation for successful runs.
