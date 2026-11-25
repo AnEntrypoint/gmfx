@@ -545,6 +545,8 @@ fn toolLines(alloc: Allocator, turn: Prepared, written: ledger.Written) Allocato
     return lines;
 }
 
+const max_inner_output_bytes = 160;
+
 fn runCodeLine(alloc: Allocator, tool: PendingTool) Allocator.Error![]const u8 {
     var line: std.ArrayList(u8) = .empty;
     try line.appendSlice(alloc, tool.name);
@@ -575,6 +577,13 @@ fn innerVerbList(alloc: Allocator, output: []const u8) Allocator.Error!?[]const 
         if (verb != .string or ok != .bool) continue;
         if (list.items.len > 0) try list.appendSlice(alloc, ", ");
         try list.print(alloc, "{s} ({s})", .{ verb.string, if (ok.bool) "ok" else "failed" });
+        if (ok.bool) continue;
+        if (entry.object.get("output")) |text| {
+            if (text == .string) {
+                try list.appendSlice(alloc, " ");
+                try appendClipped(alloc, &list, text.string);
+            }
+        }
     }
     if (list.items.len == 0) return null;
     return list.items;
@@ -2316,6 +2325,35 @@ test "the earlier summary is clipped only when the turns alone cannot make the r
     try testing.expect(std.mem.find(u8, store.find(.ledger, 1).?, previous) != null);
     try testing.expectEqualStrings(previous, result.compacted.earlier);
     try testing.expect(std.mem.find(u8, result.text, "In short:\n" ++ previous ++ "\n") != null);
+}
+
+fn appendClipped(alloc: Allocator, list: *std.ArrayList(u8), text: []const u8) Allocator.Error!void {
+    var end = @min(text.len, max_inner_output_bytes);
+    while (end > 0 and end < text.len and (text[end] & 0xC0) == 0x80) end -= 1;
+    for (text[0..end]) |byte| try list.append(alloc, if (byte == '\n') ' ' else byte);
+    if (end < text.len) try list.appendSlice(alloc, "...");
+}
+
+test "a run_code summary keeps a failed inner call's output such as a cancellation notice, and no successful body" {
+    const arguments = "{\"body\":\"gm.wait({})\"}";
+    const output = "{\"ok\":true,\"calls\":[{\"verb\":\"wait\",\"args\":\"{}\",\"ok\":false,\"output\":\"aborted by user\\nretry\"}]}";
+    const turns = [_]Turn{.{ .user = "Wait.", .items = &.{
+        .{ .tool_call = .{ .id = "call-1", .name = "run_code", .arguments = arguments } },
+        .{ .tool_result = .{ .call_id = "call-1", .name = "run_code", .output = output } },
+        .{ .assistant = "Stopped." },
+    } }};
+    var model = FakeModel{};
+    defer model.deinit();
+    var store = MemoryStore{ .alloc = testing.allocator };
+    defer store.deinit();
+
+    var result = try compact(testing.allocator, .{ .model = "m", .turns = &turns }, model.model(), store.store());
+    defer result.deinit();
+
+    const line = try std.fmt.allocPrint(testing.allocator, "run_code wait (failed) aborted by user retry ({d} bytes)", .{output.len});
+    defer testing.allocator.free(line);
+    try testing.expectEqualStrings(line, result.compacted.turns[0].tools[0].line);
+    try testing.expect(std.mem.find(u8, result.text, "aborted by user retry") != null);
 }
 
 test "a run_code call is summarized as the inner verbs it ran with their outcomes, and saved whole" {
