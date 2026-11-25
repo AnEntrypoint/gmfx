@@ -5836,3 +5836,10 @@ Default loop, as verified: install-test with -Doptimize=Debug -Dtest-llvm=false,
 Committed fix: build.zig. The Debug fx executable links dynamically, so the duplicate unwinder from the static link (Zig libunwind.a next to libgcc_eh.a) does not arise. libgcc_eh.a stays in every mode, so the unit-test binary keeps its unwinder. The LLD and enum-tag edits were reverted before the verify that passed; the net diff against the previous commit is the linkage line only. Release is unchanged.
 
 Push: not pushed. Phase B (peer-rules.md) runs every listed witness before a push, and the listed witnesses are the whole open set, which the owner has ruled out on this host. origin/main is fc48b57290c62b1c0d439d7c970947b76d9f7614, and the local branch is ahead of it by the commits listed in this file and in the round 7 ledger.
+
+### plan-command re-run under TMPDIR=/tmp (round 7, next ranked item)
+
+- Item: the environment red in plan-command (f36, "fail=1 2pass", ticket f36-plan-command 001795502589241). Cause recorded earlier: the gate runner set TMPDIR to /workspace/tmp/fx/tmp, so the plan path wrapped at the 120-column pane and the test waited for it on one line. Fix: TMPDIR=/tmp for the e2e run, no product or test change.
+- Witness: /workspace/tmp/fx/run_plan_v2.sh a1 (output /workspace/tmp/fx/e2e_plan_a1/plan-command.out, summary /workspace/tmp/fx/run_plan_v2.out). Result: RES plan-command rc=0 fail=0 3pass, 6 s. This is a single e2e file with no build and no gate ticket, because the binary already existed.
+- Binary: /workspace/tmp/fx/bench/prefix9/bin/fx, built by the targeted build of verify4 from the tree at d47d293a (the linkage change). The working tree was clean at a0c0dacd. The binary is a Debug build, so this witness is for the environment fix, not the ReleaseSafe gate build.
+- Not done: tui-render-lab needs zsh, which is not installed. Installing it changes the host, so it waits for the owner.
