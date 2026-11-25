@@ -545,9 +545,45 @@ fn toolLines(alloc: Allocator, turn: Prepared, written: ledger.Written) Allocato
     return lines;
 }
 
+fn runCodeLine(alloc: Allocator, tool: PendingTool) Allocator.Error![]const u8 {
+    var line: std.ArrayList(u8) = .empty;
+    try line.appendSlice(alloc, tool.name);
+    const result = tool.result orelse {
+        try line.appendSlice(alloc, " (no result)");
+        return line.items;
+    };
+    if (try innerVerbList(alloc, result.output)) |verbs| try line.print(alloc, " {s}", .{verbs});
+    try line.appendSlice(alloc, " (");
+    if (result.failed) try line.appendSlice(alloc, "failed, ");
+    try line.print(alloc, "{d} bytes)", .{result.output.len});
+    return line.items;
+}
+
+fn innerVerbList(alloc: Allocator, output: []const u8) Allocator.Error!?[]const u8 {
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), output, .{}) catch return null;
+    if (parsed != .object) return null;
+    const calls = parsed.object.get("calls") orelse return null;
+    if (calls != .array) return null;
+    var list: std.ArrayList(u8) = .empty;
+    errdefer list.deinit(alloc);
+    for (calls.array.items) |entry| {
+        if (entry != .object) continue;
+        const verb = entry.object.get("verb") orelse continue;
+        const ok = entry.object.get("ok") orelse continue;
+        if (verb != .string or ok != .bool) continue;
+        if (list.items.len > 0) try list.appendSlice(alloc, ", ");
+        try list.print(alloc, "{s} ({s})", .{ verb.string, if (ok.bool) "ok" else "failed" });
+    }
+    if (list.items.len == 0) return null;
+    return list.items;
+}
+
 const max_line_argument_bytes = 120;
 
 fn codeLine(alloc: Allocator, tool: PendingTool) Allocator.Error![]const u8 {
+    if (std.mem.eql(u8, tool.name, "run_code")) return runCodeLine(alloc, tool);
     var line: std.ArrayList(u8) = .empty;
     try line.appendSlice(alloc, tool.name);
     if (tool.call) |call| {
@@ -2282,15 +2318,14 @@ test "the earlier summary is clipped only when the turns alone cannot make the r
     try testing.expect(std.mem.find(u8, result.text, "In short:\n" ++ previous ++ "\n") != null);
 }
 
-test "a run_code call is summarized as its name, the first 120 bytes of its body and its result size, and saved whole" {
-    const prefix = "const out = gm.run_shell({ command: 'zig build' }); ";
-    const body = prefix ++ text_utils.repeat("a", 200) ++ " TAILMARK";
-    const arguments = "{\"body\":\"" ++ body ++ "\"}";
+test "a run_code call is summarized as the inner verbs it ran with their outcomes, and saved whole" {
+    const arguments = "{\"body\":\"const out = gm.read_file({ path: 'a.zig' }); gm.write_file({ path: 'b.zig' }); TAILMARK\"}";
+    const output = "{\"ok\":true,\"value\":null,\"console\":\"\",\"console_dropped\":0,\"calls\":[{\"verb\":\"read_file\",\"args\":\"{}\",\"ok\":true},{\"verb\":\"write_file\",\"args\":\"{}\",\"ok\":false}],\"calls_dropped\":0}";
     const turns = [_]Turn{.{ .user = "Fix the build.\nIt fails on main.", .items = &.{
         .{ .assistant = "I'll run the build first." },
         .{ .tool_call = .{ .id = "call-1", .name = "run_code", .arguments = arguments } },
-        .{ .tool_result = .{ .call_id = "call-1", .name = "run_code", .output = "error: missing semicolon at src/a.zig:4" } },
-        .{ .assistant = "Found it: a missing semicolon at src/a.zig:4." },
+        .{ .tool_result = .{ .call_id = "call-1", .name = "run_code", .output = output } },
+        .{ .assistant = "Found it: write_file failed on b.zig." },
     } }};
     var model = FakeModel{};
     defer model.deinit();
@@ -2300,12 +2335,13 @@ test "a run_code call is summarized as its name, the first 120 bytes of its body
     var result = try compact(testing.allocator, .{ .model = "m", .turns = &turns }, model.model(), store.store());
     defer result.deinit();
 
-    const line = "run_code " ++ body[0..120] ++ "\u{2026} (39 bytes)";
+    const line = try std.fmt.allocPrint(testing.allocator, "run_code read_file (ok), write_file (failed) ({d} bytes)", .{output.len});
+    defer testing.allocator.free(line);
     try testing.expectEqual(@as(usize, 1), result.compacted.tool_count);
     try testing.expectEqualStrings(line, result.compacted.turns[0].tools[0].line);
     try testing.expect(std.mem.find(u8, result.text, "TAILMARK") == null);
-    try testing.expect(std.mem.find(u8, result.text, "T1 " ++ line) != null);
+    try testing.expect(std.mem.find(u8, result.text, "T1 run_code read_file (ok)") != null);
     const saved = store.find(.tool, 1).?;
     try testing.expect(std.mem.find(u8, saved, "Arguments:\n" ++ arguments ++ "\n") != null);
-    try testing.expect(std.mem.find(u8, saved, "Result:\nerror: missing semicolon at src/a.zig:4\n") != null);
+    try testing.expect(std.mem.find(u8, saved, "Result:\n" ++ output ++ "\n") != null);
 }

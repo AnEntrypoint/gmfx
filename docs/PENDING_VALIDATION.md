@@ -5868,3 +5868,9 @@ Push: not pushed. Phase B (peer-rules.md) runs every listed witness before a pus
 - Red, PostToolUse: finishInnerCall returned before its observation. The PostToolUse witness failed (582 of 583, rc 1). Restored, cmp matched.
 - Evidence: /workspace/tmp/fx/stage2/w4_green.out, w4_red_rules.out, w4_red_post.out, results_w4.jsonl, w4b.out.
 - Items 2 to 4 of Stage 2 (settle compaction, journal inner calls, background after timeout) remain open.
+
+### Stage 2 item 2 witnessed (2026-11-25, window fx-stage2-w5, started 10:26:21, done 10:28:03 UTC, head c0b04460)
+- Green: -Dtest-area=core -Dtest-filter="a run_code call is summarized", 1 of 1 tests passed, 13 of 13 steps, rc 0, 64.9 s, peak 1254 MB. The witness: a compacted run_code entry names each inner verb with its ok or failed outcome and the result size, and the saved record keeps the full arguments and result.
+- Red: the run_code branch of codeLine turned off (if (false)). The witness failed (0 of 1, rc 1, 36.6 s). Restored, cmp matched.
+- Evidence: /workspace/tmp/fx/stage2/w5_green.out, w5_red.out, results_w5.jsonl, w5.out.
+- Breaking change (pre-alpha): the compacted text for a run_code call no longer carries the first 120 bytes of its JavaScript body; it carries the inner verb list with outcomes. The full body is still saved whole.
