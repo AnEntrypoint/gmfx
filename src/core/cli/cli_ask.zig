@@ -302,7 +302,7 @@ fn runAskChild(
         .{
             .permission_mode = admission.permission_mode,
             .permission_rules = admission.rules,
-            .subagent_available = true,
+            .subagent_available = ctx.subagent_host != null,
         },
     ) catch return error.OutOfMemory;
     defer child_projection.deinit(ctx.alloc);
@@ -2212,10 +2212,8 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         options.save_session and ctx.requested_resume == null and ctx.session_name == null,
     );
     defer if (title_task) |task| completeAskTitleTask(&ctx, task);
-    var top_level_mcp_tools: std.heap.ArenaAllocator = .init(alloc);
-    defer top_level_mcp_tools.deinit();
+    prepareTopLevelMcp(&ctx);
     const turn_config: agent_runtime.Config = .{
-        .initial_dynamic_tools = topLevelMcpTools(&ctx, top_level_mcp_tools.allocator()),
         .system_prompt = cfg.prompt_policy.system_prompt,
         .model_prompt_overlay = cfg.prompt_policy.modelPromptOverlay(ctx.model),
         .skill_catalog = .{ .skills = loaded_skills.skills, .diagnostics = loaded_skills.diagnostics },
@@ -2746,19 +2744,11 @@ fn appendStaticContext(raw_ctx: *anyopaque, arena: Allocator, messages: *std.Arr
     if (section.notice) |notice| try pushContextNotice(raw_ctx, notice);
 }
 
-fn topLevelMcpTools(ctx: *AskContext, arena: Allocator) []const agent_stream_provider.DynamicFunctionTool {
-    const h = ctx.mcp_host orelse return &.{};
-    const loaded = h.catalog.snapshotAlwaysLoadedTools(arena, ctx.permission_rules, ctx.context_limits, .unrestricted, ctx.cancelFlag()) catch |err| {
-        debug_trace.logf("mcp", "top-level MCP tools not loaded for this turn err={s}", .{@errorName(err)});
-        return &.{};
+fn prepareTopLevelMcp(ctx: *AskContext) void {
+    const h = ctx.mcp_host orelse return;
+    h.catalog.prepareAlwaysLoadedServers(ctx.cancelFlag()) catch |err| {
+        debug_trace.logf("mcp", "top-level MCP servers not prepared for this turn err={s}", .{@errorName(err)});
     };
-    if (loaded.notice) |notice| pushContextNotice(@ptrCast(ctx), notice) catch {};
-    const tools = runtime_gateway_step.withSelectedDynamicTools(arena, &.{}, loaded.tools) catch |err| {
-        debug_trace.logf("mcp", "top-level MCP tools not advertised for this turn err={s}", .{@errorName(err)});
-        return &.{};
-    };
-    debug_trace.logf("mcp", "advertised top-level MCP tools count={d}", .{tools.len});
-    return tools;
 }
 
 fn snapshotMcpDefinition(raw_ctx: *anyopaque, arena: Allocator, name: []const u8, known: tool_mcp_runtime.Binding) !tool_mcp_runtime.DefinitionSnapshot {

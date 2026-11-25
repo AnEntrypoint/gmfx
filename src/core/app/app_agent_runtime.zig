@@ -1249,57 +1249,13 @@ pub fn Runtime(comptime App: type) type {
 
                 if (!admittedTool(run, "vision")) config.provider_capabilities.vision_fallback = false;
             }
-            if (comptime runtime_profile.allows(App, .mcp) and @hasField(App, "mcp") and @hasDecl(@FieldType(App, "mcp"), "snapshotAlwaysLoadedTools")) {
-                if (childRun(agent) == null) {
-                    config.initial_dynamic_tools = withAlwaysLoadedMcpTools(app, agent, child_tools.allocator(), config.initial_dynamic_tools, config.context_limits);
-                }
+            if (comptime runtime_profile.allows(App, .mcp) and @hasField(App, "mcp") and @hasDecl(@FieldType(App, "mcp"), "prepareAlwaysLoadedServers")) {
+                if (childRun(agent) == null) app.mcp.prepareAlwaysLoadedServers(&agent.worker.worker_cancel_requested) catch |err| {
+                    debug_trace.logf("mcp", "always-loaded MCP servers not prepared for this turn err={s}", .{@errorName(err)});
+                };
             }
             const process_result = agent_runtime.processAgentPrompt(&agent.session.agent, &deps, semantic_presentation, lifecycleContext(app, agent), config, job);
             try process_result;
-        }
-
-        fn withAlwaysLoadedMcpTools(
-            app: *App,
-            agent: *AppAgent,
-            arena: Allocator,
-            base: []const agent_stream_provider.DynamicFunctionTool,
-            limits: @import("../config/context_limits.zig").Values,
-        ) []const agent_stream_provider.DynamicFunctionTool {
-            var access: tool_mcp_runtime.Access = .unrestricted;
-            if (comptime agents.hasAgentField(App, "profile") and agents.hasAgentField(App, "role")) {
-                if (agent.role == .instance and profiles.setsMcpServers(&agent.profile.profile)) {
-                    access = .{ .servers = .{ .context = @ptrCast(&agent.profile.profile), .allows_fn = profileAllowsMcpServer } };
-                }
-            }
-            const loaded = (app.mcp.snapshotAlwaysLoadedTools(
-                arena,
-                app.permission_engine.rules,
-                limits,
-                access,
-                &agent.worker.worker_cancel_requested,
-            ) catch |err| {
-                debug_trace.logf("mcp", "top-level MCP tools not loaded for this turn err={s}", .{@errorName(err)});
-                return base;
-            }) orelse return base;
-            if (loaded.notice) |notice| {
-                var claimed: std.Io.Writer.Allocating = .init(std.heap.c_allocator);
-                defer claimed.deinit();
-                appendClaimedContextNotice(agent, &claimed.writer, notice) catch {};
-                if (claimed.written().len > 0) {
-                    app_worker_runtime.Runtime(App).pushSemanticNotice(app, agent, .{
-                        .topic = "context",
-                        .tone = .warning,
-                        .body = claimed.written(),
-                        .visibility = .full_only,
-                    }) catch {};
-                }
-            }
-            const tools = gateway_step.withSelectedDynamicTools(arena, base, loaded.tools) catch |err| {
-                debug_trace.logf("mcp", "top-level MCP tools not advertised for this turn err={s}", .{@errorName(err)});
-                return base;
-            };
-            debug_trace.logf("mcp", "advertised top-level MCP tools count={d}", .{loaded.tools.len});
-            return tools;
         }
 
         fn cacheWarmerFor(app: *App, agent: *AppAgent) ?*@import("../agent/runtime/cache_warmer.zig").Warmer {

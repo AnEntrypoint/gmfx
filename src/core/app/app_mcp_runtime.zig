@@ -1209,19 +1209,11 @@ pub const State = struct {
         return .unavailable;
     }
 
-    pub fn snapshotAlwaysLoadedTools(
-        self: *State,
-        alloc: Allocator,
-        permission_rules: types.PermissionRuleSet,
-        limits: context_limits.Values,
-        access: tool_mcp_runtime.Access,
-        cancel_flag: ?*std.atomic.Value(bool),
-    ) !?selected_schema.AlwaysLoadedTools {
+    pub fn prepareAlwaysLoadedServers(self: *State, cancel_flag: ?*std.atomic.Value(bool)) !void {
         if (self.leaseHost()) |l| {
             defer l.deinit();
-            return try l.host.catalog.snapshotAlwaysLoadedTools(alloc, permission_rules, limits, access, cancel_flag);
+            try l.host.catalog.prepareAlwaysLoadedServers(cancel_flag);
         }
-        return null;
     }
 
     pub fn snapshotToolNames(

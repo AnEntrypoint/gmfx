@@ -538,6 +538,29 @@ test "a verb outside the agent's allowed tools is refused by name before dispatc
     }
 }
 
+test "every model-visible builtin is a verb of the catalog, vision and Agent included" {
+    const builtin_tools = @import("../../builtins/tools.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const ctx: tool_dispatch.DispatchContext = .{
+        .allocator = alloc,
+        .execution_authority = .ordinary,
+        .workspace_root = ".",
+        .permission_mode = .yolo,
+    };
+    const catalog = try buildCatalog(alloc, ctx, builtin_tools.registry_with_tower, false);
+    for (builtin_tools.advertisement_set.order) |name| {
+        if (std.mem.eql(u8, name, tool_name)) continue;
+        const tool = builtin_tools.registry_with_tower.lookup(name) orelse continue;
+        if (!tool.model_visible) continue;
+        const needle = try std.fmt.allocPrint(alloc, "\"name\":\"{s}\"", .{name});
+        try std.testing.expect(std.mem.indexOf(u8, catalog, needle) != null);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, catalog, "\"name\":\"vision\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog, "\"name\":\"Agent\"") != null);
+}
+
 test "run_code refuses an argument it does not take by name" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

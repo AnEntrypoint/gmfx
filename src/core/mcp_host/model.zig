@@ -320,32 +320,10 @@ pub const Catalog = struct {
         return projection;
     }
 
-    pub fn snapshotAlwaysLoadedTools(
-        c: *Catalog,
-        alloc: Allocator,
-        permission_rules: types.PermissionRuleSet,
-        limits: context_limits.Values,
-        access: Access,
-        cancel: Cancel,
-    ) !selected_schema.AlwaysLoadedTools {
+    pub fn prepareAlwaysLoadedServers(c: *Catalog, cancel: Cancel) !void {
         const servers = c.currentServers();
         for (servers) |s| if (s.always_loaded) c.runtime.prepare(s.name) catch {};
         for (servers) |s| if (s.always_loaded) try c.refresh(s.name, cancel);
-        var loaded: selected_schema.AlwaysLoaded = .init(limits);
-        errdefer loaded.deinit(alloc);
-        c.mutex.lockUncancelable(c.io);
-        defer c.mutex.unlock(c.io);
-        for (c.servers, c.lists, 0..) |s, l, i| {
-            if (!s.always_loaded or !l.offersTools()) continue;
-            const instructions = try c.runtime.instructions(alloc, s.name);
-            defer if (instructions) |text| alloc.free(text);
-            for (l.tools) |*tool| {
-                if (permissions.rulesDenyAllTargetsForPermission(permission_rules, tool.prefixed_name)) continue;
-                if (!c.allowsLocked(access, i, tool.prefixed_name)) continue;
-                try loaded.add(alloc, tool.*, instructions, c.bindingLocked(i, tool.*), limits);
-            }
-        }
-        return loaded.finish(alloc);
     }
 
     pub fn snapshotToolDefinition(

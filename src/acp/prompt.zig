@@ -1100,9 +1100,7 @@ pub fn handlePrompt(
 
     session.context_used.store(0, .release);
     const deps = agentRuntimeDeps(&ctx);
-    var dynamic_tool_arena = std.heap.ArenaAllocator.init(alloc);
-    defer dynamic_tool_arena.deinit();
-    const initial_dynamic_tools = try initialDynamicTools(&ctx, dynamic_tool_arena.allocator());
+    const initial_dynamic_tools = try initialDynamicTools(&ctx);
     var agent_config = buildAgentConfig(state, session, .{
         .skill_catalog = .{ .skills = skill_catalog.items, .diagnostics = skill_catalog.diagnostics },
         .host_instructions = host_instructions,
@@ -1264,7 +1262,7 @@ pub fn runSubagentChild(
         .{
             .permission_mode = admission.permission_mode,
             .permission_rules = admission.rules,
-            .subagent_available = true,
+            .subagent_available = state.subagent_host != null,
         },
     ) catch return error.OutOfMemory;
     defer child_projection.deinit(alloc);
@@ -1310,30 +1308,12 @@ fn refreshProjectContext(
     };
 }
 
-fn initialDynamicTools(
-    ctx: *AcpContext,
-    arena: Allocator,
-) ![]const agent_stream_provider.DynamicFunctionTool {
+fn initialDynamicTools(ctx: *AcpContext) ![]const agent_stream_provider.DynamicFunctionTool {
     const host_tools = ctx.state.host_tools.dynamic_tools;
     if (comptime host_target.is_wasm) return host_tools;
     const session = if (ctx.state.active_session) |*active| active else return host_tools;
-    const loaded = if (session.mcp_host) |h| try h.catalog.snapshotAlwaysLoadedTools(
-        arena,
-        session.permission_rules,
-        ctx.state.context_limits,
-        .unrestricted,
-        &session.cancel_flag,
-    ) else return host_tools;
-    if (loaded.notice) |notice| try pushContextNotice(@ptrCast(ctx), notice);
-    if (loaded.tools.len == 0) return host_tools;
-    var tools: std.ArrayList(agent_stream_provider.DynamicFunctionTool) = .empty;
-    try tools.ensureTotalCapacity(arena, host_tools.len + loaded.tools.len);
-    tools.appendSliceAssumeCapacity(host_tools);
-    for (loaded.tools) |selected| {
-        try runtime_gateway_step.recordSelectedDynamicTool(arena, &tools, selected);
-    }
-    debug_trace.logf("mcp", "advertised always-loaded MCP tools count={d}", .{loaded.tools.len});
-    return tools.items;
+    if (session.mcp_host) |h| try h.catalog.prepareAlwaysLoadedServers(&session.cancel_flag);
+    return host_tools;
 }
 
 const AgentConfigSections = struct {
