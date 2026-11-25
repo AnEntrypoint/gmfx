@@ -3564,6 +3564,58 @@ test "a PreToolUse hook matching write_file refuses the write inside run_code as
     try expectContains(result.model_output, "inner writes are blocked here");
 }
 
+test "auto mode applies a configured deny rule to an inner write and asks no one" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    var rules = [_]types.PermissionRule{.{ .permission = @constCast("write_file"), .pattern = @constCast("*"), .action = .deny }};
+    var rt = TestRuntime{ .workspace_root = root, .tool_registry = test_builtin_tools.registry_with_tower, .permission_mode = .auto, .permission_rules = .{ .rules = &rules } };
+    defer rt.deinit(alloc);
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    var prompts = InnerVerbPrompts{};
+    var ctx = rt.context();
+    ctx.permission_prompter = .{ .context = &prompts, .request_fn = InnerVerbPrompts.deny };
+    const result = try executeToolCall(ctx, arena.allocator(), inner_write_call);
+    try expectContains(result.model_output, "refused: ");
+    try std.testing.expectEqual(@as(usize, 0), prompts.count);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io_mod.getIo(), "out.txt", .{}));
+}
+
+const InnerPostToolUseCounter = struct {
+    seen: usize = 0,
+
+    fn run(raw: *anyopaque, input: hooks.ObservationInput) hooks.HandlerError!void {
+        const self: *InnerPostToolUseCounter = @ptrCast(@alignCast(raw));
+        if (input.event != .PostToolUse) return;
+        if (!std.mem.eql(u8, input.matcher_value, "write_file")) return;
+        self.seen += 1;
+    }
+};
+
+test "PostToolUse fires once for each inner verb a run_code body calls" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    var rt = TestRuntime{ .workspace_root = root, .tool_registry = test_builtin_tools.registry_with_tower, .permission_mode = .yolo };
+    defer rt.deinit(alloc);
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    var counter = InnerPostToolUseCounter{};
+    var hook_runtime = hooks.Runtime.init(alloc);
+    defer hook_runtime.deinit();
+    try hook_runtime.registerObservation(.{ .name = "count-inner-post", .ctx = &counter, .run = InnerPostToolUseCounter.run });
+    var ctx = rt.context();
+    ctx.lifecycle_view = hook_runtime.freeze();
+    const result = try executeToolCall(ctx, arena.allocator(), inner_write_call);
+    try expectContains(result.model_output, "wrote");
+    try std.testing.expectEqual(@as(usize, 1), counter.seen);
+}
+
 test "file mutation verbs inside run_code write and edit the file on disk" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});

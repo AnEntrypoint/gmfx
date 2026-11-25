@@ -5861,3 +5861,10 @@ Push: not pushed. Phase B (peer-rules.md) runs every listed witness before a pus
   - ACP test area (-Dtest-area=acp, debug, self-hosted): 13 of 13 steps, 259 of 259 tests passed, rc 0, 75.6 s, 940 MB. The acp. area includes the ACP projection witness at src/acp/prompt.zig (the test asserting the advertised tool list is run_code alone). No red.
   - Subagent e2e (tests/e2e/superagent-view.test.ts, FX_E2E_BIN from the Stage 1 build): 2 pass, 0 fail, rc 0, 3 s. Its test "the owner's first request offers run_code alone" asserts the advertised list is ["run_code"]. No red.
   - Stage 1 witnesses are now all recorded: request carries exactly run_code (main agent, MCP session, subagent, ACP); every former tool and vision are verbs; a denied verb is refused; red check seen red.
+
+### Stage 2 item 1 witnessed (2026-11-25, window fx-stage2-w4b, gate PID 2904, 09:30:17 to 09:32:05 UTC)
+- Green: -Dtest-area=tooling, 583 of 583 tests passed, 13 of 13 steps. Includes the two new witnesses in src/core/tooling/tool_runtime.zig: "auto mode applies a configured deny rule to an inner write and asks no one" (no prompt, file not written) and "PostToolUse fires once for each inner verb a run_code body calls".
+- Red, rules: reviewedPermissionOutcome with its configured rules dropped. The auto-mode deny-rule witness failed (582 of 583, rc 1). Restored, cmp matched.
+- Red, PostToolUse: finishInnerCall returned before its observation. The PostToolUse witness failed (582 of 583, rc 1). Restored, cmp matched.
+- Evidence: /workspace/tmp/fx/stage2/w4_green.out, w4_red_rules.out, w4_red_post.out, results_w4.jsonl, w4b.out.
+- Items 2 to 4 of Stage 2 (settle compaction, journal inner calls, background after timeout) remain open.
