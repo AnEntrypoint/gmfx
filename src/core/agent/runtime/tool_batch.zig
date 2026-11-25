@@ -323,19 +323,13 @@ pub fn processCommittedFileResult(
     committed_file_tool_name: []u8,
     status_started: bool,
     display_target: ?[]const u8,
-    is_file_mutation: bool,
     turn_id: u64,
     advertised_dynamic_tool_names: []const []const u8,
     step_ctx: TraceContext,
 ) !void {
-    if (!is_file_mutation) {
-        return error.InvalidCommittedFileExecutionResult;
-    }
     const handoff = execution.committed_file_handoff orelse unreachable;
     const committed_contract_degraded =
         execution.status != .success or
-        !execution.tool_result_memory_prepared or
-        execution.tool_result_memory == null or
         execution.diff_entry != null or
         execution.finish_turn;
     if (committed_contract_degraded) {
@@ -343,13 +337,11 @@ pub fn processCommittedFileResult(
             "tool",
             "committed_result_contract_degraded",
             step_ctx,
-            "call_id={s} name={s} status={s} memory={s} diff={s} finish_turn={s}",
+            "call_id={s} name={s} status={s} diff={s} finish_turn={s}",
             .{
                 tool_call.id,
                 tool_call.name,
                 @tagName(execution.status),
-                if (execution.tool_result_memory_prepared and
-                    execution.tool_result_memory != null) "true" else "false",
                 if (execution.diff_entry != null) "true" else "false",
                 if (execution.finish_turn) "true" else "false",
             },

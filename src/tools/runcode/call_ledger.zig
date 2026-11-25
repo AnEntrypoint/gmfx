@@ -5,6 +5,7 @@ const result_store = @import("../../core/session/result_store.zig");
 pub const max_entries = 50;
 pub const max_inline_output_bytes = 8 * 1024;
 const max_args_bytes = 120;
+const required_inline_verbs = [_][]const u8{"Skill"};
 const max_whole_value_bytes = 4096;
 
 const Entry = struct {
@@ -101,7 +102,7 @@ pub const Ledger = struct {
         }
         const arena = self.arena.allocator();
         const outcome = try replyOutcome(alloc, arena, invoked.reply);
-        const saved = try self.saveOutput(alloc, arena, name, invoked);
+        const saved = try self.saveOutput(alloc, arena, name, args_json, invoked);
         if (saved.handle) |handle| {
             if (saved.output == null) try self.recordSubstitution(alloc, arena, invoked.reply, handle);
         }
@@ -125,10 +126,10 @@ pub const Ledger = struct {
         bytes: ?usize = null,
     };
 
-    fn saveOutput(self: *Ledger, alloc: std.mem.Allocator, arena: std.mem.Allocator, name: []const u8, invoked: Invoked) !Saved {
+    fn saveOutput(self: *Ledger, alloc: std.mem.Allocator, arena: std.mem.Allocator, name: []const u8, args_json: []const u8, invoked: Invoked) !Saved {
         if (invoked.output_handle) |handle| return .{ .handle = try arena.dupe(u8, handle), .bytes = invoked.output_bytes };
         const text = invoked.output orelse return .{};
-        if (text.len <= max_inline_output_bytes) return .{ .output = try arena.dupe(u8, text) };
+        if (text.len <= max_inline_output_bytes or isRequiredInline(name, args_json)) return .{ .output = try arena.dupe(u8, text) };
         const store = self.store orelse return .{};
         const handle = (try store.write(store.context, alloc, name, text)) orelse return .{};
         defer alloc.free(handle);
@@ -369,6 +370,11 @@ test "resolveOutput returns inline output without reading and reads a pointer wi
     try std.testing.expectEqual(@as(usize, 1), reader.calls);
     try std.testing.expect((try resolveOutput(alloc, null, null, null, source)) == null);
     try std.testing.expectEqual(@as(usize, 1), reader.calls);
+}
+
+fn isRequiredInline(name: []const u8, args_json: []const u8) bool {
+    for (required_inline_verbs) |verb| if (std.mem.eql(u8, verb, name)) return true;
+    return std.mem.eql(u8, name, "read_file") and std.mem.indexOf(u8, args_json, "/skills/") != null;
 }
 
 fn testInvoke(_: *anyopaque, alloc: std.mem.Allocator, name: []const u8, _: []const u8) anyerror!Invoked {

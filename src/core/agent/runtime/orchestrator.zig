@@ -2869,20 +2869,46 @@ fn innerCallPermissionOutcome(raw: *anyopaque, arena: Allocator, call: ToolCall)
     var review = state.review_context;
     review.target_call_id = call.id;
     review.pending_assistant = .{ .role = .assistant, .tool_calls = try arena.dupe(ToolCall, &.{call}) };
-    const outcome = try runtime_tool_admission.requestToolPermissionTraced(
-        state.deps,
-        arena,
-        call,
-        review,
-        state.mode,
-        if (state.local_grants) |local| local.items else state.grants,
-        state.live_authority,
-        null,
-        state.advertised_dynamic_tool_names,
-        state.advertised_dynamic_tools,
-        state.config.workspace_root,
-        state.step_ctx,
-    );
+    var prepared_mutation: ?tooling_tool_admission.PreparedFileMutationCall = null;
+    defer if (prepared_mutation) |*prepared| prepared.deinit(arena);
+    switch (try tooling_tool_admission.prepareFileMutationCall(arena, call, .{
+        .tool_registry = state.deps.tool_registry,
+        .workspace_root = state.config.workspace_root,
+        .access_scope = state.config.access_scope,
+    })) {
+        .prepared => |prepared| prepared_mutation = prepared,
+        .tool_failure, .not_file_mutation => {},
+    }
+    const grants = if (state.local_grants) |local| local.items else state.grants;
+    const outcome = if (prepared_mutation) |*prepared|
+        try runtime_tool_admission.requestPreparedFileMutationPermissionTraced(
+            state.deps,
+            arena,
+            call,
+            prepared,
+            review,
+            state.mode,
+            grants,
+            state.live_authority,
+            state.advertised_dynamic_tool_names,
+            state.config.workspace_root,
+            state.step_ctx,
+        )
+    else
+        try runtime_tool_admission.requestToolPermissionTraced(
+            state.deps,
+            arena,
+            call,
+            review,
+            state.mode,
+            grants,
+            state.live_authority,
+            null,
+            state.advertised_dynamic_tool_names,
+            state.advertised_dynamic_tools,
+            state.config.workspace_root,
+            state.step_ctx,
+        );
     try retainInnerSessionGrants(state, arena, call, outcome);
     if (outcome.feedback) |text| {
         if (!outcome.decision.isDenied() and outcome.tool_failure == null) try state.feedback.append(state.grant_arena, try state.grant_arena.dupe(u8, text));
@@ -12332,6 +12358,7 @@ fn processQueuedPromptLoop(
             }
 
             if (execution.committed_file_handoff != null) {
+                const committed_file_name = committed_file_tool_name orelse try runtime_tool_batch.reserveCommittedFileBookkeeping(arena, &within_turn_suffix, &completed_tool_names, tool_call.name);
                 var prepared = try runtime_execution_memory.prepareToolModelOutput(
                     arena,
                     config,
@@ -12355,10 +12382,9 @@ fn processQueuedPromptLoop(
                     execution,
                     prepared.model_output,
                     prepared.memory,
-                    committed_file_tool_name.?,
+                    committed_file_name,
                     status_started,
                     file_display_path,
-                    is_file_mutation,
                     turn_id,
                     advertised_dynamic_tool_names,
                     step_ctx,
