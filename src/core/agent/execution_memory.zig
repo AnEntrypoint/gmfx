@@ -560,6 +560,7 @@ pub fn dupeUnchangedProviderReplay(
     source_calls: []const ToolCall,
     stored_calls: []const ToolCall,
 ) !?types.ProviderReplay {
+    debug_trace.logf("context_compaction", "step_replay input={s} source_calls={d} stored_calls={d}", .{ if (replay != null) "yes" else "no", source_calls.len, stored_calls.len });
     const value = replay orelse return null;
     var unchanged = std.mem.eql(u8, source_text orelse "", stored_text orelse "") and source_calls.len == stored_calls.len;
     if (unchanged) for (source_calls, stored_calls) |source, stored| {
