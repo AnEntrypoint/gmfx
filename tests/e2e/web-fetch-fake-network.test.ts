@@ -390,6 +390,28 @@ describe("FetchURL Gateway fixture", () => {
   );
 
   test(
+    "diagnostic: the ask path catalog names the run_code verbs",
+    async () => {
+      const root = createIsolatedRoot();
+      const gateway = startFakeGateway([
+        outerToolCalls([{ id: "catalog_probe_1", name: "run_code", input: { body: "return gm.verbs({ names: true });" } }]),
+        outerText("probe done"),
+      ]);
+      try {
+        await runFx(
+          ["ask", "--auto", "--json", "--no-save", "List the verbs."],
+          { cwd: root.workspace, env: fakeGatewayEnv(root, gateway), timeoutMs: TIMEOUT },
+        );
+        Bun.write(`${process.env.FX_E2E_TRACE_DIR ?? "/workspace/tmp/fx/tmp"}/catalog.json`, gateway.requests[1]?.body ?? "NO SECOND REQUEST");
+      } finally {
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
     "default policy validates malformed FetchURL before transport",
     async () => {
       const root = createIsolatedRoot();
