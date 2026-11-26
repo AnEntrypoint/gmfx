@@ -1449,7 +1449,7 @@ describe("Vision route fake Gateway", () => {
         const firstJson = parseFxJson(first);
         expect(firstJson.session_id.length).toBeGreaterThan(0);
         expect(firstJson.output).toContain("Gemini recovered after rejected Vision");
-        expect(firstJson.tool_calls).toContainEqual({ name: "vision", status: "error" });
+        expect(firstJson.tool_calls).toContainEqual({ name: "run_code", status: "error" });
         expect(first.stderr).not.toContain("Inspecting images");
         expect(first.stderr).not.toContain("Vision is unavailable right now");
         expect(gateway.chatRequests).toHaveLength(2);

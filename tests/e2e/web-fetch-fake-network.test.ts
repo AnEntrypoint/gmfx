@@ -410,6 +410,7 @@ describe("FetchURL Gateway fixture", () => {
         const json = parseFxJson(result);
         expect(json.tool_calls).toContainEqual({ name: "run_code", status: "error" });
         expect(gateway.requests).toHaveLength(2);
+        if (!gateway.requests[1].body.includes("FetchURL does not take argument")) Bun.write(`${process.env.FX_E2E_TRACE_DIR ?? "/workspace/tmp/fx/tmp"}/web-fetch-missing.json`, gateway.requests[1].body);
         expect(gateway.requests[1].body).toContain("FetchURL does not take argument");
         expect(gateway.requests[1].body).toContain("prompt");
         expect(gateway.requests[1].body).toContain("accepted fields: url, timeout, query, regex");
@@ -443,6 +444,7 @@ describe("FetchURL Gateway fixture", () => {
 
         expect(result.code).toBe(0);
         expect(gateway.requests).toHaveLength(2);
+        if (!gateway.requests[1].body.includes("FetchURL does not take argument")) Bun.write(`${process.env.FX_E2E_TRACE_DIR ?? "/workspace/tmp/fx/tmp"}/web-fetch-missing.json`, gateway.requests[1].body);
         expect(gateway.requests[1].body).toContain("FetchURL does not take argument");
         expect(gateway.requests[1].body).toContain("prompt");
         expect(gateway.requests[1].body).toContain("accepted fields: url, timeout, query, regex");
@@ -515,6 +517,7 @@ describe("FetchURL Gateway fixture", () => {
 
         parseFxJson(result);
         expect(gateway.requests).toHaveLength(2);
+        if (!gateway.requests[1].body.includes("FetchURL does not take argument")) Bun.write(`${process.env.FX_E2E_TRACE_DIR ?? "/workspace/tmp/fx/tmp"}/web-fetch-missing.json`, gateway.requests[1].body);
         expect(gateway.requests[1].body).toContain("FetchURL does not take argument");
         expect(gateway.requests[1].body).toContain("prompt");
         expect(gateway.requests[1].body).toContain("accepted fields: url, timeout, query, regex");
