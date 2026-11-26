@@ -554,7 +554,12 @@ fn runCodeLine(alloc: Allocator, tool: PendingTool) Allocator.Error![]const u8 {
         try line.appendSlice(alloc, " (no result)");
         return line.items;
     };
-    if (try innerVerbList(alloc, result.output)) |verbs| try line.print(alloc, " {s}", .{verbs});
+    if (try innerVerbList(alloc, result.output)) |verbs| {
+        try line.print(alloc, " {s}", .{verbs});
+    } else if (result.failed) {
+        try line.appendSlice(alloc, " ");
+        try appendClipped(alloc, &line, result.output);
+    }
     try line.appendSlice(alloc, " (");
     if (result.failed) try line.appendSlice(alloc, "failed, ");
     try line.print(alloc, "{d} bytes)", .{result.output.len});
@@ -2332,6 +2337,24 @@ fn appendClipped(alloc: Allocator, list: *std.ArrayList(u8), text: []const u8) A
     while (end > 0 and end < text.len and (text[end] & 0xC0) == 0x80) end -= 1;
     for (text[0..end]) |byte| try list.append(alloc, if (byte == '\n') ' ' else byte);
     if (end < text.len) try list.appendSlice(alloc, "...");
+}
+
+test "a failed run_code with plain text output keeps the text in its summary line" {
+    const arguments = "{\"body\":\"gm.wait({})\"}";
+    const turns = [_]Turn{.{ .user = "Wait.", .items = &.{
+        .{ .tool_call = .{ .id = "call-1", .name = "run_code", .arguments = arguments } },
+        .{ .tool_result = .{ .call_id = "call-1", .name = "run_code", .output = "aborted by user", .failed = true } },
+        .{ .assistant = "Stopped." },
+    } }};
+    var model = FakeModel{};
+    defer model.deinit();
+    var store = MemoryStore{ .alloc = testing.allocator };
+    defer store.deinit();
+
+    var result = try compact(testing.allocator, .{ .model = "m", .turns = &turns }, model.model(), store.store());
+    defer result.deinit();
+
+    try testing.expectEqualStrings("run_code aborted by user (failed, 15 bytes)", result.compacted.turns[0].tools[0].line);
 }
 
 test "a run_code summary keeps a failed inner call's output such as a cancellation notice, and no successful body" {
