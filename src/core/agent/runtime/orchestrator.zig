@@ -13097,7 +13097,15 @@ fn newestFoldedReplay(history: []const HistoryTurn, folded: usize) ?types.Provid
     while (index > 0) {
         index -= 1;
         switch (history[index]) {
-            .assistant => |entry| return entry.provider_replay,
+            .assistant => |entry| {
+                if (entry.provider_replay) |replay| return replay;
+                var step_index = entry.execution.tool_steps.len;
+                while (step_index > 0) {
+                    step_index -= 1;
+                    if (entry.execution.tool_steps[step_index].provider_replay) |replay| return replay;
+                }
+                return null;
+            },
             else => {},
         }
     }
