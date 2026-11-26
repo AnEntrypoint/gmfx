@@ -8377,6 +8377,7 @@ fn processQueuedPromptLoop(
                         trace_count_after_compaction = true;
                         active_compaction_history_tail = retained_messages.items;
                         const next_history = try arena.alloc(HistoryTurn, outcome.retained_history.len + 1);
+                        debug_trace.logf("context_compaction", "reasoning_replay folded={d} history={d} found={s}", .{ outcome.cut.turns, compaction_history.len, if (newestFoldedReplay(compaction_history, outcome.cut.turns) != null) "yes" else "no" });
                         var checkpoint = outcome.checkpoint;
                         checkpoint.reasoning_replay = if (newestFoldedReplay(compaction_history, outcome.cut.turns)) |replay| try types.dupeProviderReplay(arena, replay) else null;
                         next_history[0] = .{ .compacted_summary = checkpoint };
