@@ -3209,6 +3209,7 @@ const GatewayReplayBuilder = struct {
     }
 
     fn finish(self: *GatewayReplayBuilder, content: []const u8, calls: []const types.ToolCall) !?[]u8 {
+        debug_trace.logf("context_compaction", "gateway_replay finish needed={s} parts={d} calls={d}", .{ if (self.needed) "yes" else "no", self.parts.items.len, calls.len });
         if (!self.needed) return null;
         var out: std.Io.Writer.Allocating = .init(self.alloc);
         errdefer out.deinit();
