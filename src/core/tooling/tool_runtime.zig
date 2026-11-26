@@ -1093,6 +1093,9 @@ const InnerCallGateState = struct {
 
 fn startInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool_dispatch.InnerCallStart {
     const state: *InnerCallGateState = @ptrCast(@alignCast(raw));
+    if (providerDisablesTool(state.runtime.provider_capabilities, call.name)) {
+        return .{ .refuse = try arena.dupe(u8, "Unsupported tool: vision") };
+    }
     const prepared = try runtime_lifecycle.prepareToolCallForLifecycle(arena, state.lifecycle(arena), state.runtime.cancel_flag, state.turnId(), 0, call);
     return switch (prepared) {
         .blocked => |blocked| .{ .refuse = blocked.model_output orelse try arena.print("A PreToolUse hook refused {s}.", .{call.name}) },
