@@ -20,6 +20,7 @@ const io_mod = @import("../shared/io.zig");
 const tool_contracts = @import("../agent/runtime/tool_contracts.zig");
 const result_commit = @import("result_commit.zig");
 const vision_executor = @import("../agent/runtime/vision_executor.zig");
+const vision_contracts = @import("../agent/runtime/vision_contracts.zig");
 const change_tracker = @import("../workspace/change_tracker.zig");
 const diff_mod = @import("../output/diff.zig");
 const file_mutation = @import("file_mutation.zig");
@@ -235,6 +236,7 @@ pub const Context = struct {
     nested_tool_lifecycle: ?ToolLifecyclePublisher = null,
     subagent_status_renderer: ?types.SubagentStatusRenderer = null,
     advertised_dynamic_tool_names: []const []const u8 = &.{},
+    vision_unavailable: bool = false,
     permission_reviewer_provider: ?permission_auto_classifier.Provider = null,
     auto_classifier: permission_auto_classifier.Classifier =
         permission_auto_classifier.Classifier.disabled(),
@@ -427,6 +429,7 @@ pub fn executeToolCallAuthorized(
     execution_ctx.skill_locations = request.skill_locations orelse ctx.skill_locations;
     execution_ctx.inner_context = request.inner_context;
     execution_ctx.inner_permission = request.inner_permission;
+    execution_ctx.vision_unavailable = request.vision_unavailable;
     if (request.permission_mode) |permission_mode| {
         execution_ctx.permission_mode = permission_mode;
     }
@@ -1093,8 +1096,8 @@ const InnerCallGateState = struct {
 
 fn startInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool_dispatch.InnerCallStart {
     const state: *InnerCallGateState = @ptrCast(@alignCast(raw));
-    if (providerDisablesTool(state.runtime.provider_capabilities, call.name)) {
-        return .{ .refuse = try arena.dupe(u8, "Unsupported tool: vision") };
+    if (state.runtime.vision_unavailable and std.mem.eql(u8, call.name, "vision")) {
+        return .{ .refuse = try arena.dupe(u8, vision_contracts.native_route_unavailable_message) };
     }
     const prepared = try runtime_lifecycle.prepareToolCallForLifecycle(arena, state.lifecycle(arena), state.runtime.cancel_flag, state.turnId(), 0, call);
     return switch (prepared) {

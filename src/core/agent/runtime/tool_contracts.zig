@@ -159,6 +159,7 @@ pub const ToolExecutionRequest = struct {
     authority: command_admission.ToolExecutionAuthority,
     credential: types.CredentialLease = .{ .direct = .{} },
     permission_mode: ?types.PermissionMode = null,
+    vision_unavailable: bool = false,
     root_user_intent_context: []const u8 = "",
     root_user_messages: []const []const u8 = &.{},
     root_user_evidence_complete: bool = false,

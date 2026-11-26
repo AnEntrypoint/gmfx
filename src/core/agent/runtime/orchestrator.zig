@@ -12200,6 +12200,7 @@ fn processQueuedPromptLoop(
             var execution = deps.executeToolCall(.{
                 .inner_context = if (inner_context_state) |*state| state.gather() else null,
                 .inner_permission = inner_permission_state.source(),
+                .vision_unavailable = successful_vision_mode == .unavailable,
                 .skill_locations = if (skills.catalog) |catalog| &catalog.locations else null,
                 .call_allocator = call_allocator,
                 .result_allocator = arena,
