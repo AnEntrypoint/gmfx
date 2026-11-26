@@ -576,6 +576,11 @@ function advertisedSkillPaths(body: string, name: string): string[] {
   });
 }
 
+function dumpedSse(name: string, events: unknown[]) {
+  if (process.env.FX_E2E_TRACE_DIR) writeFileSync(join(process.env.FX_E2E_TRACE_DIR, "sse-" + name + ".json"), JSON.stringify(events, null, 1));
+  return fakeGatewaySse(events as Parameters<typeof fakeGatewaySse>[0]);
+}
+
 function dumpRequest(body: string, name: string): void {
   if (process.env.FX_E2E_TRACE_DIR) writeFileSync(join(process.env.FX_E2E_TRACE_DIR, `${name}.json`), body);
 }
@@ -6715,7 +6720,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
               expect(page).toContain(token);
               expect(page).toContain("<tool_result_preview");
               expect(page).not.toContain(tail);
-              return fakeGatewaySse([
+              return dumpedSse("retained-reasoning", [
                 { type: "reasoning-start", id: "retained_reasoning" },
                 { type: "reasoning-end", id: "retained_reasoning", providerMetadata: { openai: { reasoningEncryptedContent: replaySignature } } },
                 { type: "tool-call", toolCallId: "retrieval-follow-up", toolName: "run_code", input: verbBody("read_file", { path: "small.txt" }) },
