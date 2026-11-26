@@ -6488,3 +6488,25 @@ test "ultrafast durable preference requires a bool when present" {
         try std.testing.expect(err == error.InvalidSessionFormat or err == error.InvalidDurableField);
     }
 }
+
+test "a provider replay round-trips a configured provider's authority and model" {
+    const alloc = std.testing.allocator;
+    var provider: model_provider.ProviderId = .{ .configured = .{ .len = 4, .binding = @splat(7) } };
+    @memcpy(provider.configured.bytes[0..4], "node");
+    const replay = types.ProviderReplay{
+        .source = .{ .provider = provider, .model = "fixture/model" },
+        .parts_json = "[{\"type\":\"reasoning\"}]",
+    };
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try std.json.Stringify.value(replay, .{}, &out.writer);
+    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, out.written(), .{});
+    defer parsed.deinit();
+    const back = (try parseProviderReplay(alloc, parsed.value)).?;
+    defer types.freeProviderReplay(alloc, back);
+    const configured = back.source.provider.configured;
+    try std.testing.expectEqualStrings("node", configured.bytes[0..configured.len]);
+    try std.testing.expectEqualSlices(u8, &@as([32]u8, @splat(7)), &configured.binding.?);
+    try std.testing.expectEqualStrings("fixture/model", back.source.model);
+    try std.testing.expectEqualStrings(replay.parts_json, back.parts_json);
+}
