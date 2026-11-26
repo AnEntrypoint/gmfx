@@ -1421,7 +1421,7 @@ describe("Vision route fake Gateway", () => {
           { type: "reasoning-delta", id: "reasoning", delta: "Inspect the available evidence." },
           { type: "reasoning-end", id: "reasoning", providerMetadata: { vertex: { thoughtSignature: "retained-reasoning-signature" } } },
           ...(shape === "prose-replay" ? [{ type: "text-delta", id: "intro", delta: "I will inspect the image." }] : []),
-          { type: "tool-call", toolCallId: "native_vision", toolName: "vision", input: { image_ids: [1], focus: "inspect" }, providerMetadata: { vertex: { thoughtSignature: "removed-vision-signature" } } },
+          { type: "tool-call", toolCallId: "native_vision", toolName: "run_code", input: verbBody("vision", { image_ids: [1], focus: "inspect" }), providerMetadata: { vertex: { thoughtSignature: "removed-vision-signature" } } },
           ...(shape === "mixed-replay" ? [{ type: "tool-call", toolCallId: "retained_read", toolName: "run_code", input: verbBody("read_file", { path: "notes.txt" }), providerMetadata: { vertex: { thoughtSignature: "retained-read-signature" } } }] : []),
           { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
         ]),
@@ -1463,13 +1463,13 @@ describe("Vision route fake Gateway", () => {
           expect.objectContaining({
             type: "tool-call",
             toolCallId: "native_vision",
-            toolName: "vision",
+            toolName: "run_code",
           }),
         );
         const rejectionResult = recoveryParts.find(
           (part) => part.type === "tool-result" && part.toolCallId === "native_vision",
         );
-        expect(rejectionResult?.toolName).toBe("vision");
+        expect(rejectionResult?.toolName).toBe("run_code");
         const rejectionOutput = (rejectionResult?.output as { value?: unknown } | undefined)?.value;
         expect(typeof rejectionOutput).toBe("string");
         expect(JSON.parse(rejectionOutput as string)).toMatchObject({

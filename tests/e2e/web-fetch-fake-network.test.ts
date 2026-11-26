@@ -54,7 +54,7 @@ function outerToolCalls(calls: Array<{ id: string; name: string; input: object }
 }
 
 function outerWebFetchCall(input: object = { url: FETCH_URL }) {
-  return outerToolCalls([{ id: "fetch_outer_1", name: "FetchURL", input }]);
+  return outerToolCalls([{ id: "fetch_outer_1", name: "run_code", input: { body: "return gm.FetchURL(" + JSON.stringify(input) + ");" } }]);
 }
 
 function outerText(text: string) {
