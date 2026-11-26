@@ -1096,9 +1096,6 @@ const InnerCallGateState = struct {
 
 fn startInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!tool_dispatch.InnerCallStart {
     const state: *InnerCallGateState = @ptrCast(@alignCast(raw));
-    if (state.runtime.vision_unavailable and std.mem.eql(u8, call.name, "vision")) {
-        return .{ .refuse = try arena.dupe(u8, vision_contracts.native_route_unavailable_message) };
-    }
     const prepared = try runtime_lifecycle.prepareToolCallForLifecycle(arena, state.lifecycle(arena), state.runtime.cancel_flag, state.turnId(), 0, call);
     return switch (prepared) {
         .blocked => |blocked| .{ .refuse = blocked.model_output orelse try arena.print("A PreToolUse hook refused {s}.", .{call.name}) },
@@ -1109,6 +1106,9 @@ fn startInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!to
 
 fn authorizeInnerCall(raw: *anyopaque, arena: Allocator, call: ToolCall) anyerror!?[]const u8 {
     const state: *InnerCallGateState = @ptrCast(@alignCast(raw));
+    if (state.runtime.vision_unavailable and std.mem.eql(u8, call.name, "vision")) {
+        return vision_contracts.native_route_unavailable_message;
+    }
     return permissionDenial(arena, call.name, try reviewedPermissionOutcome(state.runtime, arena, call));
 }
 
