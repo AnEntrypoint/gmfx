@@ -3143,6 +3143,7 @@ const GatewayReplayBuilder = struct {
     }
 
     fn observe(self: *GatewayReplayBuilder, root: std.json.Value, content_offset: usize, separated: bool) !void {
+        if (root == .object) if (root.object.get("type")) |event| if (event == .string) debug_trace.logf("context_compaction", "replay_observe event={s}", .{event.string});
         const event = root.object.get("type").?.string;
         const kind: Kind = if (std.mem.startsWith(u8, event, "reasoning-"))
             .reasoning
