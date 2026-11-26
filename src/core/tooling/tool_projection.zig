@@ -562,7 +562,7 @@ fn appendBuiltinTool(
         if (tool.provider_executed and !providerExecutionIsAllowed(tool.name, options.permission_rules)) return;
         if (permissions.rulesDenyAllTargetsForTool(options.permission_rules, tool.name)) return;
     }
-    const reached_through_run_code = kind == .full and tool_set.registry.lookup("run_code") != null and !std.mem.eql(u8, tool.name, "run_code");
+    const reached_through_run_code = tool_set.registry.lookup("run_code") != null and !std.mem.eql(u8, tool.name, "run_code");
     if (!reached_through_run_code) {
         try advertised_names.append(alloc, tool.name);
         if (!tool.provider_executed and tool.write_provider_advertisement_fn == null) {
@@ -815,6 +815,17 @@ test "subagent and shell selection follow host capability" {
     try expectContainsName(available.advertised_names, "Agent");
     try expectNotContainsName(available.advertised_names, "task");
     try expectContainsName(available.advertised_names, "Bash");
+}
+
+test "a read-only build advertises run_code alone as well" {
+    var run_code = test_read_file;
+    run_code.name = "run_code";
+    run_code.model_schema = .{ .name = "run_code", .description = "Test run_code." };
+    const with_run_code = [_]tool_dispatch.Tool{ run_code, test_read_file, test_vision };
+    var projection = try buildReadOnlyModelToolProjectionForSet(std.testing.allocator, testToolSetForRegistry(&with_run_code), .{});
+    defer projection.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), projection.advertised_names.len);
+    try std.testing.expectEqualStrings("run_code", projection.advertised_names[0]);
 }
 
 test "a full build advertises run_code alone, without vision, for the main agent and a child alike" {
