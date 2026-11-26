@@ -73,10 +73,20 @@ jobs:
 
       - name: Run the unit tests on transformed code
         run: |
+          log="$RUNNER_TEMP/pgso-unit-tests.log"
+          set +e
           python3 -m scripts.pgso unit-tests \
             --llvm-bin "${{ steps.setup.outputs.llvm-bin }}" \
             --output-dir "$RUNNER_TEMP/fx-pgso-unit-tests" \
-            --target aarch64-linux
+            --target aarch64-linux > "$log" 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "pgso unit-tests exit code $status"
+            tail -n 60 "$log"
+            exit "$status"
+          fi
+          tail -n 5 "$log"
 
       - name: Install E2E dependencies
         run: bun install --frozen-lockfile
