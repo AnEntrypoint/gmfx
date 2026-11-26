@@ -6723,6 +6723,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
               ]);
             }
             case 3:
+              if (!body.includes(replaySignature)) dumpRequest(body, "signature-missing-" + trigger + "-" + String(index));
               expect(body).toContain(replaySignature);
               if (trigger === "automatic") {
                 expect(compactions).toBe(2);
@@ -6730,6 +6731,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
               }
               return fakeGatewayFinalText("RETRIEVAL_TURN_COMPLETE");
             case 4:
+              if (!body.includes(replaySignature)) dumpRequest(body, "signature-missing-" + trigger + "-" + String(index));
               expect(body).toContain(replaySignature);
               expect(body).toContain(sourceHandle);
               return fakeGatewayVerbCall("retrieval-tail", "read_tool_result", {
