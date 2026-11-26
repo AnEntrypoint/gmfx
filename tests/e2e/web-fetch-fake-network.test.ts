@@ -54,7 +54,7 @@ function outerToolCalls(calls: Array<{ id: string; name: string; input: object }
 }
 
 function outerWebFetchCall(input: object = { url: FETCH_URL }) {
-  return outerToolCalls([{ id: "fetch_outer_1", name: "run_code", input: { body: "return gm.FetchURL(" + JSON.stringify(input) + ");" } }]);
+  return outerToolCalls([{ id: "fetch_outer_1", name: "FetchURL", input }]);
 }
 
 function outerText(text: string) {
@@ -381,28 +381,6 @@ describe("FetchURL Gateway fixture", () => {
         expect(sessionEvents).toContain("FetchURL");
         expect(sessionEvents).toContain("https://user:pass@example.com/docs");
         expect(sessionEvents).not.toContain("[redacted]");
-      } finally {
-        gateway.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "diagnostic: the ask path catalog names the run_code verbs",
-    async () => {
-      const root = createIsolatedRoot();
-      const gateway = startFakeGateway([
-        outerToolCalls([{ id: "catalog_probe_1", name: "run_code", input: { body: "return gm.verbs({ names: true });" } }]),
-        outerText("probe done"),
-      ]);
-      try {
-        await runFx(
-          ["ask", "--auto", "--json", "--no-save", "List the verbs."],
-          { cwd: root.workspace, env: fakeGatewayEnv(root, gateway), timeoutMs: TIMEOUT },
-        );
-        Bun.write(`${process.env.FX_E2E_TRACE_DIR ?? "/workspace/tmp/fx/tmp"}/catalog.json`, gateway.requests[1]?.body ?? "NO SECOND REQUEST");
       } finally {
         gateway.stop();
         rmSync(root.root, { recursive: true, force: true });
