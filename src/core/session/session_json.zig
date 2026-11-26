@@ -85,6 +85,10 @@ fn writeHistoryTurnJson(writer: *std.Io.Writer, turn: session.HistoryTurn) !void
             try writer.writeAll("{\"kind\":\"compacted_summary\",\"summary\":");
             try std.json.Stringify.value(entry.summary, .{}, writer);
             try writer.print(",\"removed_turn_count\":{d},\"compaction_count\":{d}", .{ entry.removed_turn_count, entry.compaction_count });
+            if (entry.reasoning_replay) |replay| {
+                try writer.writeAll(",\"reasoning_replay\":");
+                try std.json.Stringify.value(replay, .{}, writer);
+            }
             try writer.writeByte('}');
         },
         .assistant => |entry| {
@@ -501,6 +505,7 @@ fn parseLegacyHistoryTurn(alloc: Allocator, value: std.json.Value) !session.Hist
             else
                 object.get("root_user_messages") != null or removed_turn_count == 0,
             .permission_feedback = permission_feedback,
+            .reasoning_replay = try parseReasoningReplay(alloc, object.get("reasoning_replay")),
             .permission_feedback_complete = if (object.get("permission_feedback_complete") != null)
                 try requireBool(object, "permission_feedback_complete")
             else
@@ -2139,4 +2144,11 @@ test {
     _ = @import("session_codec.zig");
     _ = @import("session_event.zig");
     _ = @import("session_projection.zig");
+}
+
+fn parseReasoningReplay(alloc: Allocator, value: ?std.json.Value) !?types.ProviderReplay {
+    const json_value = value orelse return null;
+    const parsed = std.json.parseFromValue(types.ProviderReplay, alloc, json_value, .{}) catch return error.InvalidSessionFormat;
+    defer parsed.deinit();
+    return try types.dupeProviderReplay(alloc, parsed.value);
 }

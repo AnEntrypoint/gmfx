@@ -860,13 +860,13 @@ pub fn parseHistoryTurnWithImages(
             return error.InvalidSessionFormat;
         }
         const object = if (has_feedback_completeness)
-            try exactObject(value, &.{ "kind", "summary", "removed_turn_count", "compaction_count", "root_user_messages", "root_user_messages_complete", "permission_feedback", "permission_feedback_complete" })
+            try exactObject(value, &.{ "kind", "summary", "removed_turn_count", "compaction_count", "reasoning_replay", "root_user_messages", "root_user_messages_complete", "permission_feedback", "permission_feedback_complete" })
         else if (has_completeness)
-            try exactObject(value, &.{ "kind", "summary", "removed_turn_count", "compaction_count", "root_user_messages", "root_user_messages_complete" })
+            try exactObject(value, &.{ "kind", "summary", "removed_turn_count", "compaction_count", "reasoning_replay", "root_user_messages", "root_user_messages_complete" })
         else if (has_root_user_messages)
-            try exactObject(value, &.{ "kind", "summary", "removed_turn_count", "compaction_count", "root_user_messages" })
+            try exactObject(value, &.{ "kind", "summary", "removed_turn_count", "compaction_count", "reasoning_replay", "root_user_messages" })
         else
-            try exactObject(value, &.{ "kind", "summary", "removed_turn_count", "compaction_count" });
+            try exactObject(value, &.{ "kind", "summary", "removed_turn_count", "compaction_count", "reasoning_replay" });
         const summary = try parseRequiredDurableBytes(alloc, object, "summary");
         errdefer mem_utils.free(alloc, summary);
         const root_user_messages: [][]u8 = if (has_root_user_messages)
@@ -896,6 +896,7 @@ pub fn parseHistoryTurnWithImages(
             else
                 has_root_user_messages or removed_turn_count == 0,
             .permission_feedback = permission_feedback,
+            .reasoning_replay = try parseProviderReplay(alloc, object.get("reasoning_replay") orelse .null),
             .permission_feedback_complete = if (has_feedback_completeness)
                 try requireBool(object, "permission_feedback_complete")
             else

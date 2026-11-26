@@ -2297,6 +2297,7 @@ pub const CompactedSummaryHistoryTurn = struct {
     root_user_messages_complete: bool = true,
     permission_feedback: [][]u8 = &.{},
     permission_feedback_complete: bool = true,
+    reasoning_replay: ?ProviderReplay = null,
 };
 
 pub const HistoryTurn = union(enum) {
@@ -2630,6 +2631,7 @@ pub fn freeHistoryTurn(alloc: std.mem.Allocator, turn: HistoryTurn) void {
             alloc.free(entry.summary);
             freeCompletedToolNames(alloc, entry.root_user_messages);
             freePermissionFeedback(alloc, entry.permission_feedback);
+            if (entry.reasoning_replay) |replay| freeProviderReplay(alloc, replay);
         },
         .assistant => |entry| {
             freeUserTurn(alloc, entry.user);
@@ -2677,6 +2679,7 @@ pub fn dupeHistoryTurn(alloc: std.mem.Allocator, turn: HistoryTurn) !HistoryTurn
                 alloc,
                 entry.permission_feedback,
             );
+            const reasoning_replay = if (entry.reasoning_replay) |replay| try dupeProviderReplay(alloc, replay) else null;
             break :blk .{ .compacted_summary = .{
                 .summary = summary,
                 .removed_turn_count = entry.removed_turn_count,
@@ -2685,6 +2688,7 @@ pub fn dupeHistoryTurn(alloc: std.mem.Allocator, turn: HistoryTurn) !HistoryTurn
                 .root_user_messages_complete = entry.root_user_messages_complete,
                 .permission_feedback = permission_feedback,
                 .permission_feedback_complete = entry.permission_feedback_complete,
+                .reasoning_replay = reasoning_replay,
             } };
         },
         .assistant => |entry| blk: {
