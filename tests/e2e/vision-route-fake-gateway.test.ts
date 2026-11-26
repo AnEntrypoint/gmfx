@@ -1416,7 +1416,7 @@ describe("Vision route fake Gateway", () => {
       const fixture = createScopedImageFixture(root);
       if (shape === "mixed-replay") writeFileSync(join(root.workspace, "notes.txt"), "VISION_READ_SENTINEL\n");
       const gateway = startImageGateway([
-        shape === "plain" ? sseToolCall("vision", { image_ids: [1], focus: "inspect" }, "native_vision") : fakeGatewaySse([
+        shape === "plain" ? sseToolCall("run_code", verbBody("vision", { image_ids: [1], focus: "inspect" }), "native_vision") : fakeGatewaySse([
           { type: "reasoning-start", id: "reasoning" },
           { type: "reasoning-delta", id: "reasoning", delta: "Inspect the available evidence." },
           { type: "reasoning-end", id: "reasoning", providerMetadata: { vertex: { thoughtSignature: "retained-reasoning-signature" } } },
