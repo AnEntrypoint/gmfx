@@ -8377,7 +8377,9 @@ fn processQueuedPromptLoop(
                         trace_count_after_compaction = true;
                         active_compaction_history_tail = retained_messages.items;
                         const next_history = try arena.alloc(HistoryTurn, outcome.retained_history.len + 1);
-                        next_history[0] = .{ .compacted_summary = outcome.checkpoint };
+                        var checkpoint = outcome.checkpoint;
+                        checkpoint.reasoning_replay = if (newestFoldedReplay(compaction_history, outcome.cut.turns)) |replay| try types.dupeProviderReplay(arena, replay) else null;
+                        next_history[0] = .{ .compacted_summary = checkpoint };
                         @memcpy(next_history[1..], outcome.retained_history);
                         compaction_history = next_history;
                         finalization.compacted_execution = .{
@@ -13088,4 +13090,16 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         &catalog,
     ));
     try std.testing.expectEqual(@as(usize, 0), settled_ids.items.len);
+}
+
+fn newestFoldedReplay(history: []const HistoryTurn, folded: usize) ?types.ProviderReplay {
+    var index = @min(folded, history.len);
+    while (index > 0) {
+        index -= 1;
+        switch (history[index]) {
+            .assistant => |entry| return entry.provider_replay,
+            else => {},
+        }
+    }
+    return null;
 }

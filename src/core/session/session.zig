@@ -2538,6 +2538,9 @@ fn appendHistoryRangeChatMessages(
                     .content = text,
                     .context_origin = .handoff,
                 });
+                if (entry.reasoning_replay) |replay| {
+                    try messages.append(alloc, .{ .role = .assistant, .content = "", .provider_replay = replay });
+                }
             },
             .assistant => |entry| {
                 try messages.append(alloc, .{ .role = .user, .content = resume_note orelse entry.user.text, .images = entry.user.images, .context_origin = .user_turn });
