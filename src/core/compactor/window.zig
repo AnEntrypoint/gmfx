@@ -261,6 +261,11 @@ pub fn choose(
     }
 }
 
+fn retainedNewestTurns(items: []const HistoryTurn) usize {
+    const raw = history_range.rawHistoryTurnCount(items);
+    return if (raw >= 2) raw - 1 else raw;
+}
+
 fn split(
     arena: Allocator,
     history: []const HistoryTurn,
@@ -273,7 +278,7 @@ fn split(
     try combined.appendSlice(arena, history);
     if (active) |turn| try combined.append(arena, .{ .assistant = turn });
     const recent: Recent = if (kept_tokens == 0)
-        .{ .cut = .{ .turns = history_range.rawHistoryTurnCount(combined.items) } }
+        .{ .cut = .{ .turns = retainedNewestTurns(combined.items) } }
     else
         selectRecentContext(combined.items, kept_tokens, input_capacity, route, max_kept_turns);
     var cut = recent.cut;
