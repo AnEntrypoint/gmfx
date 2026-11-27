@@ -36,7 +36,7 @@ pub const table = [_]Row{
     gap("buffer"),
     provided("child_process", "childProcess", &.{ "execFile", "execFileSync", "spawn", "spawnSync" }),
     provided("crypto", "crypto", &.{ "createHash", "randomBytes", "randomUUID" }),
-    gap("dns/promises"),
+    provided("dns/promises", "dnsPromises", &.{"lookup"}),
     provided("fs", "fs", &.{ "accessSync", "closeSync", "constants", "copyFileSync", "createReadStream", "existsSync", "lstatSync", "mkdirSync", "mkdtempSync", "openSync", "readFileSync", "readSync", "readdirSync", "readlinkSync", "realpathSync", "renameSync", "rmSync", "statSync", "symlinkSync", "unlinkSync", "unwatchFile", "watchFile", "writeFileSync", "writeSync" }),
     provided("fs/promises", "fsPromises", &.{ "access", "chmod", "constants", "cp", "link", "lstat", "mkdir", "mkdtemp", "open", "opendir", "readFile", "readdir", "realpath", "rename", "rm", "stat", "truncate", "unlink", "writeFile" }),
     gap("http"),
