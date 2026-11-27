@@ -636,11 +636,32 @@ const os = {
 
 const workerThreads = { MessageChannel: fail('worker_threads.MessageChannel'), Worker: fail('worker_threads.Worker'), parentPort: null, workerData: null }
 
-const asyncHooks = { AsyncLocalStorage: fail('async_hooks.AsyncLocalStorage') }
+class AsyncLocalStorage {
+  constructor() { this.store = undefined }
+  getStore() { return this.store }
+  run(store, callback, ...args) {
+    const previous = this.store
+    this.store = store
+    try { return callback(...args) } finally { this.store = previous }
+  }
+  exit(callback, ...args) {
+    const previous = this.store
+    this.store = undefined
+    try { return callback(...args) } finally { this.store = previous }
+  }
+  enterWith(store) { this.store = store }
+}
+
+const asyncHooks = { AsyncLocalStorage }
 
 const vm = { Script: fail('vm.Script'), createContext: fail('vm.createContext'), runInContext: fail('vm.runInContext') }
 
-const http = { createServer: fail('http.createServer'), validateHeaderValue: fail('http.validateHeaderValue') }
+const validateHeaderValue = (name, value) => {
+  if (value === undefined) throw new TypeError('Invalid value "undefined" for header "' + String(name) + '"')
+  if (/[\r\n\0]/.test(String(value))) throw new TypeError('Invalid character in header content ["' + String(name) + '"]')
+}
+
+const http = { createServer: fail('http.createServer'), validateHeaderValue }
 
 const https = { createServer: fail('https.createServer'), get: fail('https.get'), request: fail('https.request') }
 
@@ -688,7 +709,8 @@ const incompleteTail = (bytes) => {
 
 const stringDecoder = { StringDecoder }
 
-const perfHooks = { performance: fail('perf_hooks.performance') }
+const performanceClock = { now: () => Date.now() }
+const perfHooks = { performance: globalThis.performance ?? performanceClock }
 
 const timersPromises = {
   scheduler: {

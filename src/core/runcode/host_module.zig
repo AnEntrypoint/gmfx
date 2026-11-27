@@ -32,7 +32,7 @@ fn moduleSource(comptime name: []const u8, comptime exports: []const []const u8)
 }
 
 pub const table = [_]Row{
-    gap("async_hooks"),
+    provided("async_hooks", "asyncHooks", &.{"AsyncLocalStorage"}),
     provided("buffer", "buffer", &.{ "Buffer", "constants" }),
     provided("child_process", "childProcess", &.{ "execFile", "execFileSync", "spawn", "spawnSync" }),
     provided("crypto", "crypto", &.{ "createHash", "randomBytes", "randomUUID" }),
@@ -46,24 +46,24 @@ pub const table = [_]Row{
     provided("loader", "loaderModule", &.{ "reload", "hotFor", "watchGraph", "current", "reloadCount", "rollback" }),
     provided("fs", "fs", &.{ "accessSync", "closeSync", "constants", "copyFileSync", "createReadStream", "existsSync", "lstatSync", "mkdirSync", "mkdtempSync", "openSync", "readFileSync", "readSync", "readdirSync", "readlinkSync", "realpathSync", "renameSync", "rmSync", "statSync", "symlinkSync", "unlinkSync", "unwatchFile", "watchFile", "writeFileSync", "writeSync" }),
     provided("fs/promises", "fsPromises", &.{ "access", "chmod", "constants", "cp", "link", "lstat", "mkdir", "mkdtemp", "open", "opendir", "readFile", "readdir", "realpath", "rename", "rm", "stat", "truncate", "unlink", "writeFile" }),
-    gap("http"),
-    gap("https"),
-    gap("inspector"),
+    provided("http", "http", &.{ "createServer", "validateHeaderValue" }),
+    provided("https", "https", &.{ "createServer", "get", "request" }),
+    provided("inspector", "inspector", &.{"Session"}),
     provided("module", "module", &.{ "createRequire", "stripTypeScriptTypes" }),
     provided("net", "net", &.{"isIP"}),
     provided("os", "os", &.{ "availableParallelism", "constants", "homedir", "networkInterfaces", "platform", "release", "tmpdir" }),
     provided("path", "path", &.{ "basename", "delimiter", "dirname", "extname", "format", "isAbsolute", "join", "normalize", "parse", "posix", "relative", "resolve", "sep", "toNamespacedPath", "win32" }),
-    gap("perf_hooks"),
+    provided("perf_hooks", "perfHooks", &.{"performance"}),
     provided("process", "process", &.{}),
-    gap("stream"),
+    provided("stream", "stream", &.{ "PassThrough", "Readable", "Writable", "pipeline" }),
     provided("string_decoder", "stringDecoder", &.{"StringDecoder"}),
     provided("timers/promises", "timersPromises", &.{ "scheduler", "setTimeout" }),
     provided("url", "url", &.{ "URL", "URLSearchParams", "fileURLToPath", "pathToFileURL" }),
     provided("util", "util", &.{ "TextDecoder", "inspect", "isDeepStrictEqual", "parseArgs", "parseEnv", "promisify" }),
     provided("util/types", "utilTypes", &.{"isPromise"}),
-    gap("vm"),
+    provided("vm", "vm", &.{ "Script", "createContext", "runInContext" }),
     provided("worker_threads", "workerThreads", &.{ "MessageChannel", "Worker", "parentPort", "workerData" }),
-    gap("zlib"),
+    provided("zlib", "zlib", &.{ "brotliCompress", "constants", "createZstdDecompress", "gzip", "zstdCompress", "zstdDecompress", "zstdDecompressSync" }),
 };
 
 comptime {
