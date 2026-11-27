@@ -320,6 +320,9 @@ pub const CliOptions = struct {
     deadline_ms: u64 = default_deadline_ms,
     format: Format = .cjs,
     run_id: ?[]const u8 = null,
+    background: bool = false,
+    task_output: ?[]const u8 = null,
+    task_file: ?[]const u8 = null,
 };
 
 pub fn parseCliArgs(args: []const []const u8) !CliOptions {
@@ -335,6 +338,14 @@ pub fn parseCliArgs(args: []const []const u8) !CliOptions {
         } else if (std.mem.eql(u8, arg, "--deadline-ms") and index + 1 < args.len) {
             index += 1;
             options.deadline_ms = try std.fmt.parseInt(u64, args[index], 10);
+        } else if (std.mem.eql(u8, arg, "--background")) {
+            options.background = true;
+        } else if (std.mem.eql(u8, arg, "--task-output") and index + 1 < args.len) {
+            index += 1;
+            options.task_output = args[index];
+        } else if (std.mem.eql(u8, arg, "--task-file") and index + 1 < args.len) {
+            index += 1;
+            options.task_file = args[index];
         } else if (std.mem.eql(u8, arg, "--run-id") and index + 1 < args.len) {
             index += 1;
             options.run_id = args[index];
@@ -348,13 +359,63 @@ pub fn parseCliArgs(args: []const []const u8) !CliOptions {
             return error.UsageRunCode;
         }
     }
-    options.file = file_path orelse return error.UsageRunCode;
+    options.file = file_path orelse if (options.task_output != null) "" else return error.UsageRunCode;
     if (!format_given and std.mem.endsWith(u8, options.file, ".mjs")) options.format = .esm;
     return options;
 }
 
+const deadline_text = "passed its JavaScript deadline";
+const max_background_deadline_ms: u64 = 3_600_000;
+
+fn taskPath(alloc: std.mem.Allocator, task: []const u8) ![]u8 {
+    return std.fmt.allocPrint(alloc, ".fx/tasks/{s}.json", .{task});
+}
+
+fn writeTask(alloc: std.mem.Allocator, task: []const u8, report: []const u8) !void {
+    try std.Io.Dir.cwd().createDirPath(io_mod.getIo(), ".fx/tasks");
+    const path = try taskPath(alloc, task);
+    defer alloc.free(path);
+    var file = try std.Io.Dir.cwd().createFile(io_mod.getIo(), path, .{ .truncate = true });
+    defer file.close(io_mod.getIo());
+    try file.writeStreamingAll(io_mod.getIo(), report);
+}
+
+fn printTask(alloc: std.mem.Allocator, task: []const u8) !u8 {
+    const path = try taskPath(alloc, task);
+    defer alloc.free(path);
+    var file = std.Io.Dir.cwd().openFile(io_mod.getIo(), path, .{}) catch {
+        const running = try std.fmt.allocPrint(alloc, "{{\"ok\":true,\"status\":\"running\",\"task\":\"{s}\"}}\n", .{task});
+        defer alloc.free(running);
+        try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), running);
+        return 0;
+    };
+    defer file.close(io_mod.getIo());
+    const text = try io_mod.readFileToEnd(alloc, &file, max_journal_bytes);
+    defer alloc.free(text);
+    try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), text);
+    try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), "\n");
+    return 0;
+}
+
+fn startBackground(alloc: std.mem.Allocator, absolute: []const u8, task: []const u8) !void {
+    const exe = try std.process.executablePathAlloc(io_mod.getIo(), alloc);
+    defer alloc.free(exe);
+    const deadline = try std.fmt.allocPrint(alloc, "{d}", .{max_background_deadline_ms});
+    defer alloc.free(deadline);
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(alloc);
+    try argv.appendSlice(alloc, &.{ exe, "js", "--run-id", task, "--deadline-ms", deadline, "--task-file", task, absolute });
+    _ = try std.process.spawn(io_mod.getIo(), .{
+        .argv = argv.items,
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+}
+
 pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Verbs) !u8 {
     const cli = try parseCliArgs(args);
+    if (cli.task_output) |task| return printTask(alloc, task);
     const absolute = try io_mod.realpathAlloc(alloc, cli.file);
     defer alloc.free(absolute);
     var file = try std.Io.Dir.openFileAbsolute(io_mod.getIo(), absolute, .{});
@@ -366,6 +427,15 @@ pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Ver
     defer outcome.deinit(alloc);
     const report = try reportJson(alloc, outcome, null);
     defer alloc.free(report);
+    if (!outcome.ok and cli.background and std.mem.indexOf(u8, outcome.text, deadline_text) != null) {
+        const task = cli.run_id orelse return error.BackgroundNeedsRunId;
+        try startBackground(alloc, absolute, task);
+        const line = try std.fmt.allocPrint(alloc, "{{\"ok\":true,\"status\":\"background\",\"task\":\"{s}\"}}\n", .{task});
+        defer alloc.free(line);
+        try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), line);
+        return 0;
+    }
+    if (cli.task_file) |task| try writeTask(alloc, task, report);
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), report);
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), "\n");
     return if (outcome.ok) 0 else 1;
