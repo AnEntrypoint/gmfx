@@ -1546,6 +1546,10 @@ async function launchRouteRecoveryTui(
       FX_TEST_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
       FX_TEST_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
       FX_MODEL: model,
+      ...(process.env.FX_E2E_TRACE_DIR ? {
+        FX_TRACE_LOG: join(process.env.FX_E2E_TRACE_DIR, "tui-trace.log"),
+        FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt",
+      } : {}),
     },
   });
   await session.waitForComposer(TIMEOUT);
