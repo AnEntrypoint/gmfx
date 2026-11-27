@@ -685,7 +685,7 @@ const fetch = async (input) => {
   const body = String(reply.output ?? "")
   return { ok: true, status: 200, url: target, text: async () => body, json: async () => JSON.parse(body) }
 }
-if (globalThis.fetch === undefined) globalThis.fetch = fetch
+globalThis.fetch = fetch
 
 export const fxRuntime = {
   fetch,
