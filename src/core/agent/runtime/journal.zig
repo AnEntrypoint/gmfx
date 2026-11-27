@@ -8,7 +8,7 @@ const compactor = @import("../../compactor/compactor.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const version: u8 = 4;
+pub const version: u8 = 5;
 const plain_version: u8 = 1;
 const delta_version: u8 = 2;
 const naming_version: u8 = 3;
