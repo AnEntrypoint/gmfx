@@ -2,6 +2,7 @@ const std = @import("std");
 const url_policy = @import("../../tools/web/url_policy.zig");
 const http_fetch = @import("../../tools/web/http_fetch.zig");
 const net_serve = @import("net_serve.zig");
+const pty_host = @import("pty_host.zig");
 const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const model_tool_schema = @import("../tooling/model_tool_schema.zig");
@@ -177,6 +178,44 @@ pub const verbs = [_]Verb{
         .input_schema = .{
             .properties = &.{.{ .name = "conn", .json_type = .integer }},
             .required = &.{"conn"},
+        },
+    },
+    .{
+        .name = "pty_spawn",
+        .description = "Start a program on a pseudo-terminal; returns its id.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "file", .json_type = .string },
+                .{ .name = "args", .json_type = .array },
+            },
+            .required = &.{"file"},
+        },
+    },
+    .{
+        .name = "pty_write",
+        .description = "Write base64 bytes to a pseudo-terminal.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "id", .json_type = .integer },
+                .{ .name = "body", .json_type = .string },
+            },
+            .required = &.{ "id", "body" },
+        },
+    },
+    .{
+        .name = "pty_read",
+        .description = "Read the next output chunk of a pseudo-terminal as base64; eof when the program has exited.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .required = &.{"id"},
+        },
+    },
+    .{
+        .name = "pty_wait",
+        .description = "Wait for a pseudo-terminal program to exit and return its exit code.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .required = &.{"id"},
         },
     },
     .{
@@ -489,6 +528,10 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "serve_respond")) return serveRespond(alloc, args);
     if (std.mem.eql(u8, name, "ws_send")) return wsSend(alloc, args);
     if (std.mem.eql(u8, name, "ws_recv")) return wsRecv(alloc, args);
+    if (std.mem.eql(u8, name, "pty_spawn")) return ptySpawn(alloc, args);
+    if (std.mem.eql(u8, name, "pty_write")) return ptyWrite(alloc, args);
+    if (std.mem.eql(u8, name, "pty_read")) return ptyRead(alloc, args);
+    if (std.mem.eql(u8, name, "pty_wait")) return ptyWait(alloc, args);
     if (std.mem.eql(u8, name, "proc_spawn")) return procSpawn(alloc, args);
     if (std.mem.eql(u8, name, "proc_write")) return procWrite(alloc, args);
     if (std.mem.eql(u8, name, "proc_close_stdin")) return procCloseStdin(alloc, args);
@@ -1014,6 +1057,66 @@ fn wsRecv(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const frame = try net_serve.wsRecv(serve_store, io_mod.getIo(), conn);
     defer serve_store.free(frame.payload);
     return encode(alloc, .{ .ok = true, .opcode = @as(i64, frame.opcode), .body = frame.payload });
+}
+
+var ptys: std.AutoHashMapUnmanaged(i64, pty_host.Session) = .empty;
+var next_pty_id: i64 = 1;
+const pty_store = std.heap.page_allocator;
+
+fn ptySpawn(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const file = stringArg(args, "file") orelse return invalidField(alloc, "file", "a string");
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(alloc);
+    try argv.append(alloc, file);
+    if (args.get("args")) |value| switch (value) {
+        .array => |items| for (items.items) |item| switch (item) {
+            .string => |text| try argv.append(alloc, text),
+            else => return invalidField(alloc, "args", "an array of strings"),
+        },
+        else => return invalidField(alloc, "args", "an array of strings"),
+    };
+    const session = pty_host.spawn(io_mod.getIo(), argv.items) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    const id = next_pty_id;
+    next_pty_id += 1;
+    try ptys.put(pty_store, id, session);
+    return encode(alloc, .{ .ok = true, .id = id });
+}
+
+fn ptyWrite(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const session = ptys.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such terminal" });
+    const encoded = stringArg(args, "body") orelse "";
+    const size = try std.base64.standard.Decoder.calcSizeForSlice(encoded);
+    const bytes = try alloc.alloc(u8, size);
+    defer alloc.free(bytes);
+    try std.base64.standard.Decoder.decode(bytes, encoded);
+    try pty_host.write(io_mod.getIo(), session.master, bytes);
+    return encode(alloc, .{ .ok = true });
+}
+
+fn ptyRead(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const session = ptys.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such terminal" });
+    var buffer: [4096]u8 = undefined;
+    const count = try pty_host.read(session.master, &buffer);
+    if (count == 0) return encode(alloc, .{ .ok = true, .eof = true, .body = "" });
+    const encoded = try alloc.alloc(u8, std.base64.standard.Encoder.calcSize(count));
+    defer alloc.free(encoded);
+    _ = std.base64.standard.Encoder.encode(encoded, buffer[0..count]);
+    return encode(alloc, .{ .ok = true, .eof = false, .body = @as([]const u8, encoded) });
+}
+
+fn ptyWait(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const entry = ptys.fetchRemove(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such terminal" });
+    var session = entry.value;
+    const term = try session.child.wait(io_mod.getIo());
+    _ = std.c.close(session.master);
+    const code: i64 = switch (term) {
+        .exited => |value| @as(i64, value),
+        else => -1,
+    };
+    return encode(alloc, .{ .ok = true, .code = code });
 }
 
 fn fsStat(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {

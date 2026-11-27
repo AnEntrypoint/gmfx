@@ -753,8 +753,23 @@ const serveModule = {
   },
 }
 
+const ptyModule = {
+  spawn: (file, args = []) => {
+    const id = host('pty_spawn', { file, args: args.map(String) }).id
+    return {
+      write: (text) => host('pty_write', { id, body: encodeBase64(toBytes(String(text), 'utf8')) }),
+      read: () => {
+        const reply = host('pty_read', { id })
+        return reply.eof ? null : fromBytes(decodeBase64(reply.body), 'utf8')
+      },
+      wait: () => host('pty_wait', { id }).code,
+    }
+  },
+}
+
 export const fxRuntime = {
   serveModule,
+  ptyModule,
   fetch,
   fs,
   fsPromises,
