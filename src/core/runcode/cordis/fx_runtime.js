@@ -108,7 +108,7 @@ const toBytes = (data, encoding) => {
       return out
     }
     if (encoding === 'hex') return decodeHex(data)
-    if (encoding === 'latin1' || encoding === 'binary') return Uint8Array.from(data, (character) => character.charCodeAt(0) & 0xff)
+    if (encoding === 'latin1' || encoding === 'binary' || encoding === 'ascii') return Uint8Array.from(data, (character) => character.charCodeAt(0) & 0xff)
     return encodeUtf8(data)
   }
   if (data instanceof ArrayBuffer) return new Uint8Array(data)
@@ -126,6 +126,7 @@ const fromBytes = (bytes, encoding) => {
     return text
   }
   if (encoding === 'hex') return encodeHex(bytes)
+  if (encoding === 'ascii') return Array.from(bytes, (byte) => String.fromCharCode(byte & 0x7f)).join('')
   if (encoding === 'latin1' || encoding === 'binary') return decodeLatin1(bytes)
   return decodeUtf8(bytes)
 }
