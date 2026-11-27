@@ -553,7 +553,10 @@ const kimiListingHeader = "DISREGARD any earlier skill listings. Current availab
 
 function kimiListingBlock(text: string): string {
   const start = text.indexOf(kimiListingHeader);
-  if (start < 0) throw new Error("Missing skill listing in Gateway request");
+  if (start < 0) {
+    if (process.env.FX_E2E_TRACE_DIR) writeFileSync(join(process.env.FX_E2E_TRACE_DIR, "skill-listing-missing.txt"), text);
+    throw new Error("Missing skill listing in Gateway request");
+  }
   const block: string[] = [];
   for (const line of text.slice(start).split("\n")) {
     if (block.length > 0 && !/^(### |- |  |Omitted skills: |\[context\] )/.test(line)) break;
