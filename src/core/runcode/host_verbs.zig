@@ -1,6 +1,7 @@
 const std = @import("std");
 const url_policy = @import("../../tools/web/url_policy.zig");
 const http_fetch = @import("../../tools/web/http_fetch.zig");
+const net_serve = @import("net_serve.zig");
 const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const model_tool_schema = @import("../tooling/model_tool_schema.zig");
@@ -124,6 +125,58 @@ pub const verbs = [_]Verb{
         .input_schema = .{
             .properties = &.{.{ .name = "id", .json_type = .integer }},
             .required = &.{"id"},
+        },
+    },
+    .{
+        .name = "serve_listen",
+        .description = "Listen on a loopback address for HTTP and websocket connections; returns the server id and port.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "url", .json_type = .string },
+                .{ .name = "loopback", .json_type = .boolean },
+                .{ .name = "host", .json_type = .string },
+                .{ .name = "port", .json_type = .integer },
+            },
+            .required = &.{ "url", "host" },
+        },
+    },
+    .{
+        .name = "serve_accept",
+        .description = "Accept the next connection on a server and read its HTTP request.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .required = &.{"id"},
+        },
+    },
+    .{
+        .name = "serve_respond",
+        .description = "Send an HTTP response on a connection and close it.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "conn", .json_type = .integer },
+                .{ .name = "status", .json_type = .integer },
+                .{ .name = "body", .json_type = .string },
+            },
+            .required = &.{ "conn", "status" },
+        },
+    },
+    .{
+        .name = "ws_send",
+        .description = "Send a websocket text message on an upgraded connection.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "conn", .json_type = .integer },
+                .{ .name = "body", .json_type = .string },
+            },
+            .required = &.{ "conn", "body" },
+        },
+    },
+    .{
+        .name = "ws_recv",
+        .description = "Receive the next websocket frame on an upgraded connection.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "conn", .json_type = .integer }},
+            .required = &.{"conn"},
         },
     },
     .{
@@ -431,6 +484,11 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "watch_start")) return watchStart(alloc, args);
     if (std.mem.eql(u8, name, "watch_poll")) return watchPoll(alloc, args);
     if (std.mem.eql(u8, name, "watch_close")) return watchClose(alloc, args);
+    if (std.mem.eql(u8, name, "serve_listen")) return serveListen(alloc, args);
+    if (std.mem.eql(u8, name, "serve_accept")) return serveAccept(alloc, args);
+    if (std.mem.eql(u8, name, "serve_respond")) return serveRespond(alloc, args);
+    if (std.mem.eql(u8, name, "ws_send")) return wsSend(alloc, args);
+    if (std.mem.eql(u8, name, "ws_recv")) return wsRecv(alloc, args);
     if (std.mem.eql(u8, name, "proc_spawn")) return procSpawn(alloc, args);
     if (std.mem.eql(u8, name, "proc_write")) return procWrite(alloc, args);
     if (std.mem.eql(u8, name, "proc_close_stdin")) return procCloseStdin(alloc, args);
@@ -899,6 +957,63 @@ fn watchClose(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     _ = std.os.linux.close(entry.value.fd);
     watch_store.free(entry.value.path);
     return encode(alloc, .{ .ok = true });
+}
+
+var servers: std.AutoHashMapUnmanaged(i64, *std.Io.net.Server) = .empty;
+var serve_conns: std.AutoHashMapUnmanaged(i64, *net_serve.Conn) = .empty;
+var next_serve_id: i64 = 1;
+const serve_store = std.heap.page_allocator;
+
+fn serveListen(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const bind = stringArg(args, "host") orelse return invalidField(alloc, "host", "a string");
+    const port: u16 = @intCast(integerArg(args, "port") orelse 0);
+    const server = net_serve.listen(serve_store, io_mod.getIo(), bind, port) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    const id = next_serve_id;
+    next_serve_id += 1;
+    try servers.put(serve_store, id, server);
+    return encode(alloc, .{ .ok = true, .id = id, .port = @as(i64, server.socket.address.getPort()) });
+}
+
+fn serveAccept(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const server = servers.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such server" });
+    const conn = try net_serve.accept(serve_store, io_mod.getIo(), server);
+    var request = net_serve.readRequest(serve_store, io_mod.getIo(), conn) catch |err| {
+        conn.stream.close(io_mod.getIo());
+        serve_store.destroy(conn);
+        return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    };
+    defer request.deinit(serve_store);
+    const conn_id = next_serve_id;
+    next_serve_id += 1;
+    try serve_conns.put(serve_store, conn_id, conn);
+    if (request.upgrade) try net_serve.upgrade(io_mod.getIo(), conn, request.key);
+    return encode(alloc, .{ .ok = true, .conn = conn_id, .method = request.method, .path = request.path, .upgrade = request.upgrade, .body = request.body });
+}
+
+fn serveRespond(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "conn") orelse return invalidField(alloc, "conn", "an integer");
+    const status = integerArg(args, "status") orelse 200;
+    const body = stringArg(args, "body") orelse "";
+    const entry = serve_conns.fetchRemove(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such connection" });
+    try net_serve.respond(serve_store, io_mod.getIo(), entry.value, @intCast(status), body);
+    serve_store.destroy(entry.value);
+    return encode(alloc, .{ .ok = true });
+}
+
+fn wsSend(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "conn") orelse return invalidField(alloc, "conn", "an integer");
+    const conn = serve_conns.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such connection" });
+    try net_serve.wsSend(io_mod.getIo(), conn, stringArg(args, "body") orelse "");
+    return encode(alloc, .{ .ok = true });
+}
+
+fn wsRecv(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "conn") orelse return invalidField(alloc, "conn", "an integer");
+    const conn = serve_conns.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such connection" });
+    const frame = try net_serve.wsRecv(serve_store, io_mod.getIo(), conn);
+    defer serve_store.free(frame.payload);
+    return encode(alloc, .{ .ok = true, .opcode = @as(i64, frame.opcode), .body = frame.payload });
 }
 
 fn fsStat(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {

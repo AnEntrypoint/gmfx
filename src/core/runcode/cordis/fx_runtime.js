@@ -728,7 +728,33 @@ const fetch = async (input, init = {}) => {
 }
 globalThis.fetch = fetch
 
+const serveModule = {
+  serve: (options = {}) => {
+    const bind = options.host ?? '127.0.0.1'
+    const reply = host('serve_listen', { url: 'http://' + bind + '/', loopback: true, host: bind, port: options.port ?? 0 })
+    const id = reply.id
+    return {
+      port: reply.port,
+      accept: () => {
+        const request = host('serve_accept', { id })
+        return {
+          method: request.method,
+          path: request.path,
+          upgrade: request.upgrade,
+          body: request.body,
+          respond: (status, body = '') => host('serve_respond', { conn: request.conn, status, body: String(body) }),
+          websocket: {
+            send: (text) => host('ws_send', { conn: request.conn, body: String(text) }),
+            recv: () => host('ws_recv', { conn: request.conn }).body,
+          },
+        }
+      },
+    }
+  },
+}
+
 export const fxRuntime = {
+  serveModule,
   fetch,
   fs,
   fsPromises,
