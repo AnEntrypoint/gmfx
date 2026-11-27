@@ -780,11 +780,14 @@ const sqliteModule = {
 
 const fetchModule = { fetch }
 
+const agentModule = { core: { name: 'fx', interface: 1 } }
+
 export const fxRuntime = {
   serveModule,
   ptyModule,
   sqliteModule,
   fetchModule,
+  agentModule,
   fetch,
   fs,
   fsPromises,
