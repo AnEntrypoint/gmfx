@@ -98,6 +98,15 @@ const toBytes = (data, encoding) => {
   if (typeof data === 'string') {
     if (encoding === 'base64') return decodeBase64(data)
     if (encoding === 'base64url') return decodeBase64(data.replace(/-/g, '+').replace(/_/g, '/'))
+    if (encoding === 'utf16le' || encoding === 'ucs2' || encoding === 'ucs-2' || encoding === 'utf-16le') {
+      const out = new Uint8Array(data.length * 2)
+      for (let index = 0; index < data.length; index += 1) {
+        const unit = data.charCodeAt(index)
+        out[index * 2] = unit & 0xff
+        out[index * 2 + 1] = unit >> 8
+      }
+      return out
+    }
     if (encoding === 'hex') return decodeHex(data)
     if (encoding === 'latin1' || encoding === 'binary') return Uint8Array.from(data, (character) => character.charCodeAt(0) & 0xff)
     return encodeUtf8(data)
@@ -111,6 +120,11 @@ const fromBytes = (bytes, encoding) => {
   if (encoding === undefined || encoding === null || encoding === 'buffer') return bytes
   if (encoding === 'base64') return encodeBase64(bytes)
   if (encoding === 'base64url') return encodeBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  if (encoding === 'utf16le' || encoding === 'ucs2' || encoding === 'ucs-2' || encoding === 'utf-16le') {
+    let text = ''
+    for (let index = 0; index + 1 < bytes.length; index += 2) text += String.fromCharCode(bytes[index] | (bytes[index + 1] << 8))
+    return text
+  }
   if (encoding === 'hex') return encodeHex(bytes)
   if (encoding === 'latin1' || encoding === 'binary') return decodeLatin1(bytes)
   return decodeUtf8(bytes)
