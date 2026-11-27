@@ -516,7 +516,8 @@ fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         break :blk out;
     } else null;
     defer if (post_body) |body| alloc.free(body);
-    var validated = url_policy.normalizeWith(alloc, url_text, boolArg(args, "loopback", false)) catch |err| {
+    const loopback = boolArg(args, "loopback", false);
+    var validated = url_policy.normalizeWith(alloc, url_text, loopback) catch |err| {
         const message = switch (err) {
             error.NonPublicAddress, error.SingleLabelHost => "web_fetch only fetches known public HTTP(S) URLs",
             else => @errorName(err),
@@ -524,7 +525,7 @@ fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         return encode(alloc, .{ .ok = false, .@"error" = message });
     };
     defer validated.deinit(alloc);
-    var outcome = try http_fetch.fetch(alloc, validated, .{ .post_body = post_body }, http_fetch.defaultTransport());
+    var outcome = try http_fetch.fetch(alloc, validated, .{ .post_body = post_body, .allow_loopback = loopback }, http_fetch.defaultTransport());
     defer outcome.deinit(alloc);
     switch (outcome) {
         .success => |*success| {

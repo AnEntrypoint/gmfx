@@ -294,7 +294,7 @@ fn admittedLiteral(address: IpAddress, allow_loopback: bool) bool {
     return allow_loopback and isLoopbackAddress(address);
 }
 
-fn isLoopbackAddress(address: IpAddress) bool {
+pub fn isLoopbackAddress(address: IpAddress) bool {
     return switch (address) {
         .ip4 => |ip4| ip4.bytes[0] == 127,
         .ip6 => |ip6| std.mem.eql(u8, &ip6.bytes, &[16]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 }),

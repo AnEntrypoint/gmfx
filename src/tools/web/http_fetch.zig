@@ -51,6 +51,7 @@ pub const FetchOptions = struct {
     deadline: ?Deadline = null,
     cancel_flag: ?*std.atomic.Value(bool) = null,
     post_body: ?[]const u8 = null,
+    allow_loopback: bool = false,
 };
 
 pub const Resolver = struct {
@@ -328,7 +329,7 @@ pub fn fetch(alloc: Allocator, initial: url_policy.ValidatedUrl, options: FetchO
 
         if (addresses.len == 0) return error.NoAddressReturned;
         for (addresses) |address| {
-            if (!url_policy.isPublicAddress(address)) return error.NonPublicDnsAnswer;
+            if (!url_policy.isPublicAddress(address) and !(options.allow_loopback and url_policy.isLoopbackAddress(address))) return error.NonPublicDnsAnswer;
         }
 
         const host_header = try hostHeader(alloc, current);
@@ -468,6 +469,8 @@ fn normalizedOptions(options: FetchOptions) FetchOptions {
         .max_body_bytes = if (options.max_body_bytes == 0) max_body_bytes else options.max_body_bytes,
         .deadline = options.deadline,
         .cancel_flag = options.cancel_flag,
+        .post_body = options.post_body,
+        .allow_loopback = options.allow_loopback,
     };
 }
 
