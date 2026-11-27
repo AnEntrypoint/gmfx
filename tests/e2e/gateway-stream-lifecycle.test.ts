@@ -8256,7 +8256,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       await waitForProcessExit(pid);
     } finally {
       gateway.stop();
-      if (process.env.FX_E2E_TRACE_DIR) writeFileSync(join(process.env.FX_E2E_TRACE_DIR, "mcp-trace.log"), trace);
+      if (process.env.FX_E2E_TRACE_DIR) try { writeFileSync(join(process.env.FX_E2E_TRACE_DIR, "mcp-trace.log"), readFileSync(join(root.root, "trace.log"))); } catch {}
       rmSync(root.root, { recursive: true, force: true });
     }
   }, 30_000);
