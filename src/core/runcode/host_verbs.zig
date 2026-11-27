@@ -527,7 +527,7 @@ fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
             _ = std.base64.standard.Encoder.encode(encoded, success.body);
             return encode(alloc, .{ .ok = true, .status = @intFromEnum(success.status), .url = success.final_url, .body = @as([]const u8, encoded) });
         },
-        .failure => |*failure| return encode(alloc, .{ .ok = true, .status = if (failure.status) |status| @intFromEnum(status) else 0, .url = url_text, .body = "" }),
+        .failure => |*failed| return encode(alloc, .{ .ok = true, .status = if (failed.status) |status| @intFromEnum(status) else 0, .url = url_text, .body = "" }),
         .cross_host_redirect => return encode(alloc, .{ .ok = false, .@"error" = "cross_host_redirect" }),
     }
 }
