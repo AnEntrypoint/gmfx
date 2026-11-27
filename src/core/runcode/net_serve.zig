@@ -55,14 +55,14 @@ pub fn readRequest(alloc: Allocator, io: std.Io, conn: *Conn) !Request {
     const path = try alloc.dupe(u8, parts.next() orelse return error.BadRequest);
     errdefer alloc.free(path);
     var content_length: usize = 0;
-    var upgrade = false;
+    var wants_upgrade = false;
     var key: []const u8 = "";
     while (lines.next()) |line| {
         const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
         const name = line[0..colon];
         const value = std.mem.trim(u8, line[colon + 1 ..], " ");
         if (std.ascii.eqlIgnoreCase(name, "content-length")) content_length = try std.fmt.parseInt(usize, value, 10);
-        if (std.ascii.eqlIgnoreCase(name, "upgrade")) upgrade = std.ascii.eqlIgnoreCase(value, "websocket");
+        if (std.ascii.eqlIgnoreCase(name, "upgrade")) wants_upgrade = std.ascii.eqlIgnoreCase(value, "websocket");
         if (std.ascii.eqlIgnoreCase(name, "sec-websocket-key")) key = value;
     }
     const key_copy = try alloc.dupe(u8, key);
@@ -70,7 +70,7 @@ pub fn readRequest(alloc: Allocator, io: std.Io, conn: *Conn) !Request {
     const body = try alloc.alloc(u8, content_length);
     errdefer alloc.free(body);
     for (body) |*byte| byte.* = try reader.interface.takeByte();
-    return .{ .method = method, .path = path, .upgrade = upgrade, .key = key_copy, .body = body };
+    return .{ .method = method, .path = path, .upgrade = wants_upgrade, .key = key_copy, .body = body };
 }
 
 pub fn respond(alloc: Allocator, io: std.Io, conn: *Conn, status: u16, body: []const u8) !void {
