@@ -36,7 +36,7 @@ pub fn describe(comptime tools: []const tool_dispatch.Tool) []const u8 {
             first = false;
         }
         for (host_verbs.names) |name| {
-            if (std.mem.startsWith(u8, name, "proc_") or std.mem.startsWith(u8, name, "dns_")) continue;
+            if (std.mem.startsWith(u8, name, "proc_") or std.mem.startsWith(u8, name, "dns_") or std.mem.startsWith(u8, name, "watch_")) continue;
             text = text ++ "," ++ name;
         }
         const final = text ++ ".";

@@ -100,6 +100,33 @@ pub const verbs = [_]Verb{
         },
     },
     .{
+        .name = "watch_start",
+        .description = "Start watching a directory for create, change, remove and rename events; returns its id.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "path", .json_type = .string }},
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "watch_poll",
+        .description = "Wait up to timeout milliseconds for events on a watch and return them.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "id", .json_type = .integer },
+                .{ .name = "timeout", .json_type = .integer },
+            },
+            .required = &.{"id"},
+        },
+    },
+    .{
+        .name = "watch_close",
+        .description = "Stop a watch.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .required = &.{"id"},
+        },
+    },
+    .{
         .name = "fs_exists",
         .description = "Report whether a path exists.",
         .input_schema = .{
@@ -401,6 +428,9 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "fs_link")) return fsLink(alloc, args);
     if (std.mem.eql(u8, name, "net_fetch")) return netFetch(alloc, args);
     if (std.mem.eql(u8, name, "dns_lookup")) return dnsLookup(alloc, args);
+    if (std.mem.eql(u8, name, "watch_start")) return watchStart(alloc, args);
+    if (std.mem.eql(u8, name, "watch_poll")) return watchPoll(alloc, args);
+    if (std.mem.eql(u8, name, "watch_close")) return watchClose(alloc, args);
     if (std.mem.eql(u8, name, "proc_spawn")) return procSpawn(alloc, args);
     if (std.mem.eql(u8, name, "proc_write")) return procWrite(alloc, args);
     if (std.mem.eql(u8, name, "proc_close_stdin")) return procCloseStdin(alloc, args);
@@ -803,6 +833,72 @@ fn dnsLookup(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         },
         .ip6 => encode(alloc, .{ .ok = false, .@"error" = "ipv6 answers are not returned yet" }),
     };
+}
+
+const WatchEntry = struct { fd: i32, path: []u8 };
+var watches: std.AutoHashMapUnmanaged(i64, WatchEntry) = .empty;
+var next_watch_id: i64 = 1;
+const watch_store = std.heap.page_allocator;
+const watch_mask: u32 = std.os.linux.IN.CREATE | std.os.linux.IN.MODIFY | std.os.linux.IN.DELETE | std.os.linux.IN.MOVED_FROM | std.os.linux.IN.MOVED_TO;
+
+const WatchEvent = struct { kind: []const u8, name: []const u8 };
+
+fn watchStart(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const path = stringArg(args, "path") orelse return invalidField(alloc, "path", "a string");
+    const fd_rc = std.os.linux.inotify_init1(std.os.linux.IN.CLOEXEC | std.os.linux.IN.NONBLOCK);
+    if (std.os.linux.errno(fd_rc) != .SUCCESS) return encode(alloc, .{ .ok = false, .@"error" = "inotify_init1 failed" });
+    const fd: i32 = @intCast(fd_rc);
+    const path_z = try watch_store.dupeZ(u8, path);
+    defer watch_store.free(path_z);
+    const add_rc = std.os.linux.inotify_add_watch(fd, path_z, watch_mask);
+    if (std.os.linux.errno(add_rc) != .SUCCESS) {
+        _ = std.os.linux.close(fd);
+        return encode(alloc, .{ .ok = false, .@"error" = "inotify_add_watch failed" });
+    }
+    const id = next_watch_id;
+    next_watch_id += 1;
+    try watches.put(watch_store, id, .{ .fd = fd, .path = try watch_store.dupe(u8, path) });
+    return encode(alloc, .{ .ok = true, .id = id });
+}
+
+fn watchKindOf(mask: u32) []const u8 {
+    if (mask & std.os.linux.IN.CREATE != 0) return "create";
+    if (mask & std.os.linux.IN.DELETE != 0) return "remove";
+    if (mask & (std.os.linux.IN.MOVED_FROM | std.os.linux.IN.MOVED_TO) != 0) return "rename";
+    return "change";
+}
+
+fn watchPoll(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const entry = watches.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such watch" });
+    const timeout: i32 = @intCast(integerArg(args, "timeout") orelse 1000);
+    var fds = [_]std.posix.pollfd{.{ .fd = entry.fd, .events = std.posix.POLL.IN, .revents = 0 }};
+    _ = try std.posix.poll(&fds, timeout);
+    var events: std.ArrayList(WatchEvent) = .empty;
+    defer events.deinit(alloc);
+    var buffer: [4096]u8 = undefined;
+    const read_rc = std.os.linux.read(entry.fd, &buffer, buffer.len);
+    if (std.os.linux.errno(read_rc) == .SUCCESS) {
+        const count: usize = read_rc;
+        var offset: usize = 0;
+        while (offset + 16 <= count) {
+            const mask = std.mem.readInt(u32, buffer[offset + 4 ..][0..4], .little);
+            const name_len = std.mem.readInt(u32, buffer[offset + 12 ..][0..4], .little);
+            const name_raw = buffer[offset + 16 .. offset + 16 + name_len];
+            const name = std.mem.sliceTo(name_raw, 0);
+            try events.append(alloc, .{ .kind = watchKindOf(mask), .name = name });
+            offset += 16 + name_len;
+        }
+    }
+    return encode(alloc, .{ .ok = true, .events = events.items });
+}
+
+fn watchClose(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const entry = watches.fetchRemove(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such watch" });
+    _ = std.os.linux.close(entry.value.fd);
+    watch_store.free(entry.value.path);
+    return encode(alloc, .{ .ok = true });
 }
 
 fn fsStat(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {

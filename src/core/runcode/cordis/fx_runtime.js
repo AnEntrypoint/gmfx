@@ -379,6 +379,13 @@ const fs = {
   symlinkSync: (target, value) => host('fs_symlink', { target: pathOf(target), path: pathOf(value) }),
   unlinkSync: (value) => host('fs_remove', { path: pathOf(value), recursive: false, force: false }),
   unwatchFile: fail('fs.unwatchFile'),
+  watch: (path) => {
+    const id = host('watch_start', { path: String(path) }).id
+    return {
+      next: (timeout = 1000) => host('watch_poll', { id, timeout }).events,
+      close: () => host('watch_close', { id }),
+    }
+  },
   watchFile: fail('fs.watchFile'),
   writeFileSync,
   writeSync,
