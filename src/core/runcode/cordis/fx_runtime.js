@@ -634,9 +634,10 @@ Buffer.from = (value, encoding) => {
   if (Array.isArray(value)) return wrapBytes(Uint8Array.from(value))
   throw new TypeError('Buffer.from received an unsupported value')
 }
-Buffer.alloc = (size, fill = 0) => {
+Buffer.alloc = (size, fill = 0, encoding) => {
   const bytes = new Uint8Array(size)
-  if (fill !== 0) bytes.fill(typeof fill === 'string' ? toBytes(fill, 'utf8')[0] : fill)
+  const pattern = typeof fill === 'string' ? toBytes(fill, encoding) : Uint8Array.of(fill & 0xff)
+  if (fill !== 0 && pattern.length > 0) for (let index = 0; index < size; index += 1) bytes[index] = pattern[index % pattern.length]
   return wrapBytes(bytes)
 }
 Buffer.byteLength = (value, encoding) => (typeof value === 'string' ? toBytes(value, encoding).length : value.byteLength)
