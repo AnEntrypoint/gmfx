@@ -235,6 +235,51 @@ static JSModuleDef *compile_source(JSContext *ctx, const char *text, size_t leng
     return JS_VALUE_GET_PTR(compiled);
 }
 
+static char *rewrite_hot(const char *text, size_t length, const char *name, size_t *out_length) {
+    static const char needle[] = "import.meta.hot";
+    static const char alias[] = "__fxHot";
+    static const char prologue_head[] = "import { hotFor as __fxHotFor } from 'fx:host/loader'\nconst __fxHot = __fxHotFor(\"";
+    static const char prologue_tail[] = "\")\n";
+    const size_t needle_length = sizeof(needle) - 1;
+    const size_t alias_length = sizeof(alias) - 1;
+    size_t count = 0;
+    const char *scan = text;
+    while ((scan = strstr(scan, needle)) != NULL) {
+        count++;
+        scan += needle_length;
+    }
+    if (count == 0) return NULL;
+    const size_t name_length = strlen(name);
+    const size_t head_length = sizeof(prologue_head) - 1;
+    const size_t tail_length = sizeof(prologue_tail) - 1;
+    const size_t total = head_length + name_length + tail_length + length - count * needle_length + count * alias_length + 1;
+    char *out = malloc(total);
+    if (out == NULL) return NULL;
+    char *dest = out;
+    memcpy(dest, prologue_head, head_length);
+    dest += head_length;
+    memcpy(dest, name, name_length);
+    dest += name_length;
+    memcpy(dest, prologue_tail, tail_length);
+    dest += tail_length;
+    const char *cursor = text;
+    const char *match;
+    while ((match = strstr(cursor, needle)) != NULL) {
+        const size_t prefix = (size_t) (match - cursor);
+        memcpy(dest, cursor, prefix);
+        dest += prefix;
+        memcpy(dest, alias, alias_length);
+        dest += alias_length;
+        cursor = match + needle_length;
+    }
+    const size_t rest = length - (size_t) (cursor - text);
+    memcpy(dest, cursor, rest);
+    dest += rest;
+    *dest = '\0';
+    *out_length = (size_t) (dest - out);
+    return out;
+}
+
 static JSModuleDef *load_module(JSContext *ctx, const char *name, void *opaque) {
     FxRun *run = current_run;
     (void) opaque;
@@ -265,7 +310,10 @@ static JSModuleDef *load_module(JSContext *ctx, const char *name, void *opaque) 
         return NULL;
     }
     text[size] = '\0';
-    JSModuleDef *module = compile_source(ctx, text, (size_t) size, name);
+    size_t rewritten_length = 0;
+    char *rewritten = rewrite_hot(text, (size_t) size, name, &rewritten_length);
+    JSModuleDef *module = compile_source(ctx, rewritten ? rewritten : text, rewritten ? rewritten_length : (size_t) size, name);
+    free(rewritten);
     free(text);
     return module;
 }
