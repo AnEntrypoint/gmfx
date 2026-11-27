@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 
 pub const Conn = struct {
     stream: std.Io.net.Stream,
+    client: bool = false,
     read_buf: [8192]u8 = undefined,
     write_buf: [8192]u8 = undefined,
 };
@@ -101,19 +102,51 @@ pub fn upgrade(io: std.Io, conn: *Conn, key: []const u8) !void {
 
 pub fn wsSend(io: std.Io, conn: *Conn, payload: []const u8) !void {
     var writer = conn.stream.writer(io, &conn.write_buf);
+    const mask_bit: u8 = if (conn.client) 0x80 else 0;
     var header: [4]u8 = undefined;
     header[0] = 0x81;
     var header_len: usize = 2;
     if (payload.len < 126) {
-        header[1] = @intCast(payload.len);
+        header[1] = mask_bit | @as(u8, @intCast(payload.len));
     } else if (payload.len <= 0xffff) {
-        header[1] = 126;
+        header[1] = mask_bit | 126;
         std.mem.writeInt(u16, header[2..4], @intCast(payload.len), .big);
         header_len = 4;
     } else return error.PayloadTooLarge;
     try writer.interface.writeAll(header[0..header_len]);
-    try writer.interface.writeAll(payload);
+    if (conn.client) {
+        var mask: [4]u8 = undefined;
+        try io.randomSecure(&mask);
+        try writer.interface.writeAll(&mask);
+        for (payload, 0..) |byte, index| try writer.interface.writeByte(byte ^ mask[index % 4]);
+    } else {
+        try writer.interface.writeAll(payload);
+    }
     try writer.interface.flush();
+}
+
+pub fn connect(alloc: Allocator, io: std.Io, host: []const u8, port: u16, path: []const u8) !*Conn {
+    const address = try std.Io.net.IpAddress.parse(host, port);
+    const conn = try alloc.create(Conn);
+    errdefer alloc.destroy(conn);
+    conn.* = .{ .stream = try address.connect(io, .{}), .client = true };
+    var key_bytes: [16]u8 = undefined;
+    try io.randomSecure(&key_bytes);
+    var key_text: [24]u8 = undefined;
+    _ = std.base64.standard.Encoder.encode(&key_text, &key_bytes);
+    const request = try std.fmt.allocPrint(alloc, "GET {s} HTTP/1.1\r\nHost: {s}:{d}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {s}\r\nSec-WebSocket-Version: 13\r\n\r\n", .{ path, host, port, key_text });
+    defer alloc.free(request);
+    var writer = conn.stream.writer(io, &conn.write_buf);
+    try writer.interface.writeAll(request);
+    try writer.interface.flush();
+    var reader = conn.stream.reader(io, &conn.read_buf);
+    var response: std.ArrayList(u8) = .empty;
+    defer response.deinit(alloc);
+    while (!std.mem.endsWith(u8, response.items, "\r\n\r\n")) {
+        try response.append(alloc, try reader.interface.takeByte());
+    }
+    if (!std.mem.startsWith(u8, response.items, "HTTP/1.1 101")) return error.WebSocketHandshakeFailed;
+    return conn;
 }
 
 fn readExact(reader: anytype, dest: []u8) !void {

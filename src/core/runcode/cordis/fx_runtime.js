@@ -782,12 +782,23 @@ const fetchModule = { fetch }
 
 const agentModule = { core: { name: 'fx', interface: 1 } }
 
+const wsModule = {
+  connect: (hostname, port, path = '/') => {
+    const id = host('ws_connect', { url: 'http://' + String(hostname) + ':' + String(port) + String(path), loopback: true, path: String(path) }).conn
+    return {
+      send: (text) => host('ws_send', { conn: id, body: String(text) }),
+      recv: () => host('ws_recv', { conn: id }).body,
+    }
+  },
+}
+
 export const fxRuntime = {
   serveModule,
   ptyModule,
   sqliteModule,
   fetchModule,
   agentModule,
+  wsModule,
   fetch,
   fs,
   fsPromises,

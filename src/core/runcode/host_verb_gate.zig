@@ -30,6 +30,7 @@ pub const table = [_]Row{
     .{ .verb = "watch_poll", .class = .none },
     .{ .verb = "watch_close", .class = .none },
     .{ .verb = "serve_listen", .class = .network },
+    .{ .verb = "ws_connect", .class = .network },
     .{ .verb = "serve_accept", .class = .none },
     .{ .verb = "serve_respond", .class = .none },
     .{ .verb = "ws_send", .class = .none },

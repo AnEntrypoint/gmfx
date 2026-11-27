@@ -258,6 +258,18 @@ pub const verbs = [_]Verb{
         },
     },
     .{
+        .name = "ws_connect",
+        .description = "Open a websocket client to a loopback or public host; returns a connection id for ws_send and ws_recv.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "url", .json_type = .string },
+                .{ .name = "loopback", .json_type = .boolean },
+                .{ .name = "path", .json_type = .string },
+            },
+            .required = &.{ "url", "path" },
+        },
+    },
+    .{
         .name = "fs_exists",
         .description = "Report whether a path exists.",
         .input_schema = .{
@@ -563,6 +575,7 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "watch_poll")) return watchPoll(alloc, args);
     if (std.mem.eql(u8, name, "watch_close")) return watchClose(alloc, args);
     if (std.mem.eql(u8, name, "serve_listen")) return serveListen(alloc, args);
+    if (std.mem.eql(u8, name, "ws_connect")) return wsConnect(alloc, args);
     if (std.mem.eql(u8, name, "serve_accept")) return serveAccept(alloc, args);
     if (std.mem.eql(u8, name, "serve_respond")) return serveRespond(alloc, args);
     if (std.mem.eql(u8, name, "ws_send")) return wsSend(alloc, args);
@@ -1092,6 +1105,18 @@ fn wsSend(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const conn = serve_conns.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such connection" });
     try net_serve.wsSend(io_mod.getIo(), conn, stringArg(args, "body") orelse "");
     return encode(alloc, .{ .ok = true });
+}
+
+fn wsConnect(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const url_text = stringArg(args, "url") orelse return invalidField(alloc, "url", "a string");
+    const path = stringArg(args, "path") orelse return invalidField(alloc, "path", "a string");
+    var validated = url_policy.normalizeWith(alloc, url_text, boolArg(args, "loopback", false)) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    defer validated.deinit(alloc);
+    const conn = net_serve.connect(serve_store, io_mod.getIo(), validated.canonical_host, validated.port, path) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    const id = next_serve_id;
+    next_serve_id += 1;
+    try serve_conns.put(serve_store, id, conn);
+    return encode(alloc, .{ .ok = true, .conn = id });
 }
 
 fn wsRecv(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
