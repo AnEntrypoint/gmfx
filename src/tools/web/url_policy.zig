@@ -126,7 +126,7 @@ pub fn normalizeWith(alloc: Allocator, raw_url: []const u8, allow_loopback: bool
     const host_policy = try canonicalizeHost(alloc, parsed_authority.host, parsed_authority.is_ipv6_literal, allow_loopback);
     defer alloc.free(host_policy.host);
 
-    const scheme: Scheme = .https;
+    const scheme: Scheme = if (allow_loopback and input_scheme == .http) .http else .https;
     const port = normalizedPort(input_scheme, parsed_authority.port);
     const explicit_port = normalizedExplicitPort(scheme, port, parsed_authority.port);
     const raw_path_query = stripFragment(raw_url[authority_end..]);
