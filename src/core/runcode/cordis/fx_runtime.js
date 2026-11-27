@@ -778,10 +778,13 @@ const sqliteModule = {
   },
 }
 
+const fetchModule = { fetch }
+
 export const fxRuntime = {
   serveModule,
   ptyModule,
   sqliteModule,
+  fetchModule,
   fetch,
   fs,
   fsPromises,
