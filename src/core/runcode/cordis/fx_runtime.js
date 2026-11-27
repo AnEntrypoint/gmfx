@@ -349,6 +349,10 @@ const writeSync = (fd, data, ...rest) => {
 const fsConstants = { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1, O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024, COPYFILE_EXCL: 1 }
 
 const fs = {
+  appendFileSync: (value, data, options) => writeFileSync(value, data, { ...(typeof options === "object" && options !== null ? options : {}), flag: "a" }),
+  chmodSync: (value, mode) => host("fs_chmod", { path: pathOf(value), mode }),
+  linkSync: (existing, value) => host("fs_link", { existing: pathOf(existing), path: pathOf(value) }),
+  truncateSync: (value, length = 0) => host("fs_truncate", { path: pathOf(value), length }),
   accessSync: (value) => {
     if (!existsSync(value)) throw coded('ENOENT', 'ENOENT: no such file or directory, access ' + pathOf(value))
   },
@@ -395,6 +399,7 @@ const openHandle = (value, flags) => {
 
 const fsPromises = {
   access: asAsync(fs.accessSync),
+  appendFile: asAsync(fs.appendFileSync),
   chmod: asAsync((value, mode) => host('fs_chmod', { path: pathOf(value), mode })),
   constants: fsConstants,
   cp: asAsync((from, to, options) => host('fs_copy', { from: pathOf(from), to: pathOf(to), recursive: options?.recursive === true })),
