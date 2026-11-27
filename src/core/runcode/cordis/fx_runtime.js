@@ -1284,7 +1284,17 @@ const agentPersistence = {
 const agentCore = {
   name: 'fx',
   interface: 1,
-  turn: (prompt) => globalThis.gm.Agent({ prompt: String(prompt), description: 'agent turn' }),
+  turn: (prompt) => {
+    const id = host('proc_spawn', { file: 'fx', args: ['ask', String(prompt)] }).id
+    let text = ''
+    for (;;) {
+      const reply = host('proc_read', { id, stream: 'stdout' })
+      if (reply.eof) break
+      text += fromBytes(decodeBase64(reply.body), 'utf8')
+    }
+    host('proc_wait', { id })
+    return text.trim()
+  },
 }
 
 const agentModule = { core: agentCore, persistence: agentPersistence }
