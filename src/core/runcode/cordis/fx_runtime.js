@@ -832,7 +832,26 @@ const createServer = (handler = () => {}) => {
 
 const http = { createServer, validateHeaderValue }
 
-const https = { createServer: fail('https.createServer'), get: fail('https.get'), request: fail('https.request') }
+const httpsRequest = (url, options = {}, callback) => {
+  if (typeof options === 'function') {
+    callback = options
+    options = {}
+  }
+  const reply = host('net_fetch', { url: String(url), method: 'GET', loopback: options.allowLoopback === true })
+  const body = fromBytes(decodeBase64(reply.body), 'utf8')
+  const response = {
+    statusCode: reply.status,
+    on: (event, listener) => {
+      if (event === 'data') listener(body)
+      if (event === 'end') listener()
+      return response
+    },
+  }
+  if (callback) callback(response)
+  return response
+}
+
+const https = { createServer: fail('https.createServer'), get: httpsRequest, request: httpsRequest }
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256)
