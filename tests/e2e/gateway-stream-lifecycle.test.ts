@@ -7637,7 +7637,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         );
         expect(json.exit_code).toBe(0);
         expect(json.output).toBe(expectedOutput);
-        expect(json.recovery).toEqual({ state: "recovered", attempt: 2 });
+        expect(json.recovery).toEqual({ state: "recovered", attempt: 2, cause: "dropped" });
         expect(connections).toBe(3);
         expect(requests).toBe(1);
         expect(socketFailure).toBeUndefined();
