@@ -39,6 +39,8 @@ pub const verbs = [_]Verb{
             .properties = &.{
                 .{ .name = "file", .json_type = .string },
                 .{ .name = "args", .json_type = .array },
+                .{ .name = "cwd", .json_type = .string },
+                .{ .name = "env", .json_type = .object },
             },
             .required = &.{"file"},
         },
