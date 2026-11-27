@@ -579,7 +579,7 @@ const execFile = (file, ...rest) => {
 const spawnStreams = (file, args = [], options = {}) => {
   const request = { file, args: args.map(String) }
   if (options.cwd !== undefined) request.cwd = String(options.cwd)
-  if (options.env !== undefined) request.env = Object.fromEntries(Object.entries(options.env).map(([key, value]) => [key, String(value)]))
+  if (options.env !== undefined) request.env_json = JSON.stringify(Object.fromEntries(Object.entries(options.env).map(([key, value]) => [key, String(value)])))
   const pid = host('proc_spawn', request).id
   const pump = (stream) => ({ read: async () => {
     const reply = host('proc_read', { id: pid, stream })

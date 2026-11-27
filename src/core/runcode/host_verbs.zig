@@ -40,7 +40,7 @@ pub const verbs = [_]Verb{
                 .{ .name = "file", .json_type = .string },
                 .{ .name = "args", .json_type = .array },
                 .{ .name = "cwd", .json_type = .string },
-                .{ .name = "env", .json_type = .object },
+                .{ .name = "env_json", .json_type = .string },
             },
             .required = &.{"file"},
         },
@@ -674,16 +674,23 @@ fn procSpawn(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     };
     var environment = std.process.Environ.Map.init(proc_store);
     defer environment.deinit();
-    const has_env = if (args.get("env")) |value| switch (value) {
-        .object => |entries| blk: {
-            var iterator = entries.iterator();
-            while (iterator.next()) |entry| switch (entry.value_ptr.*) {
-                .string => |text| try environment.put(entry.key_ptr.*, text),
-                else => return invalidField(alloc, "env", "an object of strings"),
-            };
-            break :blk true;
-        },
-        else => return invalidField(alloc, "env", "an object of strings"),
+    var env_parsed: ?std.json.Parsed(std.json.Value) = if (stringArg(args, "env_json")) |text|
+        try std.json.parseFromSlice(std.json.Value, alloc, text, .{})
+    else
+        null;
+    defer if (env_parsed) |*parsed| parsed.deinit();
+    const has_env = if (env_parsed) |parsed| blk: {
+        switch (parsed.value) {
+            .object => |entries| {
+                var iterator = entries.iterator();
+                while (iterator.next()) |entry| switch (entry.value_ptr.*) {
+                    .string => |text| try environment.put(entry.key_ptr.*, text),
+                    else => return invalidField(alloc, "env", "an object of strings"),
+                };
+            },
+            else => return invalidField(alloc, "env", "an object of strings"),
+        }
+        break :blk true;
     } else false;
     const env_ptr: ?*const std.process.Environ.Map = if (has_env) &environment else null;
     const cwd_text = stringArg(args, "cwd");
