@@ -8219,7 +8219,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         ["ask", "--json", "--auto", "Delegate the MCP fixture call."],
         {
           cwd: root.workspace,
-          env: { ...fixtureEnv(root, gateway, tracePath), KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: "1" },
+          env: { ...{ ...fixtureEnv(root, gateway, tracePath), FX_TRACE_SCOPES: "agent,core,gateway,stream,tool,subagent" }, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: "1" },
           timeoutMs: 20_000,
         },
       );
