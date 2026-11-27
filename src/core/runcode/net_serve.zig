@@ -125,6 +125,19 @@ pub fn wsSend(io: std.Io, conn: *Conn, payload: []const u8) !void {
     try writer.interface.flush();
 }
 
+pub fn wsClose(io: std.Io, conn: *Conn) !void {
+    var writer = conn.stream.writer(io, &conn.write_buf);
+    const mask_bit: u8 = if (conn.client) 0x80 else 0;
+    try writer.interface.writeAll(&.{ 0x88, mask_bit });
+    if (conn.client) {
+        var mask: [4]u8 = undefined;
+        try io.randomSecure(&mask);
+        try writer.interface.writeAll(&mask);
+    }
+    try writer.interface.flush();
+    conn.stream.close(io);
+}
+
 pub fn connect(alloc: Allocator, io: std.Io, host: []const u8, port: u16, path: []const u8) !*Conn {
     const address = try std.Io.net.IpAddress.parse(host, port);
     const conn = try alloc.create(Conn);

@@ -746,6 +746,7 @@ const serveModule = {
           websocket: {
             send: (text) => host('ws_send', { conn: request.conn, body: String(text) }),
             recv: () => host('ws_recv', { conn: request.conn }).body,
+            recvFrame: () => host('ws_recv', { conn: request.conn }),
           },
         }
       },
@@ -788,6 +789,7 @@ const wsModule = {
     return {
       send: (text) => host('ws_send', { conn: id, body: String(text) }),
       recv: () => host('ws_recv', { conn: id }).body,
+      close: () => host('ws_close', { conn: id }),
     }
   },
 }

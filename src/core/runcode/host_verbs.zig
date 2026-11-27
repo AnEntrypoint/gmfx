@@ -270,6 +270,14 @@ pub const verbs = [_]Verb{
         },
     },
     .{
+        .name = "ws_close",
+        .description = "Send a websocket close frame and close the connection.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "conn", .json_type = .integer }},
+            .required = &.{"conn"},
+        },
+    },
+    .{
         .name = "fs_exists",
         .description = "Report whether a path exists.",
         .input_schema = .{
@@ -576,6 +584,7 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "watch_close")) return watchClose(alloc, args);
     if (std.mem.eql(u8, name, "serve_listen")) return serveListen(alloc, args);
     if (std.mem.eql(u8, name, "ws_connect")) return wsConnect(alloc, args);
+    if (std.mem.eql(u8, name, "ws_close")) return wsCloseVerb(alloc, args);
     if (std.mem.eql(u8, name, "serve_accept")) return serveAccept(alloc, args);
     if (std.mem.eql(u8, name, "serve_respond")) return serveRespond(alloc, args);
     if (std.mem.eql(u8, name, "ws_send")) return wsSend(alloc, args);
@@ -1117,6 +1126,14 @@ fn wsConnect(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     next_serve_id += 1;
     try serve_conns.put(serve_store, id, conn);
     return encode(alloc, .{ .ok = true, .conn = id });
+}
+
+fn wsCloseVerb(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "conn") orelse return invalidField(alloc, "conn", "an integer");
+    const entry = serve_conns.fetchRemove(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such connection" });
+    net_serve.wsClose(io_mod.getIo(), entry.value) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    serve_store.destroy(entry.value);
+    return encode(alloc, .{ .ok = true });
 }
 
 fn wsRecv(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {

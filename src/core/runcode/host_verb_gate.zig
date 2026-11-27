@@ -31,6 +31,7 @@ pub const table = [_]Row{
     .{ .verb = "watch_close", .class = .none },
     .{ .verb = "serve_listen", .class = .network },
     .{ .verb = "ws_connect", .class = .network },
+    .{ .verb = "ws_close", .class = .none },
     .{ .verb = "serve_accept", .class = .none },
     .{ .verb = "serve_respond", .class = .none },
     .{ .verb = "ws_send", .class = .none },
