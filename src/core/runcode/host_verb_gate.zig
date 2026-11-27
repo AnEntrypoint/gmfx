@@ -19,6 +19,12 @@ pub const Row = struct {
 pub const table = [_]Row{
     .{ .verb = "process_info", .class = .none },
     .{ .verb = "net_fetch", .class = .network },
+    .{ .verb = "proc_spawn", .class = .execute },
+    .{ .verb = "proc_write", .class = .none },
+    .{ .verb = "proc_close_stdin", .class = .none },
+    .{ .verb = "proc_read", .class = .none },
+    .{ .verb = "proc_wait", .class = .none },
+    .{ .verb = "proc_kill", .class = .none },
     .{ .verb = "fs_exists", .class = .read, .path_keys = &.{"path"} },
     .{ .verb = "fs_stat", .class = .read, .path_keys = &.{"path"} },
     .{ .verb = "fs_read", .class = .read, .path_keys = &.{"path"} },

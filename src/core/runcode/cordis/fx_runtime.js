@@ -576,7 +576,25 @@ const execFile = (file, ...rest) => {
   return undefined
 }
 
-const childProcess = { execFile, execFileSync, spawn: fail('child_process.spawn'), spawnSync }
+const spawnStreams = (file, args = []) => {
+  const pid = host('proc_spawn', { file, args: args.map(String) }).id
+  const pump = (stream) => ({ read: async () => {
+    const reply = host('proc_read', { id: pid, stream })
+    return reply.eof ? null : fromBytes(decodeBase64(reply.body), 'utf8')
+  } })
+  return {
+    pid,
+    stdin: {
+      write: async (data) => host('proc_write', { id: pid, body: encodeBase64(toBytes(data, 'utf8')) }),
+      end: async () => host('proc_close_stdin', { id: pid }),
+    },
+    stdout: pump('stdout'),
+    stderr: pump('stderr'),
+    wait: async () => host('proc_wait', { id: pid }).code,
+    kill: () => host('proc_kill', { id: pid }),
+  }
+}
+const childProcess = { execFile, execFileSync, spawn: spawnStreams, spawnSync }
 
 const os = {
   availableParallelism: () => processInfo().parallelism,

@@ -33,6 +33,63 @@ pub const verbs = [_]Verb{
         },
     },
     .{
+        .name = "proc_spawn",
+        .description = "Start a process from file and args with piped stdin, stdout and stderr; returns its id.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "file", .json_type = .string },
+                .{ .name = "args", .json_type = .array },
+            },
+            .required = &.{"file"},
+        },
+    },
+    .{
+        .name = "proc_write",
+        .description = "Write base64 bytes to a started process stdin.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "id", .json_type = .integer },
+                .{ .name = "body", .json_type = .string },
+            },
+            .required = &.{ "id", "body" },
+        },
+    },
+    .{
+        .name = "proc_close_stdin",
+        .description = "Close a started process stdin.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .required = &.{"id"},
+        },
+    },
+    .{
+        .name = "proc_read",
+        .description = "Read the next chunk of a started process stdout or stderr as base64; eof when closed.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "id", .json_type = .integer },
+                .{ .name = "stream", .json_type = .string },
+            },
+            .required = &.{"id"},
+        },
+    },
+    .{
+        .name = "proc_wait",
+        .description = "Wait for a started process to exit and return its exit code.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .required = &.{"id"},
+        },
+    },
+    .{
+        .name = "proc_kill",
+        .description = "Kill a started process.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .required = &.{"id"},
+        },
+    },
+    .{
         .name = "fs_exists",
         .description = "Report whether a path exists.",
         .input_schema = .{
@@ -333,6 +390,12 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "fs_symlink")) return fsSymlink(alloc, args);
     if (std.mem.eql(u8, name, "fs_link")) return fsLink(alloc, args);
     if (std.mem.eql(u8, name, "net_fetch")) return netFetch(alloc, args);
+    if (std.mem.eql(u8, name, "proc_spawn")) return procSpawn(alloc, args);
+    if (std.mem.eql(u8, name, "proc_write")) return procWrite(alloc, args);
+    if (std.mem.eql(u8, name, "proc_close_stdin")) return procCloseStdin(alloc, args);
+    if (std.mem.eql(u8, name, "proc_read")) return procRead(alloc, args);
+    if (std.mem.eql(u8, name, "proc_wait")) return procWait(alloc, args);
+    if (std.mem.eql(u8, name, "proc_kill")) return procKill(alloc, args);
     if (std.mem.eql(u8, name, "fs_chmod")) return fsChmod(alloc, args);
     if (std.mem.eql(u8, name, "fs_truncate")) return fsTruncate(alloc, args);
     if (std.mem.eql(u8, name, "run_command")) return runCommand(alloc, args);
@@ -537,6 +600,98 @@ fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         .failure => |*failed| return encode(alloc, .{ .ok = true, .status = if (failed.status) |status| @intFromEnum(status) else 0, .url = url_text, .body = "" }),
         .cross_host_redirect => return encode(alloc, .{ .ok = false, .@"error" = "cross_host_redirect" }),
     }
+}
+
+const Proc = struct { child: std.process.Child };
+var procs: std.AutoHashMapUnmanaged(i64, Proc) = .empty;
+var next_proc_id: i64 = 1;
+
+fn procFor(args: std.json.ObjectMap) ?*Proc {
+    const id = integerArg(args, "id") orelse return null;
+    return procs.getPtr(id);
+}
+
+fn procSpawn(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const file = stringArg(args, "file") orelse return invalidField(alloc, "file", "a string");
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(alloc);
+    try argv.append(alloc, file);
+    if (args.get("args")) |value| switch (value) {
+        .array => |items| for (items.items) |item| switch (item) {
+            .string => |text| try argv.append(alloc, text),
+            else => return invalidField(alloc, "args", "an array of strings"),
+        },
+        else => return invalidField(alloc, "args", "an array of strings"),
+    };
+    const child = std.process.spawn(io_mod.getIo(), .{
+        .argv = argv.items,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    const id = next_proc_id;
+    next_proc_id += 1;
+    try procs.put(std.heap.page_allocator, id, .{ .child = child });
+    return encode(alloc, .{ .ok = true, .id = id });
+}
+
+fn procWrite(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const proc = procFor(args) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such process" });
+    const stdin_file = proc.child.stdin orelse return encode(alloc, .{ .ok = false, .@"error" = "stdin is closed" });
+    const encoded = stringArg(args, "body") orelse "";
+    const size = try std.base64.standard.Decoder.calcSizeForSlice(encoded);
+    const bytes = try alloc.alloc(u8, size);
+    defer alloc.free(bytes);
+    try std.base64.standard.Decoder.decode(bytes, encoded);
+    try stdin_file.writeStreamingAll(io_mod.getIo(), bytes);
+    return encode(alloc, .{ .ok = true });
+}
+
+fn procCloseStdin(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const proc = procFor(args) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such process" });
+    if (proc.child.stdin) |stdin_file| {
+        stdin_file.close(io_mod.getIo());
+        proc.child.stdin = null;
+    }
+    return encode(alloc, .{ .ok = true });
+}
+
+fn procRead(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const proc = procFor(args) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such process" });
+    const is_stderr = std.mem.eql(u8, stringArg(args, "stream") orelse "stdout", "stderr");
+    const stream_file = if (is_stderr) proc.child.stderr else proc.child.stdout;
+    const file = stream_file orelse return encode(alloc, .{ .ok = true, .eof = true, .body = "" });
+    var buffer: [16384]u8 = undefined;
+    const read_len = file.readStreaming(io_mod.getIo(), &.{buffer[0..]}) catch |err| switch (err) {
+        error.EndOfStream => return encode(alloc, .{ .ok = true, .eof = true, .body = "" }),
+        else => return err,
+    };
+    const encoded = try alloc.alloc(u8, std.base64.standard.Encoder.calcSize(read_len));
+    defer alloc.free(encoded);
+    _ = std.base64.standard.Encoder.encode(encoded, buffer[0..read_len]);
+    return encode(alloc, .{ .ok = true, .eof = false, .body = @as([]const u8, encoded) });
+}
+
+fn procWait(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const proc = procFor(args) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such process" });
+    const term = try proc.child.wait(io_mod.getIo());
+    const code: i64 = switch (term) {
+        .exited => |value| @as(i64, value),
+        else => -1,
+    };
+    if (proc.child.stdout) |out| out.close(io_mod.getIo());
+    if (proc.child.stderr) |err_file| err_file.close(io_mod.getIo());
+    _ = procs.remove(id);
+    return encode(alloc, .{ .ok = true, .code = code });
+}
+
+fn procKill(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const proc = procFor(args) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such process" });
+    proc.child.kill(io_mod.getIo());
+    _ = procs.remove(id);
+    return encode(alloc, .{ .ok = true });
 }
 
 fn fsStat(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
