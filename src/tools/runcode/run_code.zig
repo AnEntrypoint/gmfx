@@ -35,7 +35,10 @@ pub fn describe(comptime tools: []const tool_dispatch.Tool) []const u8 {
             text = text ++ (if (first) "" else ",") ++ tool.name;
             first = false;
         }
-        for (host_verbs.names) |name| text = text ++ "," ++ name;
+        for (host_verbs.names) |name| {
+            if (std.mem.startsWith(u8, name, "proc_")) continue;
+            text = text ++ "," ++ name;
+        }
         const final = text ++ ".";
         if (final.len > model_tool_schema.description_max_bytes) @compileError("the run_code description must fit the model description cap");
         return final;
