@@ -1,9 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub const c = @cImport({
-    @cInclude("sqlite3.h");
-});
+pub const c = @import("sqlite_c");
 
 pub fn open(path: [:0]const u8) !*c.sqlite3 {
     var db: ?*c.sqlite3 = null;

@@ -177,6 +177,9 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addObjectFile(txiki_build_dir.path(b, "libuv/libuv.a"));
     exe.root_module.addCSourceFile(.{ .file = b.path("native/sqlite/sqlite3.c"), .flags = &.{ "-DSQLITE_THREADSAFE=0", "-DSQLITE_OMIT_LOAD_EXTENSION", "-DSQLITE_DQS=0" } });
     exe.root_module.addIncludePath(b.path("native/sqlite"));
+    const sqlite_c = b.addTranslateC(.{ .root_source_file = b.path("native/sqlite/sqlite3.h"), .target = target, .optimize = optimize, .link_libc = true });
+    sqlite_c.addIncludePath(b.path("native/sqlite"));
+    exe.root_module.addImport("sqlite_c", sqlite_c.createModule());
     if (target.result.os.tag == .macos) {
         exe.root_module.linkFramework("CoreFoundation", .{});
         exe.root_module.linkFramework("CoreServices", .{});
