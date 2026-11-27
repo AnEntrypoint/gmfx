@@ -129,7 +129,7 @@ pub fn connect(alloc: Allocator, io: std.Io, host: []const u8, port: u16, path: 
     const address = try std.Io.net.IpAddress.parse(host, port);
     const conn = try alloc.create(Conn);
     errdefer alloc.destroy(conn);
-    conn.* = .{ .stream = try address.connect(io, .{}), .client = true };
+    conn.* = .{ .stream = try address.connect(io, .{ .mode = .stream }), .client = true };
     var key_bytes: [16]u8 = undefined;
     try io.randomSecure(&key_bytes);
     var key_text: [24]u8 = undefined;
