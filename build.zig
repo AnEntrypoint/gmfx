@@ -175,6 +175,8 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addObjectFile(txiki_build_dir.path(b, "libfx_txiki.a"));
     exe.root_module.addObjectFile(txiki_build_dir.path(b, "libfx_quickjs_ng.a"));
     exe.root_module.addObjectFile(txiki_build_dir.path(b, "libuv/libuv.a"));
+    exe.root_module.addCSourceFile(.{ .file = b.path("native/sqlite/sqlite3.c"), .flags = &.{ "-DSQLITE_THREADSAFE=0", "-DSQLITE_OMIT_LOAD_EXTENSION", "-DSQLITE_DQS=0" } });
+    exe.root_module.addIncludePath(b.path("native/sqlite"));
     if (target.result.os.tag == .macos) {
         exe.root_module.linkFramework("CoreFoundation", .{});
         exe.root_module.linkFramework("CoreServices", .{});

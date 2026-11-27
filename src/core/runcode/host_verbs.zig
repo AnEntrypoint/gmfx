@@ -3,6 +3,7 @@ const url_policy = @import("../../tools/web/url_policy.zig");
 const http_fetch = @import("../../tools/web/http_fetch.zig");
 const net_serve = @import("net_serve.zig");
 const pty_host = @import("pty_host.zig");
+const sqlite_host = @import("sqlite_host.zig");
 const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const model_tool_schema = @import("../tooling/model_tool_schema.zig");
@@ -213,6 +214,44 @@ pub const verbs = [_]Verb{
     .{
         .name = "pty_wait",
         .description = "Wait for a pseudo-terminal program to exit and return its exit code.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .required = &.{"id"},
+        },
+    },
+    .{
+        .name = "sqlite_open",
+        .description = "Open or create a SQLite database file; returns its id.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "path", .json_type = .string }},
+            .required = &.{"path"},
+        },
+    },
+    .{
+        .name = "sqlite_exec",
+        .description = "Run SQL on an open SQLite database.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "id", .json_type = .integer },
+                .{ .name = "sql", .json_type = .string },
+            },
+            .required = &.{ "id", "sql" },
+        },
+    },
+    .{
+        .name = "sqlite_all",
+        .description = "Run a SQL query on an open SQLite database and return its rows as text.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "id", .json_type = .integer },
+                .{ .name = "sql", .json_type = .string },
+            },
+            .required = &.{ "id", "sql" },
+        },
+    },
+    .{
+        .name = "sqlite_close",
+        .description = "Close an open SQLite database.",
         .input_schema = .{
             .properties = &.{.{ .name = "id", .json_type = .integer }},
             .required = &.{"id"},
@@ -532,6 +571,10 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "pty_write")) return ptyWrite(alloc, args);
     if (std.mem.eql(u8, name, "pty_read")) return ptyRead(alloc, args);
     if (std.mem.eql(u8, name, "pty_wait")) return ptyWait(alloc, args);
+    if (std.mem.eql(u8, name, "sqlite_open")) return sqliteOpen(alloc, args);
+    if (std.mem.eql(u8, name, "sqlite_exec")) return sqliteExec(alloc, args);
+    if (std.mem.eql(u8, name, "sqlite_all")) return sqliteAll(alloc, args);
+    if (std.mem.eql(u8, name, "sqlite_close")) return sqliteClose(alloc, args);
     if (std.mem.eql(u8, name, "proc_spawn")) return procSpawn(alloc, args);
     if (std.mem.eql(u8, name, "proc_write")) return procWrite(alloc, args);
     if (std.mem.eql(u8, name, "proc_close_stdin")) return procCloseStdin(alloc, args);
@@ -1117,6 +1160,53 @@ fn ptyWait(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         else => -1,
     };
     return encode(alloc, .{ .ok = true, .code = code });
+}
+
+var sqlite_dbs: std.AutoHashMapUnmanaged(i64, *sqlite_host.c.sqlite3) = .empty;
+var next_sqlite_id: i64 = 1;
+const sqlite_store = std.heap.page_allocator;
+
+fn sqliteOpen(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const path = stringArg(args, "path") orelse return invalidField(alloc, "path", "a string");
+    const path_z = try sqlite_store.dupeSentinel(u8, path, 0);
+    defer sqlite_store.free(path_z);
+    const db = sqlite_host.open(path_z) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    const id = next_sqlite_id;
+    next_sqlite_id += 1;
+    try sqlite_dbs.put(sqlite_store, id, db);
+    return encode(alloc, .{ .ok = true, .id = id });
+}
+
+fn sqliteExec(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const db = sqlite_dbs.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such database" });
+    const sql = try sqlite_store.dupeSentinel(u8, stringArg(args, "sql") orelse "", 0);
+    defer sqlite_store.free(sql);
+    sqlite_host.exec(db, sql) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    return encode(alloc, .{ .ok = true });
+}
+
+fn sqliteAll(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const db = sqlite_dbs.get(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such database" });
+    const sql = try sqlite_store.dupeSentinel(u8, stringArg(args, "sql") orelse "", 0);
+    defer sqlite_store.free(sql);
+    const rows = sqlite_host.all(alloc, db, sql) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    defer {
+        for (rows) |row| {
+            for (row) |cell| alloc.free(cell);
+            alloc.free(row);
+        }
+        alloc.free(rows);
+    }
+    return encode(alloc, .{ .ok = true, .rows = rows });
+}
+
+fn sqliteClose(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
+    const entry = sqlite_dbs.fetchRemove(id) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such database" });
+    sqlite_host.close(entry.value);
+    return encode(alloc, .{ .ok = true });
 }
 
 fn fsStat(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {

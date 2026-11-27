@@ -767,9 +767,21 @@ const ptyModule = {
   },
 }
 
+const sqliteModule = {
+  open: (path) => {
+    const id = host('sqlite_open', { path: String(path) }).id
+    return {
+      exec: (sql) => host('sqlite_exec', { id, sql: String(sql) }),
+      all: (sql) => host('sqlite_all', { id, sql: String(sql) }).rows,
+      close: () => host('sqlite_close', { id }),
+    }
+  },
+}
+
 export const fxRuntime = {
   serveModule,
   ptyModule,
+  sqliteModule,
   fetch,
   fs,
   fsPromises,
