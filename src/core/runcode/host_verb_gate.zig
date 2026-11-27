@@ -94,8 +94,14 @@ pub fn refusal(
             .string => |text| text,
             else => return null,
         };
+        const loopback = switch (args.get("loopback") orelse .null) {
+            .bool => |flag| flag,
+            else => false,
+        };
+        var fetch_ctx = ctx;
+        fetch_ctx.host_fetch_loopback = loopback;
         const call_json = try encodeJson(ctx.allocator, .{ .url = url });
-        return try admit(ctx, registry, reply_alloc, verb, "FetchURL", call_json);
+        return try admit(fetch_ctx, registry, reply_alloc, verb, "FetchURL", call_json);
     }
     const tool_name = toolNameFor(row.class).?;
     for (row.path_keys) |key| {

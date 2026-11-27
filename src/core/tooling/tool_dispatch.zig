@@ -324,6 +324,7 @@ pub const DispatchContext = struct {
     access_scope: ?workspace_access.AccessScope = null,
     ignored_list_entries: []const []const u8 = &default_ignored_list_entries,
     max_list_entries: usize = default_max_list_entries,
+    host_fetch_loopback: bool = false,
     max_read_file_bytes: usize = default_max_read_file_bytes,
     max_read_file_lines: usize = default_max_read_file_lines,
     max_read_file_line_len: usize = default_max_read_file_line_len,

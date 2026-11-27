@@ -120,7 +120,7 @@ pub fn validate(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolIn
         input.url = owned;
     }
 
-    var normalized = url_policy.normalize(ctx.allocator, input.url) catch |err| {
+    var normalized = url_policy.normalizeWith(ctx.allocator, input.url, ctx.host_fetch_loopback) catch |err| {
         return try ctx.allocator.dupe(u8, urlValidationMessage(err));
     };
     defer normalized.deinit(ctx.allocator);
