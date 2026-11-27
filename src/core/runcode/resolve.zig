@@ -47,6 +47,7 @@ pub fn resolve(alloc: std.mem.Allocator, mode: Mode, base: []const u8, specifier
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    if (try importMapTarget(arena, specifier)) |mapped| return alloc.dupe(u8, mapped);
     const request = (try splitRequest(arena, specifier)) orelse return error.ModuleNotFound;
     const conditions: []const []const u8 = switch (mode) {
         .import => &.{ "import", "default" },
@@ -65,6 +66,30 @@ pub fn resolve(alloc: std.mem.Allocator, mode: Mode, base: []const u8, specifier
         if (try locate(arena, .embedded, request, conditions)) |found| return alloc.dupe(u8, found);
     }
     return error.ModuleNotFound;
+}
+
+fn jsRoot() ?[]const u8 {
+    return io_mod.getenv("FX_JS_ROOT");
+}
+
+fn importMapTarget(arena: std.mem.Allocator, specifier: []const u8) !?[]const u8 {
+    const root = jsRoot() orelse return null;
+    const map_path = try std.fs.path.join(arena, &.{ root, "fx.importmap.json" });
+    const text = readDisk(arena, map_path) orelse return null;
+    const parsed = try std.json.parseFromSlice(std.json.Value, arena, text, .{});
+    const imports = switch (parsed.value) {
+        .object => |object| object.get("imports") orelse return null,
+        else => return null,
+    };
+    const target = switch (imports) {
+        .object => |map| map.get(specifier) orelse return null,
+        else => return null,
+    };
+    const relative = switch (target) {
+        .string => |value| value,
+        else => return null,
+    };
+    return try std.fs.path.join(arena, &.{ root, relative });
 }
 
 fn splitRequest(arena: std.mem.Allocator, specifier: []const u8) !?Request {
