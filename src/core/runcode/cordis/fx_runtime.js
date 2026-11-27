@@ -463,7 +463,144 @@ const createHash = (algorithm) => {
 
 const crypto = { createHash, randomBytes, randomUUID }
 
-const stream = { PassThrough: fail('stream.PassThrough'), Readable: fail('stream.Readable'), Writable: fail('stream.Writable'), pipeline: fail('stream.pipeline') }
+class FxEmitter {
+  constructor() { this.listeners = new Map() }
+  on(event, listener) {
+    const list = this.listeners.get(event) ?? []
+    list.push(listener)
+    this.listeners.set(event, list)
+    return this
+  }
+  once(event, listener) {
+    const wrapper = (...args) => {
+      this.off(event, wrapper)
+      listener(...args)
+    }
+    return this.on(event, wrapper)
+  }
+  off(event, listener) {
+    this.listeners.set(event, (this.listeners.get(event) ?? []).filter((item) => item !== listener))
+    return this
+  }
+  emit(event, ...args) {
+    for (const listener of [...(this.listeners.get(event) ?? [])]) listener(...args)
+    return (this.listeners.get(event) ?? []).length > 0
+  }
+}
+
+class Readable extends FxEmitter {
+  constructor(options = {}) {
+    super()
+    this.buffered = []
+    this.ended = false
+    this.readableEnded = false
+    this.flowing = false
+    this.encoding = options.encoding ?? null
+    this.objectMode = options.objectMode ?? false
+  }
+  push(chunk) {
+    if (chunk === null) this.ended = true
+    else this.buffered.push(chunk)
+    this.flow()
+    return chunk !== null
+  }
+  flow() {
+    if (!this.flowing) return
+    while (this.buffered.length > 0) this.emit('data', this.buffered.shift())
+    if (this.ended && !this.readableEnded) {
+      this.readableEnded = true
+      this.emit('end')
+    }
+  }
+  on(event, listener) {
+    super.on(event, listener)
+    if (event === 'data') {
+      this.flowing = true
+      this.flow()
+    }
+    return this
+  }
+  resume() {
+    this.flowing = true
+    this.flow()
+    return this
+  }
+  read() {
+    return this.buffered.length > 0 ? this.buffered.shift() : null
+  }
+  setEncoding(encoding) {
+    this.encoding = encoding
+    return this
+  }
+  pipe(destination) {
+    this.on('data', (chunk) => destination.write(chunk))
+    this.on('end', () => destination.end())
+    return destination
+  }
+  static from(iterable) {
+    const readable = new Readable({ objectMode: true })
+    const pump = async () => {
+      for await (const chunk of iterable) readable.push(chunk)
+      readable.push(null)
+    }
+    pump()
+    return readable
+  }
+}
+
+class Writable extends FxEmitter {
+  constructor(options = {}) {
+    super()
+    this.writeImpl = options.write ?? null
+    this.chunks = []
+    this.finished = false
+  }
+  write(chunk, encoding, callback) {
+    const done = typeof encoding === 'function' ? encoding : callback
+    if (this.writeImpl !== null) this.writeImpl(chunk, typeof encoding === 'string' ? encoding : 'buffer', done ?? (() => {}))
+    else this.chunks.push(chunk)
+    return true
+  }
+  end(chunk) {
+    if (chunk !== undefined && chunk !== null) this.write(chunk)
+    if (!this.finished) {
+      this.finished = true
+      this.emit('finish')
+      this.emit('close')
+    }
+    return this
+  }
+}
+
+class PassThrough extends Readable {
+  write(chunk) {
+    this.push(chunk)
+    return true
+  }
+  end(chunk) {
+    if (chunk !== undefined && chunk !== null) this.push(chunk)
+    this.push(null)
+    this.emit('finish')
+    return this
+  }
+}
+
+const pipeline = (...streams) => {
+  const callback = typeof streams[streams.length - 1] === 'function' ? streams.pop() : () => {}
+  for (let index = 0; index < streams.length - 1; index += 1) streams[index].pipe(streams[index + 1])
+  const last = streams[streams.length - 1]
+  let finished = false
+  const finish = (error) => {
+    if (finished) return
+    finished = true
+    callback(error)
+  }
+  last.on('finish', () => finish())
+  last.on('error', (error) => finish(error))
+  return last
+}
+
+const stream = { PassThrough, Readable, Writable, Transform: PassThrough, pipeline }
 
 class FxBuffer extends Uint8Array {
   toString(encoding, start = 0, end = this.length) {
