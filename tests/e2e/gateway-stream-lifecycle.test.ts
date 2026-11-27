@@ -8235,7 +8235,14 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         );
       }
       const json = parseAskJson(result.stdout);
-      const pid = Number.parseInt(readFileSync(mcp.pidPath, "utf8"), 10);
+      const pidText = (() => {
+        try {
+          return readFileSync(mcp.pidPath, "utf8");
+        } catch {
+          throw new Error(`MCP fixture never started: the subagent made no MCP call; subagent result=${JSON.stringify(json)}`);
+        }
+      })();
+      const pid = Number.parseInt(pidText, 10);
 
       expect(result.code).toBe(0);
       expect(parentResult).toContain("status: completed");
