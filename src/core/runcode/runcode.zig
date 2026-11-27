@@ -28,6 +28,7 @@ pub const Options = struct {
     body_path: ?[]const u8 = null,
     root: []const u8,
     verbs: Verbs,
+    run_id: ?[]const u8 = null,
 };
 
 const Host = extern struct {
@@ -64,10 +65,22 @@ pub const Outcome = struct {
     }
 };
 
+const JournalRecord = struct {
+    seq: usize,
+    verb: []const u8,
+    args: []const u8,
+    reply: []const u8,
+};
+
+const max_journal_bytes = 64 * 1024 * 1024;
+
 const Session = struct {
     alloc: std.mem.Allocator,
     verbs: Verbs,
     root: []const u8,
+    journal_path: ?[]const u8 = null,
+    journal_text: std.ArrayList(u8) = .empty,
+    seq: usize = 0,
     console: std.ArrayList(u8) = .empty,
     lines: usize = 0,
     bytes: usize = 0,
@@ -94,10 +107,44 @@ const Session = struct {
     fn dispatch(self: *Session, name: []const u8, args_json: []const u8, remaining_ms: u64) ![]u8 {
         if (std.mem.eql(u8, name, "fx.read_text")) return readTextReply(self.alloc, self.root, args_json);
         if (std.mem.eql(u8, name, "fx.resolve")) return resolve.reply(self.alloc, args_json);
+        if (self.journal_path != null) {
+            self.seq += 1;
+            if (try self.replay(name, args_json)) |reply| return reply;
+        }
         if (remaining_ms == 0) return replyError(self.alloc, "the body passed its JavaScript deadline before this call");
         const bounded = try clampTimeout(self.alloc, name, args_json, remaining_ms);
         defer self.alloc.free(bounded);
-        return self.verbs.invoke(self.verbs.context, self.alloc, name, bounded);
+        const reply = try self.verbs.invoke(self.verbs.context, self.alloc, name, bounded);
+        if (self.journal_path != null) try self.record(name, args_json, reply);
+        return reply;
+    }
+
+    fn replay(self: *Session, name: []const u8, args_json: []const u8) !?[]u8 {
+        var lines = std.mem.splitScalar(u8, self.journal_text.items, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            var parsed = try std.json.parseFromSlice(JournalRecord, self.alloc, line, .{ .ignore_unknown_fields = true });
+            defer parsed.deinit();
+            if (parsed.value.seq != self.seq) continue;
+            if (!std.mem.eql(u8, parsed.value.verb, name) or !std.mem.eql(u8, parsed.value.args, args_json)) {
+                return try replyError(self.alloc, "the resumed run made a different inner call than its journal");
+            }
+            return try self.alloc.dupe(u8, parsed.value.reply);
+        }
+        return null;
+    }
+
+    fn record(self: *Session, name: []const u8, args_json: []const u8, reply: []const u8) !void {
+        var writer: std.Io.Writer.Allocating = .init(self.alloc);
+        defer writer.deinit();
+        try std.json.Stringify.value(JournalRecord{ .seq = self.seq, .verb = name, .args = args_json, .reply = reply }, .{}, &writer.writer);
+        try self.journal_text.appendSlice(self.alloc, writer.written());
+        try self.journal_text.append(self.alloc, '\n');
+        const path = self.journal_path orelse return;
+        try std.Io.Dir.cwd().createDirPath(io_mod.getIo(), std.fs.path.dirname(path) orelse ".");
+        var file = try std.Io.Dir.cwd().createFile(io_mod.getIo(), path, .{ .truncate = true });
+        defer file.close(io_mod.getIo());
+        try file.writeStreamingAll(io_mod.getIo(), self.journal_text.items);
     }
 };
 
@@ -206,9 +253,24 @@ fn wrapBody(alloc: std.mem.Allocator, body: []const u8, format: Format) ![:0]u8 
     }
 }
 
+fn openJournal(alloc: std.mem.Allocator, session: *Session, root: []const u8, run_id: []const u8) !void {
+    const file_name = try std.fmt.allocPrint(alloc, "{s}.jsonl", .{run_id});
+    defer alloc.free(file_name);
+    const path = try std.fs.path.join(alloc, &.{ root, ".fx", "runs", file_name });
+    session.journal_path = path;
+    var existing = std.Io.Dir.cwd().openFile(io_mod.getIo(), path, .{}) catch return;
+    defer existing.close(io_mod.getIo());
+    const text = try io_mod.readFileToEnd(alloc, &existing, max_journal_bytes);
+    defer alloc.free(text);
+    try session.journal_text.appendSlice(alloc, text);
+}
+
 pub fn execute(alloc: std.mem.Allocator, body: []const u8, options: Options) !Outcome {
     var session: Session = .{ .alloc = alloc, .verbs = options.verbs, .root = options.root };
     defer session.console.deinit(alloc);
+    defer session.journal_text.deinit(alloc);
+    if (options.run_id) |run_id| try openJournal(alloc, &session, options.root, run_id);
+    defer if (session.journal_path) |path| alloc.free(path);
     const source = try wrapBody(alloc, body, options.format);
     defer alloc.free(source);
     const catalog = try dupeZ(alloc, options.verbs.catalog);
@@ -257,6 +319,7 @@ pub const CliOptions = struct {
     file: []const u8,
     deadline_ms: u64 = default_deadline_ms,
     format: Format = .cjs,
+    run_id: ?[]const u8 = null,
 };
 
 pub fn parseCliArgs(args: []const []const u8) !CliOptions {
@@ -272,6 +335,9 @@ pub fn parseCliArgs(args: []const []const u8) !CliOptions {
         } else if (std.mem.eql(u8, arg, "--deadline-ms") and index + 1 < args.len) {
             index += 1;
             options.deadline_ms = try std.fmt.parseInt(u64, args[index], 10);
+        } else if (std.mem.eql(u8, arg, "--run-id") and index + 1 < args.len) {
+            index += 1;
+            options.run_id = args[index];
         } else if (std.mem.eql(u8, arg, "--format") and index + 1 < args.len) {
             index += 1;
             format_given = true;
@@ -296,7 +362,7 @@ pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Ver
     const body = try io_mod.readFileToEnd(alloc, &file, max_read_bytes);
     defer alloc.free(body);
     const root = std.fs.path.dirname(absolute) orelse "/";
-    const outcome = try execute(alloc, body, .{ .format = cli.format, .deadline_ms = cli.deadline_ms, .body_path = absolute, .root = root, .verbs = verbs });
+    const outcome = try execute(alloc, body, .{ .format = cli.format, .deadline_ms = cli.deadline_ms, .body_path = absolute, .root = root, .verbs = verbs, .run_id = cli.run_id });
     defer outcome.deinit(alloc);
     const report = try reportJson(alloc, outcome, null);
     defer alloc.free(report);
