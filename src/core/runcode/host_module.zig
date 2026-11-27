@@ -63,7 +63,7 @@ pub const table = [_]Row{
     provided("util/types", "utilTypes", &.{"isPromise"}),
     provided("vm", "vm", &.{ "Script", "createContext", "runInContext" }),
     provided("worker_threads", "workerThreads", &.{ "MessageChannel", "Worker", "parentPort", "workerData" }),
-    provided("zlib", "zlib", &.{ "brotliCompress", "constants", "createZstdDecompress", "gzip", "zstdCompress", "zstdDecompress", "zstdDecompressSync" }),
+    provided("zlib", "zlib", &.{ "brotliCompress", "constants", "createZstdDecompress", "deflate", "deflateSync", "gunzip", "gunzipSync", "gzip", "gzipSync", "inflate", "inflateSync", "zstdCompress", "zstdDecompress", "zstdDecompressSync" }),
 };
 
 comptime {

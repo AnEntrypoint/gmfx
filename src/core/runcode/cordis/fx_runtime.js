@@ -802,11 +802,217 @@ const http = { createServer: fail('http.createServer'), validateHeaderValue }
 
 const https = { createServer: fail('https.createServer'), get: fail('https.get'), request: fail('https.request') }
 
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256)
+  for (let index = 0; index < 256; index += 1) {
+    let value = index
+    for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1
+    table[index] = value >>> 0
+  }
+  return table
+})()
+
+const crc32 = (bytes) => {
+  let crc = 0xffffffff
+  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+const adler32 = (bytes) => {
+  let a = 1
+  let b = 0
+  for (const byte of bytes) {
+    a = (a + byte) % 65521
+    b = (b + a) % 65521
+  }
+  return ((b << 16) | a) >>> 0
+}
+
+const storedDeflate = (bytes) => {
+  const parts = []
+  let offset = 0
+  do {
+    const size = Math.min(65535, bytes.length - offset)
+    const final = offset + size >= bytes.length ? 1 : 0
+    parts.push(new Uint8Array([final, size & 0xff, size >>> 8, (~size) & 0xff, ((~size) >>> 8) & 0xff]))
+    parts.push(bytes.subarray(offset, offset + size))
+    offset += size
+  } while (offset < bytes.length)
+  return concatBytes(parts)
+}
+
+const u32le = (value) => new Uint8Array([value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff])
+const u32be = (value) => new Uint8Array([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff])
+
+const LENGTH_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+const LENGTH_EXTRA = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+const DIST_BASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+const DIST_EXTRA = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+const CODE_ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+
+const buildHuffman = (lengths) => {
+  const count = new Uint16Array(16)
+  for (const length of lengths) count[length] += 1
+  const offsets = new Uint16Array(16)
+  for (let length = 1; length < 15; length += 1) offsets[length + 1] = offsets[length] + count[length]
+  const symbol = new Uint16Array(lengths.length)
+  for (let index = 0; index < lengths.length; index += 1) {
+    if (lengths[index] !== 0) symbol[offsets[lengths[index]]++] = index
+  }
+  return { count, symbol }
+}
+
+const inflateBits = (input) => {
+  let pos = 0
+  let buffer = 0
+  let count = 0
+  const bits = (need) => {
+    while (count < need) {
+      if (pos >= input.length) throw new Error('zlib: unexpected end of input')
+      buffer |= input[pos] << count
+      pos += 1
+      count += 8
+    }
+    const value = buffer & ((1 << need) - 1)
+    buffer >>>= need
+    count -= need
+    return value
+  }
+  const decode = (huffman) => {
+    let code = 0
+    let first = 0
+    let index = 0
+    for (let length = 1; length <= 15; length += 1) {
+      code |= bits(1)
+      const number = huffman.count[length]
+      if (code - number < first) return huffman.symbol[index + (code - first)]
+      index += number
+      first += number
+      first <<= 1
+      code <<= 1
+    }
+    throw new Error('zlib: invalid Huffman code')
+  }
+  const align = () => {
+    buffer = 0
+    count = 0
+  }
+  const consumed = () => pos - Math.floor(count / 8)
+  return { bits, decode, align, consumed }
+}
+
+const inflateRaw = (input) => {
+  const reader = inflateBits(input)
+  const out = []
+  let final = 0
+  while (!final) {
+    final = reader.bits(1)
+    const type = reader.bits(2)
+    if (type === 0) {
+      reader.align()
+      const length = input[reader.consumed()] | (input[reader.consumed() + 1] << 8)
+      const start = reader.consumed() + 4
+      for (let index = 0; index < length; index += 1) out.push(input[start + index])
+      reader.bits(0)
+      for (let index = 0; index < length + 4; index += 1) reader.bits(8)
+      continue
+    }
+    let literals
+    let distances
+    if (type === 1) {
+      const lengths = new Uint8Array(288)
+      lengths.fill(8, 0, 144)
+      lengths.fill(9, 144, 256)
+      lengths.fill(7, 256, 280)
+      lengths.fill(8, 280, 288)
+      literals = buildHuffman(lengths)
+      distances = buildHuffman(new Uint8Array(30).fill(5))
+    } else if (type === 2) {
+      const nlen = reader.bits(5) + 257
+      const ndist = reader.bits(5) + 1
+      const ncode = reader.bits(4) + 4
+      const codeLengths = new Uint8Array(19)
+      for (let index = 0; index < ncode; index += 1) codeLengths[CODE_ORDER[index]] = reader.bits(3)
+      const lengthCode = buildHuffman(codeLengths)
+      const lengths = []
+      while (lengths.length < nlen + ndist) {
+        const symbol = reader.decode(lengthCode)
+        if (symbol < 16) lengths.push(symbol)
+        else if (symbol === 16) {
+          const previous = lengths[lengths.length - 1]
+          for (let repeat = 3 + reader.bits(2); repeat > 0; repeat -= 1) lengths.push(previous)
+        } else if (symbol === 17) {
+          for (let repeat = 3 + reader.bits(3); repeat > 0; repeat -= 1) lengths.push(0)
+        } else {
+          for (let repeat = 11 + reader.bits(7); repeat > 0; repeat -= 1) lengths.push(0)
+        }
+      }
+      literals = buildHuffman(lengths.slice(0, nlen))
+      distances = buildHuffman(lengths.slice(nlen, nlen + ndist))
+    } else throw new Error('zlib: invalid block type')
+    for (;;) {
+      const symbol = reader.decode(literals)
+      if (symbol < 256) out.push(symbol)
+      else if (symbol === 256) break
+      else {
+        const lengthIndex = symbol - 257
+        const length = LENGTH_BASE[lengthIndex] + reader.bits(LENGTH_EXTRA[lengthIndex])
+        const distanceIndex = reader.decode(distances)
+        const distance = DIST_BASE[distanceIndex] + reader.bits(DIST_EXTRA[distanceIndex])
+        for (let index = 0; index < length; index += 1) out.push(out[out.length - distance])
+      }
+    }
+  }
+  return { data: Uint8Array.from(out), consumed: reader.consumed() }
+}
+
+const gzipBytes = (bytes) => concatBytes([
+  new Uint8Array([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3]),
+  storedDeflate(bytes),
+  u32le(crc32(bytes)),
+  u32le(bytes.length >>> 0),
+])
+
+const gunzipBytes = (input) => {
+  if (input[0] !== 0x1f || input[1] !== 0x8b) throw new Error('zlib: not a gzip stream')
+  const flags = input[3]
+  let pos = 10
+  if (flags & 4) pos += 2 + (input[pos] | (input[pos + 1] << 8))
+  if (flags & 8) while (input[pos++] !== 0);
+  if (flags & 16) while (input[pos++] !== 0);
+  if (flags & 2) pos += 2
+  const result = inflateRaw(input.subarray(pos))
+  const trailer = pos + result.consumed
+  const expected = (input[trailer] | (input[trailer + 1] << 8) | (input[trailer + 2] << 16) | (input[trailer + 3] << 24)) >>> 0
+  if (expected !== crc32(result.data)) throw new Error('zlib: gzip CRC mismatch')
+  return result.data
+}
+
+const deflateBytes = (bytes) => concatBytes([new Uint8Array([0x78, 0x01]), storedDeflate(bytes), u32be(adler32(bytes))])
+
+const inflateBytes = (input) => {
+  if ((input[0] & 0x0f) !== 8 || ((input[0] << 8) | input[1]) % 31 !== 0) throw new Error('zlib: invalid zlib header')
+  const result = inflateRaw(input.subarray(2))
+  const trailer = 2 + result.consumed
+  const expected = ((input[trailer] << 24) | (input[trailer + 1] << 16) | (input[trailer + 2] << 8) | input[trailer + 3]) >>> 0
+  if (expected !== adler32(result.data)) throw new Error('zlib: Adler-32 mismatch')
+  return result.data
+}
+
+const asInput = (data) => (typeof data === 'string' ? encodeUtf8(data) : toBytes(data, undefined))
+
 const zlib = {
+  gzipSync: (data) => wrapBytes(gzipBytes(asInput(data))),
+  gunzipSync: (data) => wrapBytes(gunzipBytes(asInput(data))),
+  deflateSync: (data) => wrapBytes(deflateBytes(asInput(data))),
+  inflateSync: (data) => wrapBytes(inflateBytes(asInput(data))),
+  gzip: (data, callback) => { queueMicrotask(() => callback(null, wrapBytes(gzipBytes(asInput(data))))) },
+  gunzip: (data, callback) => { queueMicrotask(() => callback(null, wrapBytes(gunzipBytes(asInput(data))))) },
+  deflate: (data, callback) => { queueMicrotask(() => callback(null, wrapBytes(deflateBytes(asInput(data))))) },
+  inflate: (data, callback) => { queueMicrotask(() => callback(null, wrapBytes(inflateBytes(asInput(data))))) },
   brotliCompress: fail('zlib.brotliCompress'),
   constants: {},
   createZstdDecompress: fail('zlib.createZstdDecompress'),
-  gzip: fail('zlib.gzip'),
   zstdCompress: fail('zlib.zstdCompress'),
   zstdDecompress: fail('zlib.zstdDecompress'),
   zstdDecompressSync: fail('zlib.zstdDecompressSync'),
