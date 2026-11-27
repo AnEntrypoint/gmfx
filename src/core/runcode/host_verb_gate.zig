@@ -25,6 +25,7 @@ pub const table = [_]Row{
     .{ .verb = "proc_read", .class = .none },
     .{ .verb = "proc_wait", .class = .none },
     .{ .verb = "proc_kill", .class = .none },
+    .{ .verb = "dns_lookup", .class = .network },
     .{ .verb = "fs_exists", .class = .read, .path_keys = &.{"path"} },
     .{ .verb = "fs_stat", .class = .read, .path_keys = &.{"path"} },
     .{ .verb = "fs_read", .class = .read, .path_keys = &.{"path"} },

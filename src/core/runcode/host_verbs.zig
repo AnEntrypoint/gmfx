@@ -92,6 +92,14 @@ pub const verbs = [_]Verb{
         },
     },
     .{
+        .name = "dns_lookup",
+        .description = "Resolve a public http(s) URL host to its first IPv4 address through the URL guard.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "url", .json_type = .string }},
+            .required = &.{"url"},
+        },
+    },
+    .{
         .name = "fs_exists",
         .description = "Report whether a path exists.",
         .input_schema = .{
@@ -392,6 +400,7 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "fs_symlink")) return fsSymlink(alloc, args);
     if (std.mem.eql(u8, name, "fs_link")) return fsLink(alloc, args);
     if (std.mem.eql(u8, name, "net_fetch")) return netFetch(alloc, args);
+    if (std.mem.eql(u8, name, "dns_lookup")) return dnsLookup(alloc, args);
     if (std.mem.eql(u8, name, "proc_spawn")) return procSpawn(alloc, args);
     if (std.mem.eql(u8, name, "proc_write")) return procWrite(alloc, args);
     if (std.mem.eql(u8, name, "proc_close_stdin")) return procCloseStdin(alloc, args);
@@ -776,6 +785,24 @@ fn procKill(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     proc.child.kill(io_mod.getIo());
     procRelease(id);
     return encode(alloc, .{ .ok = true });
+}
+
+fn dnsLookup(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const url_text = stringArg(args, "url") orelse return invalidField(alloc, "url", "a string");
+    var validated = url_policy.normalizeWith(alloc, url_text, false) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    defer validated.deinit(alloc);
+    const transport = http_fetch.defaultTransport();
+    const addresses = try transport.resolver.resolve(transport.resolver.ctx, alloc, validated.canonical_host, 443, .{});
+    defer alloc.free(addresses);
+    if (addresses.len == 0) return encode(alloc, .{ .ok = false, .@"error" = "no address returned" });
+    return switch (addresses[0]) {
+        .ip4 => |ip4| blk: {
+            const text = try std.fmt.allocPrint(alloc, "{d}.{d}.{d}.{d}", .{ ip4.bytes[0], ip4.bytes[1], ip4.bytes[2], ip4.bytes[3] });
+            defer alloc.free(text);
+            break :blk encode(alloc, .{ .ok = true, .address = text, .family = @as(i64, 4) });
+        },
+        .ip6 => encode(alloc, .{ .ok = false, .@"error" = "ipv6 answers are not returned yet" }),
+    };
 }
 
 fn fsStat(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {

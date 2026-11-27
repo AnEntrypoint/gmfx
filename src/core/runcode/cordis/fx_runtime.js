@@ -681,7 +681,13 @@ const net = {
   },
 }
 
-const dnsPromises = { lookup: fail('dns.lookup'), resolve: fail('dns.resolve') }
+const dnsPromises = {
+  lookup: async (host) => {
+    const reply = host('dns_lookup', { url: 'https://' + String(host) + '/' })
+    return { address: reply.address, family: reply.family }
+  },
+  resolve: fail('dns.resolve'),
+}
 
 const processObject = {
   get env() { return processInfo().env },
