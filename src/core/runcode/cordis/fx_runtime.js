@@ -682,8 +682,8 @@ const net = {
 }
 
 const dnsPromises = {
-  lookup: async (host) => {
-    const reply = host('dns_lookup', { url: 'https://' + String(host) + '/' })
+  lookup: async (hostname) => {
+    const reply = host('dns_lookup', { url: 'https://' + String(hostname) + '/' })
     return { address: reply.address, family: reply.family }
   },
   resolve: fail('dns.resolve'),
