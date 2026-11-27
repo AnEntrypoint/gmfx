@@ -573,10 +573,20 @@ class Readable extends FxEmitter {
     return true
   }
   flush() {
-    while (this.flowing && this.buffered.length > 0) this.emit('data', this.buffered.shift())
-    if (this.flowing && this.buffered.length === 0 && !this.ended && !this.reading && !this.destroyed) {
-      this.reading = true
-      this._read(65536)
+    if (this.flushing) return
+    this.flushing = true
+    try {
+      while (this.flowing && !this.destroyed) {
+        if (this.buffered.length > 0) {
+          this.emit('data', this.buffered.shift())
+          continue
+        }
+        if (this.ended || this.reading) break
+        this.reading = true
+        this._read(65536)
+      }
+    } finally {
+      this.flushing = false
     }
     this.scheduleEnd()
   }
