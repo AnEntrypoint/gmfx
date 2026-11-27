@@ -1,4 +1,6 @@
 const std = @import("std");
+const url_policy = @import("../../tools/web/url_policy.zig");
+const http_fetch = @import("../../tools/web/http_fetch.zig");
 const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const model_tool_schema = @import("../tooling/model_tool_schema.zig");
@@ -16,6 +18,19 @@ pub const verbs = [_]Verb{
     .{
         .name = "process_info",
         .description = "Report cwd, pid, platform, homedir, tmpdir, parallelism and env.",
+    },
+    .{
+        .name = "net_fetch",
+        .description = "Fetch an http(s) URL with an optional POST body; returns the status, final url and the body as base64. Loopback addresses need loopback: true.",
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "url", .json_type = .string },
+                .{ .name = "method", .json_type = .string },
+                .{ .name = "body", .json_type = .string },
+                .{ .name = "loopback", .json_type = .boolean },
+            },
+            .required = &.{"url"},
+        },
     },
     .{
         .name = "fs_exists",
@@ -317,6 +332,7 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "fs_readlink")) return fsReadlink(alloc, args);
     if (std.mem.eql(u8, name, "fs_symlink")) return fsSymlink(alloc, args);
     if (std.mem.eql(u8, name, "fs_link")) return fsLink(alloc, args);
+    if (std.mem.eql(u8, name, "net_fetch")) return netFetch(alloc, args);
     if (std.mem.eql(u8, name, "fs_chmod")) return fsChmod(alloc, args);
     if (std.mem.eql(u8, name, "fs_truncate")) return fsTruncate(alloc, args);
     if (std.mem.eql(u8, name, "run_command")) return runCommand(alloc, args);
@@ -485,6 +501,35 @@ fn fsExists(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         else => return err,
     };
     return encode(alloc, .{ .ok = true, .exists = true });
+}
+
+fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const url_text = stringArg(args, "url") orelse return invalidField(alloc, "url", "a string");
+    const method = stringArg(args, "method") orelse "GET";
+    const post = std.mem.eql(u8, method, "POST");
+    if (!post and !std.mem.eql(u8, method, "GET")) return invalidField(alloc, "method", "GET or POST");
+    const post_body: ?[]u8 = if (post) blk: {
+        const encoded = stringArg(args, "body") orelse "";
+        const size = try std.base64.standard.Decoder.calcSizeForSlice(encoded);
+        const out = try alloc.alloc(u8, size);
+        try std.base64.standard.Decoder.decode(out, encoded);
+        break :blk out;
+    } else null;
+    defer if (post_body) |body| alloc.free(body);
+    var validated = url_policy.normalizeWith(alloc, url_text, boolArg(args, "loopback", false)) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    defer validated.deinit(alloc);
+    var outcome = try http_fetch.fetch(alloc, validated, .{ .post_body = post_body }, http_fetch.defaultTransport());
+    defer outcome.deinit(alloc);
+    switch (outcome) {
+        .success => |*success| {
+            const encoded = try alloc.alloc(u8, std.base64.standard.Encoder.calcSize(success.body.len));
+            defer alloc.free(encoded);
+            _ = std.base64.standard.Encoder.encode(encoded, success.body);
+            return encode(alloc, .{ .ok = true, .status = @intFromEnum(success.status), .url = success.final_url, .body = @as([]const u8, encoded) });
+        },
+        .failure => |*failure| return encode(alloc, .{ .ok = true, .status = if (failure.status) |status| @intFromEnum(status) else 0, .url = url_text, .body = "" }),
+        .cross_host_redirect => return encode(alloc, .{ .ok = false, .@"error" = "cross_host_redirect" }),
+    }
 }
 
 fn fsStat(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {

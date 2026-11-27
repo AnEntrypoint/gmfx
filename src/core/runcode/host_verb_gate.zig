@@ -8,7 +8,7 @@ const command_admission = @import("../permissions/command_admission.zig");
 
 pub const permission_denied_code = "EFX_PERMISSION_DENIED";
 
-pub const Class = enum { read, write, execute, none };
+pub const Class = enum { read, write, execute, none, network };
 
 pub const Row = struct {
     verb: []const u8,
@@ -18,6 +18,7 @@ pub const Row = struct {
 
 pub const table = [_]Row{
     .{ .verb = "process_info", .class = .none },
+    .{ .verb = "net_fetch", .class = .network },
     .{ .verb = "fs_exists", .class = .read, .path_keys = &.{"path"} },
     .{ .verb = "fs_stat", .class = .read, .path_keys = &.{"path"} },
     .{ .verb = "fs_read", .class = .read, .path_keys = &.{"path"} },
@@ -65,6 +66,7 @@ pub fn toolNameFor(class: Class) ?[]const u8 {
         .read => "read_file",
         .write => "write_file",
         .execute => "Bash",
+        .network => "FetchURL",
         .none => null,
     };
 }
@@ -86,6 +88,14 @@ pub fn refusal(
         const command = try shellCommand(ctx.allocator, args);
         const call_json = try encodeJson(ctx.allocator, .{ .command = command });
         return try admit(ctx, registry, reply_alloc, verb, toolNameFor(row.class).?, call_json);
+    }
+    if (row.class == .network) {
+        const url = switch (args.get("url") orelse return null) {
+            .string => |text| text,
+            else => return null,
+        };
+        const call_json = try encodeJson(ctx.allocator, .{ .url = url });
+        return try admit(ctx, registry, reply_alloc, verb, "FetchURL", call_json);
     }
     const tool_name = toolNameFor(row.class).?;
     for (row.path_keys) |key| {

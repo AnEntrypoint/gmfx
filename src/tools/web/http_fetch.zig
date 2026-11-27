@@ -50,6 +50,7 @@ pub const FetchOptions = struct {
     max_body_bytes: usize = max_body_bytes,
     deadline: ?Deadline = null,
     cancel_flag: ?*std.atomic.Value(bool) = null,
+    post_body: ?[]const u8 = null,
 };
 
 pub const Resolver = struct {
@@ -762,16 +763,22 @@ fn fetchTls(alloc: Allocator, fd: posix.fd_t, target: PinnedTarget, options: Fet
 
 fn writeRequest(writer: *std.Io.Writer, target: PinnedTarget, options: FetchOptions) !void {
     try checkControl(options);
+    const method: []const u8 = if (options.post_body != null) "POST" else "GET";
     try writer.print(
-        "GET {s} HTTP/1.1\r\n" ++
+        "{s} {s} HTTP/1.1\r\n" ++
             "Host: {s}\r\n" ++
             "User-Agent: fx (web_fetch; +https://github.com/vercel-labs/fx)\r\n" ++
             "Accept: text/markdown, text/html, */*\r\n" ++
             "Accept-Encoding: gzip, deflate, zstd\r\n" ++
-            "Connection: close\r\n" ++
-            "\r\n",
-        .{ target.url.path_query, target.host_header },
+            "Connection: close\r\n",
+        .{ method, target.url.path_query, target.host_header },
     );
+    if (options.post_body) |body| {
+        try writer.print("Content-Type: application/octet-stream\r\nContent-Length: {d}\r\n\r\n", .{body.len});
+        try writer.writeAll(body);
+    } else {
+        try writer.writeAll("\r\n");
+    }
 }
 
 fn readResponse(

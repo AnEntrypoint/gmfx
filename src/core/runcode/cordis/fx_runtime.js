@@ -684,11 +684,13 @@ const processObject = {
   } },
 }
 
-const fetch = async (input) => {
-  const target = typeof input === "string" ? input : String(input.url)
-  const reply = host("FetchURL", { url: target })
-  const body = String(reply.output ?? "")
-  return { ok: true, status: 200, url: target, text: async () => body, json: async () => JSON.parse(body) }
+const fetch = async (input, init = {}) => {
+  const target = typeof input === 'string' ? input : String(input.url)
+  const method = init.method === undefined ? 'GET' : String(init.method).toUpperCase()
+  const body = init.body === undefined || init.body === null ? undefined : encodeBase64(toBytes(init.body, 'utf8'))
+  const reply = host('net_fetch', { url: target, method, body, loopback: init.allowLoopback === true })
+  const text = fromBytes(decodeBase64(reply.body), 'utf8')
+  return { ok: reply.status >= 200 && reply.status < 300, status: reply.status, url: reply.url, text: async () => text, json: async () => JSON.parse(text) }
 }
 globalThis.fetch = fetch
 

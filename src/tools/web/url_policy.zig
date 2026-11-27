@@ -97,6 +97,10 @@ const ParsedAuthority = struct {
 };
 
 pub fn normalize(alloc: Allocator, raw_url: []const u8) Error!ValidatedUrl {
+    return normalizeWith(alloc, raw_url, false);
+}
+
+pub fn normalizeWith(alloc: Allocator, raw_url: []const u8, allow_loopback: bool) Error!ValidatedUrl {
     if (raw_url.len == 0) return error.EmptyUrl;
     if (raw_url.len > max_url_bytes) return error.UrlTooLong;
     try rejectControlBytes(raw_url);
@@ -119,7 +123,7 @@ pub fn normalize(alloc: Allocator, raw_url: []const u8) Error!ValidatedUrl {
     if (std.mem.findScalar(u8, authority, '@') != null) return error.CredentialedUrl;
 
     const parsed_authority = try parseAuthority(authority);
-    const host_policy = try canonicalizeHost(alloc, parsed_authority.host, parsed_authority.is_ipv6_literal);
+    const host_policy = try canonicalizeHost(alloc, parsed_authority.host, parsed_authority.is_ipv6_literal, allow_loopback);
     defer alloc.free(host_policy.host);
 
     const scheme: Scheme = .https;
@@ -243,7 +247,7 @@ const CanonicalHost = struct {
     literal_address: ?IpAddress = null,
 };
 
-fn canonicalizeHost(alloc: Allocator, raw_host: []const u8, is_ipv6_literal: bool) Error!CanonicalHost {
+fn canonicalizeHost(alloc: Allocator, raw_host: []const u8, is_ipv6_literal: bool, allow_loopback: bool) Error!CanonicalHost {
     if (raw_host.len == 0) return error.MissingHost;
     if (std.mem.findScalar(u8, raw_host, '%') != null) return error.PercentEncodedHost;
 
@@ -256,7 +260,7 @@ fn canonicalizeHost(alloc: Allocator, raw_host: []const u8, is_ipv6_literal: boo
     if (is_ipv6_literal) {
         const ip6 = std.Io.net.Ip6Address.parse(raw_host, 0) catch return error.MalformedHost;
         const address: IpAddress = .{ .ip6 = ip6 };
-        if (!isPublicAddress(address)) return error.NonPublicAddress;
+        if (!admittedLiteral(address, allow_loopback)) return error.NonPublicAddress;
         const lower = try lowerAscii(alloc, raw_host);
         return .{ .host = lower, .literal_address = address };
     }
@@ -266,7 +270,7 @@ fn canonicalizeHost(alloc: Allocator, raw_host: []const u8, is_ipv6_literal: boo
 
     if (parseStrictIpv4(without_root)) |ip4| {
         const address: IpAddress = .{ .ip4 = .{ .bytes = ip4, .port = 0 } };
-        if (!isPublicAddress(address)) return error.NonPublicAddress;
+        if (!admittedLiteral(address, allow_loopback)) return error.NonPublicAddress;
         return .{ .host = try lowerAscii(alloc, without_root), .literal_address = address };
     } else |err| switch (err) {
         error.InvalidIpv4 => return error.InvalidIpv4,
@@ -283,6 +287,18 @@ fn canonicalizeHost(alloc: Allocator, raw_host: []const u8, is_ipv6_literal: boo
         return error.NonPublicAddress;
     }
     return .{ .host = lower };
+}
+
+fn admittedLiteral(address: IpAddress, allow_loopback: bool) bool {
+    if (isPublicAddress(address)) return true;
+    return allow_loopback and isLoopbackAddress(address);
+}
+
+fn isLoopbackAddress(address: IpAddress) bool {
+    return switch (address) {
+        .ip4 => |ip4| ip4.bytes[0] == 127,
+        .ip6 => |ip6| std.mem.eql(u8, &ip6.bytes, &([_]u8{0} ** 15 ++ [_]u8{1})),
+    };
 }
 
 fn lowerAscii(alloc: Allocator, value: []const u8) ![]u8 {
