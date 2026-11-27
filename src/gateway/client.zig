@@ -4440,6 +4440,7 @@ fn consumeSseStreamTraced(
             try content_buf.appendSlice(alloc, capturedText(separator, content_capture_limit, content_buf.items.len));
             on_content_chunk(callback_ctx, separator);
         }
+        debug_trace.logf("context_compaction", "observer_gate event={s} capture_limit={s}", .{ event_type, if (content_capture_limit == null) "none" else "set" });
         if (content_capture_limit == null) try replay.observe(root, content_buf.items.len, separated);
 
         if (std.mem.eql(u8, event_type, "response-metadata")) {
