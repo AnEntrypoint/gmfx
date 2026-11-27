@@ -543,6 +543,7 @@ class Readable extends FxEmitter {
     super()
     if (typeof options.read === 'function') this._read = options.read
     this.buffered = []
+    this.bufferedBytes = 0
     this.ended = false
     this.endScheduled = false
     this.endEmitted = false
@@ -567,10 +568,11 @@ class Readable extends FxEmitter {
       return false
     }
     this.buffered.push(chunk)
+    this.bufferedBytes += typeof chunk === 'string' ? chunk.length : (chunk.length ?? 1)
     this.reading = false
     if (this.flowing) this.flush()
-    else if (this.listenerCount('readable') > 0) nextTick(() => this.emit('readable'))
-    return true
+    else if ((this.listeners.get('readable') ?? []).length > 0) nextTick(() => this.emit('readable'))
+    return this.bufferedBytes < 65536
   }
   flush() {
     if (this.flushing) return
@@ -578,7 +580,9 @@ class Readable extends FxEmitter {
     try {
       while (this.flowing && !this.destroyed) {
         if (this.buffered.length > 0) {
-          this.emit('data', this.buffered.shift())
+          const chunk = this.buffered.shift()
+          this.bufferedBytes -= typeof chunk === 'string' ? chunk.length : (chunk.length ?? 1)
+          this.emit('data', chunk)
           continue
         }
         if (this.ended || this.reading) break
@@ -637,6 +641,7 @@ class Readable extends FxEmitter {
     }
     const data = this.buffered.length === 1 ? this.buffered[0] : this.buffered.map((part) => (typeof part === 'string' ? part : String(part))).join('')
     this.buffered = []
+    this.bufferedBytes = 0
     return data
   }
   setEncoding(encoding) {
