@@ -783,7 +783,7 @@ const fetchModule = { fetch }
 
 const agentModule = { core: { name: 'fx', interface: 1 } }
 
-const loaderState = { lastGood: new Map() }
+const loaderState = { lastGood: new Map(), hot: new Map() }
 
 const hashText = (text) => {
   let hash = 5381
@@ -791,14 +791,39 @@ const hashText = (text) => {
   return hash.toString(16)
 }
 
+const hotEntry = (target) => {
+  let entry = loaderState.hot.get(target)
+  if (entry === undefined) {
+    entry = { data: {}, disposers: [], acceptors: [] }
+    loaderState.hot.set(target, entry)
+  }
+  return entry
+}
+
+const hotFor = (target) => {
+  const entry = hotEntry(target)
+  return {
+    data: entry.data,
+    accept: (deps, callback) => { entry.acceptors.push(typeof deps === 'function' ? deps : callback) },
+    dispose: (callback) => { entry.disposers.push(callback) },
+    invalidate: () => {},
+    decline: () => {},
+  }
+}
+
 const reloadModule = async (path) => {
   const target = String(path)
   const text = fromBytes(decodeBase64(host('fs_read', { path: target }).base64), 'utf8')
+  const entry = hotEntry(target)
+  for (const callback of entry.disposers) callback(entry.data)
+  entry.disposers = []
+  const rewritten = "import { hotFor as __fxHotFor } from 'fx:host/loader'\nconst __fxHot = __fxHotFor(" + JSON.stringify(target) + ')\n' + text.split('import.meta.hot').join('__fxHot')
   const revision = target.slice(0, target.lastIndexOf('/')) + '/.fx-rev-' + hashText(text) + '.mjs'
-  host('fs_write', { path: revision, base64: encodeBase64(toBytes(text, 'utf8')), append: false })
+  host('fs_write', { path: revision, base64: encodeBase64(toBytes(rewritten, 'utf8')), append: false })
   try {
     const mod = await import(revision)
     loaderState.lastGood.set(target, mod)
+    for (const callback of entry.acceptors) callback(mod)
     return mod
   } catch (error) {
     if (loaderState.lastGood.has(target)) return loaderState.lastGood.get(target)
@@ -806,7 +831,7 @@ const reloadModule = async (path) => {
   }
 }
 
-const loaderModule = { reload: reloadModule }
+const loaderModule = { reload: reloadModule, hotFor }
 
 const wsModule = {
   connect: (hostname, port, path = '/') => {
