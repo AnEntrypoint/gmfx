@@ -783,12 +783,43 @@ const fetchModule = { fetch }
 
 const agentModule = { core: { name: 'fx', interface: 1 } }
 
-const loaderState = { lastGood: new Map(), hot: new Map() }
+const loaderState = { lastGood: new Map(), hot: new Map(), rev: new Map(), reloads: 0 }
 
 const hashText = (text) => {
   let hash = 5381
   for (let index = 0; index < text.length; index += 1) hash = ((hash * 33) ^ text.charCodeAt(index)) >>> 0
   return hash.toString(16)
+}
+
+const normalizePath = (path) => {
+  const parts = []
+  for (const segment of path.split('/')) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') parts.pop()
+    else parts.push(segment)
+  }
+  return '/' + parts.join('/')
+}
+
+const readText = (path) => fromBytes(decodeBase64(host('fs_read', { path }).base64), 'utf8')
+
+const relativeImport = /from\s+(['"])(\.\.?\/[^'"]+)\1/g
+
+const depsOf = (target, text) => {
+  const dir = target.slice(0, target.lastIndexOf('/'))
+  const found = []
+  const scan = new RegExp(relativeImport.source, 'g')
+  let match
+  while ((match = scan.exec(text)) !== null) found.push(normalizePath(dir + '/' + match[2]))
+  return found
+}
+
+const linkDeps = (target, text) => {
+  const dir = target.slice(0, target.lastIndexOf('/'))
+  return text.replace(new RegExp(relativeImport.source, 'g'), (match, quote, spec) => {
+    const revision = loaderState.rev.get(normalizePath(dir + '/' + spec))
+    return revision === undefined ? match : 'from ' + quote + revision + quote
+  })
 }
 
 const hotEntry = (target) => {
@@ -813,16 +844,19 @@ const hotFor = (target) => {
 
 const reloadModule = async (path) => {
   const target = String(path)
-  const text = fromBytes(decodeBase64(host('fs_read', { path: target }).base64), 'utf8')
+  const text = readText(target)
   const entry = hotEntry(target)
   for (const callback of entry.disposers) callback(entry.data)
   entry.disposers = []
-  const rewritten = "import { hotFor as __fxHotFor } from 'fx:host/loader'\nconst __fxHot = __fxHotFor(" + JSON.stringify(target) + ')\n' + text.split('import.meta.hot').join('__fxHot')
-  const revision = target.slice(0, target.lastIndexOf('/')) + '/.fx-rev-' + hashText(text) + '.mjs'
+  const linked = linkDeps(target, text).split('import.meta.hot').join('__fxHot')
+  const rewritten = "import { hotFor as __fxHotFor } from 'fx:host/loader'\nconst __fxHot = __fxHotFor(" + JSON.stringify(target) + ')\n' + linked
+  const revision = target.slice(0, target.lastIndexOf('/')) + '/.fx-rev-' + hashText(rewritten) + '.mjs'
   host('fs_write', { path: revision, base64: encodeBase64(toBytes(rewritten, 'utf8')), append: false })
   try {
     const mod = await import(revision)
     loaderState.lastGood.set(target, mod)
+    loaderState.rev.set(target, revision)
+    loaderState.reloads += 1
     for (const callback of entry.acceptors) callback(mod)
     return mod
   } catch (error) {
@@ -831,7 +865,48 @@ const reloadModule = async (path) => {
   }
 }
 
-const loaderModule = { reload: reloadModule, hotFor }
+const watchState = { ids: new Map(), dirty: new Set(), files: new Set(), order: [], entry: null }
+
+const watchGraph = async (entry) => {
+  const target = String(entry)
+  const order = []
+  const seen = new Set()
+  const visit = (file) => {
+    if (seen.has(file)) return
+    seen.add(file)
+    for (const dep of depsOf(file, readText(file))) visit(dep)
+    order.push(file)
+  }
+  visit(target)
+  for (const file of order) await reloadModule(file)
+  for (const dir of new Set(order.map((file) => file.slice(0, file.lastIndexOf('/'))))) {
+    watchState.ids.set(host('watch_start', { path: dir }).id, dir)
+  }
+  watchState.files = new Set(order)
+  watchState.order = order
+  watchState.entry = target
+  return loaderState.lastGood.get(target)
+}
+
+const pollGraph = () => {
+  for (const [id, dir] of watchState.ids) {
+    for (const event of host('watch_poll', { id, timeout: 0 }).events) {
+      const file = dir + '/' + event.name
+      if (watchState.files.has(file)) watchState.dirty.add(file)
+    }
+  }
+}
+
+const currentModule = async (entry) => {
+  pollGraph()
+  if (watchState.dirty.size > 0) {
+    watchState.dirty = new Set()
+    for (const file of watchState.order) await reloadModule(file)
+  }
+  return loaderState.lastGood.get(String(entry))
+}
+
+const loaderModule = { reload: reloadModule, hotFor, watchGraph, current: currentModule, reloadCount: () => loaderState.reloads }
 
 const wsModule = {
   connect: (hostname, port, path = '/') => {

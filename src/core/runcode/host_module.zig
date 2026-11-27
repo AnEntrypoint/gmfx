@@ -43,7 +43,7 @@ pub const table = [_]Row{
     provided("fetch", "fetchModule", &.{"fetch"}),
     provided("agent", "agentModule", &.{"core"}),
     provided("ws", "wsModule", &.{"connect"}),
-    provided("loader", "loaderModule", &.{ "reload", "hotFor" }),
+    provided("loader", "loaderModule", &.{ "reload", "hotFor", "watchGraph", "current", "reloadCount" }),
     provided("fs", "fs", &.{ "accessSync", "closeSync", "constants", "copyFileSync", "createReadStream", "existsSync", "lstatSync", "mkdirSync", "mkdtempSync", "openSync", "readFileSync", "readSync", "readdirSync", "readlinkSync", "realpathSync", "renameSync", "rmSync", "statSync", "symlinkSync", "unlinkSync", "unwatchFile", "watchFile", "writeFileSync", "writeSync" }),
     provided("fs/promises", "fsPromises", &.{ "access", "chmod", "constants", "cp", "link", "lstat", "mkdir", "mkdtemp", "open", "opendir", "readFile", "readdir", "realpath", "rename", "rm", "stat", "truncate", "unlink", "writeFile" }),
     gap("http"),
