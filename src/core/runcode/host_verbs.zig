@@ -848,7 +848,7 @@ fn watchStart(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const fd_rc = std.os.linux.inotify_init1(std.os.linux.IN.CLOEXEC | std.os.linux.IN.NONBLOCK);
     if (std.os.linux.errno(fd_rc) != .SUCCESS) return encode(alloc, .{ .ok = false, .@"error" = "inotify_init1 failed" });
     const fd: i32 = @intCast(fd_rc);
-    const path_z = try watch_store.dupeZ(u8, path);
+    const path_z = try watch_store.dupeSentinel(u8, path, 0);
     defer watch_store.free(path_z);
     const add_rc = std.os.linux.inotify_add_watch(fd, path_z, watch_mask);
     if (std.os.linux.errno(add_rc) != .SUCCESS) {
