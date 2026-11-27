@@ -679,7 +679,16 @@ const processObject = {
   } },
 }
 
+const fetch = async (input) => {
+  const target = typeof input === "string" ? input : String(input.url)
+  const reply = host("FetchURL", { url: target })
+  const body = String(reply.output ?? "")
+  return { ok: true, status: 200, url: target, text: async () => body, json: async () => JSON.parse(body) }
+}
+if (globalThis.fetch === undefined) globalThis.fetch = fetch
+
 export const fxRuntime = {
+  fetch,
   fs,
   fsPromises,
   path,
