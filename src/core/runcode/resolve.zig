@@ -72,11 +72,18 @@ fn jsRoot() ?[]const u8 {
     return io_mod.getenv("FX_JS_ROOT");
 }
 
-fn importMapTarget(arena: std.mem.Allocator, specifier: []const u8) !?[]const u8 {
+fn joinRoot(arena: std.mem.Allocator, parts: []const []const u8) (Failure || std.mem.Allocator.Error)![]u8 {
+    return std.fs.path.join(arena, parts) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.PackageInvalid,
+    };
+}
+
+fn importMapTarget(arena: std.mem.Allocator, specifier: []const u8) (Failure || std.mem.Allocator.Error)!?[]const u8 {
     const root = jsRoot() orelse return null;
-    const map_path = try std.fs.path.join(arena, &.{ root, "fx.importmap.json" });
+    const map_path = try joinRoot(arena, &.{ root, "fx.importmap.json" });
     const text = readDisk(arena, map_path) orelse return null;
-    const parsed = try std.json.parseFromSlice(std.json.Value, arena, text, .{});
+    const parsed = std.json.parseFromSlice(std.json.Value, arena, text, .{}) catch return error.PackageInvalid;
     const imports = switch (parsed.value) {
         .object => |object| object.get("imports") orelse return null,
         else => return null,
@@ -89,7 +96,7 @@ fn importMapTarget(arena: std.mem.Allocator, specifier: []const u8) !?[]const u8
         .string => |value| value,
         else => return null,
     };
-    return try std.fs.path.join(arena, &.{ root, relative });
+    return try joinRoot(arena, &.{ root, relative });
 }
 
 fn splitRequest(arena: std.mem.Allocator, specifier: []const u8) !?Request {
