@@ -783,6 +783,31 @@ const fetchModule = { fetch }
 
 const agentModule = { core: { name: 'fx', interface: 1 } }
 
+const loaderState = { lastGood: new Map() }
+
+const hashText = (text) => {
+  let hash = 5381
+  for (let index = 0; index < text.length; index += 1) hash = ((hash * 33) ^ text.charCodeAt(index)) >>> 0
+  return hash.toString(16)
+}
+
+const reloadModule = async (path) => {
+  const target = String(path)
+  const text = fromBytes(decodeBase64(host('fs_read', { path: target }).base64), 'utf8')
+  const revision = target.slice(0, target.lastIndexOf('/')) + '/.fx-rev-' + hashText(text) + '.mjs'
+  host('fs_write', { path: revision, base64: encodeBase64(toBytes(text, 'utf8')), append: false })
+  try {
+    const mod = await import(revision)
+    loaderState.lastGood.set(target, mod)
+    return mod
+  } catch (error) {
+    if (loaderState.lastGood.has(target)) return loaderState.lastGood.get(target)
+    throw error
+  }
+}
+
+const loaderModule = { reload: reloadModule }
+
 const wsModule = {
   connect: (hostname, port, path = '/') => {
     const id = host('ws_connect', { url: 'http://' + String(hostname) + ':' + String(port) + String(path), loopback: true, path: String(path) }).conn
@@ -801,6 +826,7 @@ export const fxRuntime = {
   fetchModule,
   agentModule,
   wsModule,
+  loaderModule,
   fetch,
   fs,
   fsPromises,
