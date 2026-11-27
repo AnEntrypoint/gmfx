@@ -61,7 +61,7 @@ pub const table = [_]Row{
     provided("url", "url", &.{ "URL", "URLSearchParams", "fileURLToPath", "pathToFileURL" }),
     provided("util", "util", &.{ "TextDecoder", "inspect", "isDeepStrictEqual", "parseArgs", "parseEnv", "promisify" }),
     provided("util/types", "utilTypes", &.{"isPromise"}),
-    provided("vm", "vm", &.{ "Script", "createContext", "runInContext" }),
+    provided("vm", "vm", &.{ "Script", "createContext", "runInContext", "runInNewContext" }),
     provided("worker_threads", "workerThreads", &.{ "MessageChannel", "Worker", "parentPort", "workerData" }),
     provided("zlib", "zlib", &.{ "brotliCompress", "constants", "createZstdDecompress", "deflate", "deflateSync", "gunzip", "gunzipSync", "gzip", "gzipSync", "inflate", "inflateSync", "zstdCompress", "zstdDecompress", "zstdDecompressSync" }),
 };

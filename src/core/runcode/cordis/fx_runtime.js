@@ -791,7 +791,39 @@ class AsyncLocalStorage {
 
 const asyncHooks = { AsyncLocalStorage }
 
-const vm = { Script: fail('vm.Script'), createContext: fail('vm.createContext'), runInContext: fail('vm.runInContext') }
+const scopeKeysHidden = new Set(['__fxScope', '__fxSource', 'eval'])
+
+const scopeFor = (sandbox) => new Proxy(sandbox, {
+  has: (target, key) => typeof key === 'string' && !scopeKeysHidden.has(key),
+  get: (target, key) => (key in target ? target[key] : globalThis[key]),
+  set: (target, key, value) => {
+    target[key] = value
+    return true
+  },
+})
+
+const runInContext = (code, sandbox) => {
+  const run = new Function('__fxScope', '__fxSource', 'with (__fxScope) { return eval(__fxSource) }')
+  return run(scopeFor(sandbox), String(code))
+}
+
+const createContext = (sandbox = {}) => sandbox
+
+class Script {
+  constructor(code) {
+    this.code = String(code)
+  }
+  runInContext(sandbox) {
+    return runInContext(this.code, sandbox)
+  }
+  runInNewContext(sandbox = {}) {
+    return runInContext(this.code, createContext(sandbox))
+  }
+}
+
+const runInNewContext = (code, sandbox = {}) => runInContext(code, createContext(sandbox))
+
+const vm = { Script, createContext, runInContext, runInNewContext }
 
 const validateHeaderValue = (name, value) => {
   if (value === undefined) throw new TypeError('Invalid value "undefined" for header "' + String(name) + '"')
@@ -1069,7 +1101,23 @@ const zlib = {
   zstdDecompressSync: fail('zlib.zstdDecompressSync'),
 }
 
-const inspector = { Session: fail('inspector.Session') }
+class InspectorSession {
+  connect() {}
+  disconnect() {}
+  post(method, params, callback) {
+    const done = typeof params === 'function' ? params : callback
+    const input = typeof params === 'function' ? {} : (params ?? {})
+    let result = {}
+    if (method === 'Runtime.evaluate') {
+      const value = runInContext(input.expression, {})
+      result = { result: { type: typeof value, value } }
+    }
+    if (done) done(null, result)
+    return result
+  }
+}
+
+const inspector = { Session: InspectorSession }
 
 class StringDecoder {
   constructor(encoding = 'utf8') {
