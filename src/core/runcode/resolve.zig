@@ -73,10 +73,7 @@ fn jsRoot() ?[]const u8 {
 }
 
 fn joinRoot(arena: std.mem.Allocator, parts: []const []const u8) (Failure || std.mem.Allocator.Error)![]u8 {
-    return std.fs.path.join(arena, parts) catch |err| switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        else => error.PackageInvalid,
-    };
+    return std.fs.path.join(arena, parts) catch |err| if (err == error.OutOfMemory) error.OutOfMemory else error.PackageInvalid;
 }
 
 fn importMapTarget(arena: std.mem.Allocator, specifier: []const u8) (Failure || std.mem.Allocator.Error)!?[]const u8 {
