@@ -97,6 +97,7 @@ const decodeLatin1 = (bytes) => Array.from(bytes, (byte) => String.fromCharCode(
 const toBytes = (data, encoding) => {
   if (typeof data === 'string') {
     if (encoding === 'base64') return decodeBase64(data)
+    if (encoding === 'base64url') return decodeBase64(data.replace(/-/g, '+').replace(/_/g, '/'))
     if (encoding === 'hex') return decodeHex(data)
     if (encoding === 'latin1' || encoding === 'binary') return Uint8Array.from(data, (character) => character.charCodeAt(0) & 0xff)
     return encodeUtf8(data)
@@ -109,6 +110,7 @@ const toBytes = (data, encoding) => {
 const fromBytes = (bytes, encoding) => {
   if (encoding === undefined || encoding === null || encoding === 'buffer') return bytes
   if (encoding === 'base64') return encodeBase64(bytes)
+  if (encoding === 'base64url') return encodeBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   if (encoding === 'hex') return encodeHex(bytes)
   if (encoding === 'latin1' || encoding === 'binary') return decodeLatin1(bytes)
   return decodeUtf8(bytes)
