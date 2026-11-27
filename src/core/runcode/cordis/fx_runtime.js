@@ -798,7 +798,39 @@ const validateHeaderValue = (name, value) => {
   if (/[\r\n\0]/.test(String(value))) throw new TypeError('Invalid character in header content ["' + String(name) + '"]')
 }
 
-const http = { createServer: fail('http.createServer'), validateHeaderValue }
+const createServer = (handler = () => {}) => {
+  const server = {
+    closed: false,
+    id: 0,
+    port: 0,
+    listen: (port = 0, bind = '127.0.0.1', callback) => {
+      if (typeof bind === 'function') {
+        callback = bind
+        bind = '127.0.0.1'
+      }
+      const reply = host('serve_listen', { url: 'http://' + bind + '/', loopback: true, host: bind, port })
+      server.id = reply.id
+      server.port = reply.port
+      if (callback) callback()
+      while (!server.closed) {
+        const request = host('serve_accept', { id: server.id })
+        const res = {
+          statusCode: 200,
+          setHeader: () => {},
+          writeHead: (code) => { res.statusCode = code },
+          end: (body = '') => host('serve_respond', { conn: request.conn, status: res.statusCode, body: String(body) }),
+        }
+        handler({ method: request.method, url: request.path, body: request.body }, res)
+      }
+      return server
+    },
+    close: () => { server.closed = true },
+    address: () => ({ port: server.port, address: '127.0.0.1' }),
+  }
+  return server
+}
+
+const http = { createServer, validateHeaderValue }
 
 const https = { createServer: fail('https.createServer'), get: fail('https.get'), request: fail('https.request') }
 
