@@ -465,11 +465,29 @@ const crypto = { createHash, randomBytes, randomUUID }
 
 const stream = { PassThrough: fail('stream.PassThrough'), Readable: fail('stream.Readable'), Writable: fail('stream.Writable'), pipeline: fail('stream.pipeline') }
 
-const Buffer = fail('buffer.Buffer')
-Buffer.from = fail('buffer.Buffer.from')
-Buffer.alloc = fail('buffer.Buffer.alloc')
-Buffer.byteLength = fail('buffer.Buffer.byteLength')
-Buffer.isBuffer = () => false
+class FxBuffer extends Uint8Array {
+  toString(encoding, start = 0, end = this.length) {
+    return fromBytes(this.subarray(start, end), encoding ?? 'utf8')
+  }
+}
+
+const wrapBytes = (bytes) => new FxBuffer(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+
+const Buffer = FxBuffer
+Buffer.from = (value, encoding) => {
+  if (typeof value === 'string') return wrapBytes(toBytes(value, encoding))
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return wrapBytes(new Uint8Array(value))
+  if (Array.isArray(value)) return wrapBytes(Uint8Array.from(value))
+  throw new TypeError('Buffer.from received an unsupported value')
+}
+Buffer.alloc = (size, fill = 0) => {
+  const bytes = new Uint8Array(size)
+  if (fill !== 0) bytes.fill(typeof fill === 'string' ? toBytes(fill, 'utf8')[0] : fill)
+  return wrapBytes(bytes)
+}
+Buffer.byteLength = (value, encoding) => (typeof value === 'string' ? toBytes(value, encoding).length : value.byteLength)
+Buffer.isBuffer = (value) => value instanceof FxBuffer
+Buffer.concat = (list) => wrapBytes(concatBytes(list))
 
 const buffer = { Buffer, constants: { MAX_LENGTH: 4294967296, MAX_STRING_LENGTH: 536870888 } }
 
