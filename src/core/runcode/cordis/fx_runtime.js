@@ -1281,7 +1281,13 @@ const agentPersistence = {
   },
 }
 
-const agentModule = { core: { name: 'fx', interface: 1 }, persistence: agentPersistence }
+const agentCore = {
+  name: 'fx',
+  interface: 1,
+  turn: (prompt) => globalThis.gm.Agent({ prompt: String(prompt), description: 'agent turn' }),
+}
+
+const agentModule = { core: agentCore, persistence: agentPersistence }
 
 const loaderState = { lastGood: new Map(), hot: new Map(), rev: new Map(), reloads: 0, history: new Map() }
 
