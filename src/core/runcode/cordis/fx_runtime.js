@@ -1263,7 +1263,25 @@ const sqliteModule = {
 
 const fetchModule = { fetch }
 
-const agentModule = { core: { name: 'fx', interface: 1 } }
+const agentState = { dir: '.fx/agents' }
+
+const agentFile = (key) => agentState.dir + '/' + String(key) + '.json'
+
+const agentPersistence = {
+  write: (key, value) => {
+    host('fs_mkdir', { path: agentState.dir, recursive: true })
+    host('fs_write', { path: agentFile(key), base64: encodeBase64(toBytes(JSON.stringify(value), 'utf8')), append: false })
+  },
+  read: (key) => {
+    try {
+      return JSON.parse(fromBytes(decodeBase64(host('fs_read', { path: agentFile(key) }).base64), 'utf8'))
+    } catch (error) {
+      return undefined
+    }
+  },
+}
+
+const agentModule = { core: { name: 'fx', interface: 1 }, persistence: agentPersistence }
 
 const loaderState = { lastGood: new Map(), hot: new Map(), rev: new Map(), reloads: 0, history: new Map() }
 
