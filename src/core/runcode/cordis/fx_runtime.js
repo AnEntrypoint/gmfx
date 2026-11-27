@@ -783,7 +783,7 @@ const fetchModule = { fetch }
 
 const agentModule = { core: { name: 'fx', interface: 1 } }
 
-const loaderState = { lastGood: new Map(), hot: new Map(), rev: new Map(), reloads: 0 }
+const loaderState = { lastGood: new Map(), hot: new Map(), rev: new Map(), reloads: 0, history: new Map() }
 
 const hashText = (text) => {
   let hash = 5381
@@ -857,6 +857,9 @@ const reloadModule = async (path) => {
     loaderState.lastGood.set(target, mod)
     loaderState.rev.set(target, revision)
     loaderState.reloads += 1
+    const past = loaderState.history.get(target) ?? []
+    past.push(revision)
+    loaderState.history.set(target, past)
     for (const callback of entry.acceptors) callback(mod)
     return mod
   } catch (error) {
@@ -906,7 +909,19 @@ const currentModule = async (entry) => {
   return loaderState.lastGood.get(String(entry))
 }
 
-const loaderModule = { reload: reloadModule, hotFor, watchGraph, current: currentModule, reloadCount: () => loaderState.reloads }
+const rollbackModule = async (path) => {
+  const target = String(path)
+  const past = loaderState.history.get(target) ?? []
+  if (past.length < 2) throw new Error('nothing to roll back to for ' + target)
+  past.pop()
+  const previous = past[past.length - 1]
+  const mod = await import(previous)
+  loaderState.lastGood.set(target, mod)
+  loaderState.rev.set(target, previous)
+  return { revision: previous, module: mod }
+}
+
+const loaderModule = { reload: reloadModule, hotFor, watchGraph, current: currentModule, reloadCount: () => loaderState.reloads, rollback: rollbackModule }
 
 const wsModule = {
   connect: (hostname, port, path = '/') => {
