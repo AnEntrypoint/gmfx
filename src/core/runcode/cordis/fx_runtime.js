@@ -365,6 +365,31 @@ const writeSync = (fd, data, ...rest) => {
 
 const fsConstants = { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1, O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024, COPYFILE_EXCL: 1 }
 
+const createReadStream = (value, options = {}) => {
+  const stream = new Readable({ encoding: encodingOf(options) })
+  let bytes = null
+  let failure = null
+  try {
+    bytes = decodeBase64(host('fs_read', { path: pathOf(value) }).base64)
+  } catch (error) {
+    failure = nodeError('ENOENT', 'ENOENT: no such file or directory, open \'' + pathOf(value) + '\'')
+  }
+  let offset = 0
+  stream._read = () => {
+    if (failure !== null) return stream.destroy(failure)
+    if (offset >= bytes.length) return stream.push(null)
+    stream.push(bytes.subarray(offset, offset + 65536))
+    offset += 65536
+  }
+  nextTick(() => {
+    if (failure === null) {
+      stream.emit('open', 3)
+      stream.emit('ready')
+    }
+  })
+  return stream
+}
+
 const fs = {
   appendFileSync: (value, data, options) => writeFileSync(value, data, { ...(typeof options === "object" && options !== null ? options : {}), flag: "a" }),
   chmodSync: (value, mode) => host("fs_chmod", { path: pathOf(value), mode }),
@@ -376,7 +401,7 @@ const fs = {
   closeSync,
   constants: fsConstants,
   copyFileSync: (from, to) => host('fs_copy', { from: pathOf(from), to: pathOf(to), recursive: false }),
-  createReadStream: fail('fs.createReadStream'),
+  createReadStream,
   existsSync,
   lstatSync: (value, options) => statOf(value, false, options),
   mkdirSync: (value, options) => host('fs_mkdir', { path: pathOf(value), recursive: options?.recursive === true }),
@@ -505,53 +530,116 @@ class FxEmitter {
   }
 }
 
+const nodeError = (code, message) => {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+const nextTick = (callback) => queueMicrotask(callback)
+
 class Readable extends FxEmitter {
   constructor(options = {}) {
     super()
+    if (typeof options.read === 'function') this._read = options.read
     this.buffered = []
     this.ended = false
-    this.readableEnded = false
+    this.endScheduled = false
+    this.endEmitted = false
+    this.destroyed = false
+    this.reading = false
     this.flowing = false
     this.encoding = options.encoding ?? null
     this.objectMode = options.objectMode ?? false
   }
-  push(chunk) {
-    if (chunk === null) this.ended = true
-    else this.buffered.push(chunk)
-    this.flow()
-    return chunk !== null
+  _read() {
+    this.destroy(nodeError('ERR_METHOD_NOT_IMPLEMENTED', 'The _read() method is not implemented'))
   }
-  flow() {
-    if (!this.flowing) return
-    while (this.buffered.length > 0) this.emit('data', this.buffered.shift())
-    if (this.ended && !this.readableEnded) {
-      this.readableEnded = true
-      this.emit('end')
+  push(chunk) {
+    if (chunk === null) {
+      this.ended = true
+      this.reading = false
+      this.scheduleEnd()
+      return false
     }
+    if (this.ended) {
+      this.emit('error', nodeError('ERR_STREAM_PUSH_AFTER_EOF', 'stream.push() after EOF'))
+      return false
+    }
+    this.buffered.push(chunk)
+    this.reading = false
+    if (this.flowing) this.flush()
+    else if (this.listenerCount('readable') > 0) nextTick(() => this.emit('readable'))
+    return true
+  }
+  flush() {
+    while (this.flowing && this.buffered.length > 0) this.emit('data', this.buffered.shift())
+    if (this.flowing && this.buffered.length === 0 && !this.ended && !this.reading && !this.destroyed) {
+      this.reading = true
+      this._read(65536)
+    }
+    this.scheduleEnd()
+  }
+  scheduleEnd() {
+    if (!this.ended || this.buffered.length > 0 || this.endScheduled || this.endEmitted) return
+    this.endScheduled = true
+    nextTick(() => {
+      if (this.endEmitted || this.buffered.length > 0) return
+      this.endEmitted = true
+      this.emit('end')
+      this.destroy()
+    })
+  }
+  destroy(error) {
+    if (this.destroyed) return this
+    this.destroyed = true
+    nextTick(() => {
+      if (error) this.emit('error', error)
+      this.emit('close')
+    })
+    return this
   }
   on(event, listener) {
     super.on(event, listener)
-    if (event === 'data') {
+    if (event === 'data' && !this.flowing) {
       this.flowing = true
-      this.flow()
+      nextTick(() => this.flush())
     }
+    return this
+  }
+  pause() {
+    this.flowing = false
     return this
   }
   resume() {
     this.flowing = true
-    this.flow()
+    nextTick(() => this.flush())
     return this
   }
   read() {
-    return this.buffered.length > 0 ? this.buffered.shift() : null
+    if (this.buffered.length === 0 && !this.ended && !this.destroyed && !this.reading) {
+      this.reading = true
+      this._read(65536)
+    }
+    if (this.buffered.length === 0) {
+      this.scheduleEnd()
+      return null
+    }
+    const data = this.buffered.length === 1 ? this.buffered[0] : this.buffered.map((part) => (typeof part === 'string' ? part : String(part))).join('')
+    this.buffered = []
+    return data
   }
   setEncoding(encoding) {
     this.encoding = encoding
     return this
   }
   pipe(destination) {
-    this.on('data', (chunk) => destination.write(chunk))
+    this.on('data', (chunk) => {
+      if (destination.write(chunk) === false) this.pause()
+    })
+    destination.on('drain', () => this.resume())
     this.on('end', () => destination.end())
+    destination.emit('pipe', this)
     return destination
   }
   static from(iterable) {
@@ -568,28 +656,72 @@ class Readable extends FxEmitter {
 class Writable extends FxEmitter {
   constructor(options = {}) {
     super()
-    this.writeImpl = options.write ?? null
+    if (typeof options.write === 'function') this.writeImpl = options.write
     this.chunks = []
+    this.length = 0
+    this.pending = 0
+    this.ending = false
     this.finished = false
+    this.destroyed = false
   }
   write(chunk, encoding, callback) {
     const done = typeof encoding === 'function' ? encoding : callback
-    if (this.writeImpl !== null) this.writeImpl(chunk, typeof encoding === 'string' ? encoding : 'buffer', done ?? (() => {}))
-    else this.chunks.push(chunk)
-    return true
+    const enc = typeof encoding === 'string' ? encoding : 'buffer'
+    if (this.ending || this.destroyed) {
+      const error = this.destroyed ? nodeError('ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed') : nodeError('ERR_STREAM_WRITE_AFTER_END', 'write after end')
+      nextTick(() => {
+        if (done) done(error)
+      })
+      return false
+    }
+    const size = typeof chunk === 'string' ? chunk.length : chunk.length ?? 1
+    this.length += size
+    this.pending += 1
+    const finishWrite = (error) => {
+      this.pending -= 1
+      this.length -= size
+      if (done) done(error)
+      if (this.ending && this.pending === 0) this.finishStream()
+    }
+    if (this.writeImpl) this.writeImpl.call(this, chunk, enc, finishWrite)
+    else {
+      this.chunks.push(chunk)
+      finishWrite()
+    }
+    return this.length < 65536
   }
-  end(chunk) {
-    if (chunk !== undefined && chunk !== null) this.write(chunk)
-    if (!this.finished) {
-      this.finished = true
+  end(chunk, encoding, callback) {
+    const done = typeof chunk === 'function' ? chunk : typeof encoding === 'function' ? encoding : callback
+    if (chunk !== undefined && chunk !== null && typeof chunk !== 'function') this.write(chunk, typeof encoding === 'string' ? encoding : undefined)
+    this.ending = true
+    if (done) this.once('finish', done)
+    if (this.pending === 0) this.finishStream()
+    return this
+  }
+  finishStream() {
+    if (this.finished) return
+    this.finished = true
+    nextTick(() => {
       this.emit('finish')
       this.emit('close')
-    }
+    })
+  }
+  destroy(error) {
+    if (this.destroyed) return this
+    this.destroyed = true
+    nextTick(() => {
+      if (error) this.emit('error', error)
+      this.emit('close')
+    })
     return this
   }
 }
 
 class PassThrough extends Readable {
+  constructor(options = {}) {
+    super(options)
+    this._read = () => {}
+  }
   write(chunk) {
     this.push(chunk)
     return true
@@ -597,7 +729,7 @@ class PassThrough extends Readable {
   end(chunk) {
     if (chunk !== undefined && chunk !== null) this.push(chunk)
     this.push(null)
-    this.emit('finish')
+    nextTick(() => this.emit('finish'))
     return this
   }
 }
@@ -605,16 +737,25 @@ class PassThrough extends Readable {
 const pipeline = (...streams) => {
   const callback = typeof streams[streams.length - 1] === 'function' ? streams.pop() : () => {}
   for (let index = 0; index < streams.length - 1; index += 1) streams[index].pipe(streams[index + 1])
-  const last = streams[streams.length - 1]
-  let finished = false
-  const finish = (error) => {
-    if (finished) return
-    finished = true
+  let error
+  let open = streams.length
+  let called = false
+  const finish = () => {
+    if (called) return
+    called = true
     callback(error)
   }
-  last.on('finish', () => finish())
-  last.on('error', (error) => finish(error))
-  return last
+  for (const current of streams) {
+    current.on('error', (cause) => {
+      if (error === undefined) error = cause
+      for (const other of streams) if (other !== current && !other.destroyed) other.destroy()
+    })
+    current.on('close', () => {
+      open -= 1
+      if (open === 0) finish()
+    })
+  }
+  return streams[streams.length - 1]
 }
 
 const stream = { PassThrough, Readable, Writable, Transform: PassThrough, pipeline }
