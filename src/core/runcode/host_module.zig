@@ -33,7 +33,7 @@ fn moduleSource(comptime name: []const u8, comptime exports: []const []const u8)
 
 pub const table = [_]Row{
     gap("async_hooks"),
-    gap("buffer"),
+    provided("buffer", "buffer", &.{ "Buffer", "constants" }),
     provided("child_process", "childProcess", &.{ "execFile", "execFileSync", "spawn", "spawnSync" }),
     provided("crypto", "crypto", &.{ "createHash", "randomBytes", "randomUUID" }),
     provided("dns/promises", "dnsPromises", &.{"lookup"}),
@@ -49,7 +49,7 @@ pub const table = [_]Row{
     gap("http"),
     gap("https"),
     gap("inspector"),
-    gap("module"),
+    provided("module", "module", &.{ "createRequire", "stripTypeScriptTypes" }),
     provided("net", "net", &.{"isIP"}),
     provided("os", "os", &.{ "availableParallelism", "constants", "homedir", "networkInterfaces", "platform", "release", "tmpdir" }),
     provided("path", "path", &.{ "basename", "delimiter", "dirname", "extname", "format", "isAbsolute", "join", "normalize", "parse", "posix", "relative", "resolve", "sep", "toNamespacedPath", "win32" }),
@@ -62,7 +62,7 @@ pub const table = [_]Row{
     provided("util", "util", &.{ "TextDecoder", "inspect", "isDeepStrictEqual", "parseArgs", "parseEnv", "promisify" }),
     provided("util/types", "utilTypes", &.{"isPromise"}),
     gap("vm"),
-    gap("worker_threads"),
+    provided("worker_threads", "workerThreads", &.{ "MessageChannel", "Worker", "parentPort", "workerData" }),
     gap("zlib"),
 };
 
