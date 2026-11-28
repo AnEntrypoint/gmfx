@@ -74,6 +74,7 @@ pub const verbs = [_]Verb{
             .properties = &.{
                 .{ .name = "id", .json_type = .integer },
                 .{ .name = "stream", .json_type = .string },
+                .{ .name = "wait_ms", .json_type = .integer },
             },
             .required = &.{"id"},
         },
@@ -88,9 +89,9 @@ pub const verbs = [_]Verb{
     },
     .{
         .name = "proc_kill",
-        .description = "Kill a started process.",
+        .description = "Send a signal (default SIGTERM) to a started process.",
         .input_schema = .{
-            .properties = &.{.{ .name = "id", .json_type = .integer }},
+            .properties = &.{ .{ .name = "id", .json_type = .integer }, .{ .name = "signal", .json_type = .integer } },
             .required = &.{"id"},
         },
     },
@@ -820,58 +821,46 @@ fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
 
 const Proc = struct {
     child: std.process.Child,
+    mutex: std.Io.Mutex = .init,
     out_buf: std.ArrayList(u8) = .empty,
     err_buf: std.ArrayList(u8) = .empty,
     out_eof: bool = false,
     err_eof: bool = false,
+    out_thread: ?std.Thread = null,
+    err_thread: ?std.Thread = null,
 };
-var procs: std.AutoHashMapUnmanaged(i64, Proc) = .empty;
+var procs: std.AutoHashMapUnmanaged(i64, *Proc) = .empty;
 var next_proc_id: i64 = 1;
 const proc_store = std.heap.page_allocator;
 
 fn procFor(args: std.json.ObjectMap) ?*Proc {
     const id = integerArg(args, "id") orelse return null;
-    return procs.getPtr(id);
+    return procs.get(id);
 }
 
 fn procRelease(id: i64) void {
     const entry = procs.fetchRemove(id) orelse return;
-    var proc = entry.value;
+    const proc = entry.value;
     proc.out_buf.deinit(proc_store);
     proc.err_buf.deinit(proc_store);
+    proc_store.destroy(proc);
 }
 
-fn pumpOnce(proc: *Proc) anyerror!bool {
-    var fds: [2]std.posix.pollfd = undefined;
-    var is_stderr: [2]bool = undefined;
-    var count: usize = 0;
-    if (proc.child.stdout) |out| {
-        if (!proc.out_eof) {
-            fds[count] = .{ .fd = out.handle, .events = std.posix.POLL.IN, .revents = 0 };
-            is_stderr[count] = false;
-            count += 1;
-        }
+fn pipeReader(proc: *Proc, is_stderr: bool) void {
+    const io = io_mod.getIo();
+    var chunk: [16384]u8 = undefined;
+    while (true) {
+        const file = (if (is_stderr) proc.child.stderr else proc.child.stdout) orelse break;
+        const read_len = std.posix.read(file.handle, &chunk) catch 0;
+        proc.mutex.lockUncancelable(io);
+        defer proc.mutex.unlock(io);
+        if (read_len == 0) break;
+        const buf = if (is_stderr) &proc.err_buf else &proc.out_buf;
+        buf.appendSlice(proc_store, chunk[0..read_len]) catch break;
     }
-    if (proc.child.stderr) |err_file| {
-        if (!proc.err_eof) {
-            fds[count] = .{ .fd = err_file.handle, .events = std.posix.POLL.IN, .revents = 0 };
-            is_stderr[count] = true;
-            count += 1;
-        }
-    }
-    if (count == 0) return false;
-    _ = try std.posix.poll(fds[0..count], -1);
-    for (0..count) |index| {
-        if (fds[index].revents == 0) continue;
-        var chunk: [16384]u8 = undefined;
-        const read_len = try std.posix.read(fds[index].fd, &chunk);
-        if (is_stderr[index]) {
-            if (read_len == 0) proc.err_eof = true else try proc.err_buf.appendSlice(proc_store, chunk[0..read_len]);
-        } else {
-            if (read_len == 0) proc.out_eof = true else try proc.out_buf.appendSlice(proc_store, chunk[0..read_len]);
-        }
-    }
-    return true;
+    proc.mutex.lockUncancelable(io);
+    defer proc.mutex.unlock(io);
+    if (is_stderr) proc.err_eof = true else proc.out_eof = true;
 }
 
 fn procSpawn(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
@@ -922,10 +911,15 @@ fn procSpawn(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         .stderr = .pipe,
         .environ_map = env_ptr,
     })) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
+    const proc = try proc_store.create(Proc);
+    proc.* = .{ .child = child };
+    proc.out_thread = try std.Thread.spawn(.{}, pipeReader, .{ proc, false });
+    proc.err_thread = try std.Thread.spawn(.{}, pipeReader, .{ proc, true });
     const id = next_proc_id;
     next_proc_id += 1;
-    try procs.put(proc_store, id, .{ .child = child });
-    return encode(alloc, .{ .ok = true, .id = id });
+    try procs.put(proc_store, id, proc);
+    const pid: i64 = if (proc.child.id) |value| @intCast(value) else 0;
+    return encode(alloc, .{ .ok = true, .id = id, .pid = pid });
 }
 
 fn procWrite(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
@@ -952,44 +946,60 @@ fn procCloseStdin(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
 fn procRead(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const proc = procFor(args) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such process" });
     const is_stderr = std.mem.eql(u8, stringArg(args, "stream") orelse "stdout", "stderr");
+    const io = io_mod.getIo();
+    const wait_ms: i64 = integerArg(args, "wait_ms") orelse 0;
+    var waited_ms: i64 = 0;
     while (true) {
+        proc.mutex.lockUncancelable(io);
         const buf = if (is_stderr) &proc.err_buf else &proc.out_buf;
         const done = if (is_stderr) proc.err_eof else proc.out_eof;
-        if (buf.items.len > 0 or done) break;
-        if (!try pumpOnce(proc)) {
-            if (is_stderr) proc.err_eof = true else proc.out_eof = true;
+        if (buf.items.len > 0 or done) {
+            defer proc.mutex.unlock(io);
+            return procReadReply(alloc, buf, done);
         }
+        proc.mutex.unlock(io);
+        if (waited_ms >= wait_ms) return encode(alloc, .{ .ok = true, .eof = false, .pending = true, .body = "" });
+        io_mod.sleep(std.time.ns_per_ms);
+        waited_ms += 1;
     }
-    const buf = if (is_stderr) &proc.err_buf else &proc.out_buf;
-    if (buf.items.len == 0) return encode(alloc, .{ .ok = true, .eof = true, .body = "" });
+}
+
+fn procReadReply(alloc: Allocator, buf: *std.ArrayList(u8), done: bool) anyerror![]u8 {
+    if (buf.items.len == 0) {
+        return encode(alloc, .{ .ok = true, .eof = done, .pending = false, .body = "" });
+    }
     const encoded = try alloc.alloc(u8, std.base64.standard.Encoder.calcSize(buf.items.len));
     defer alloc.free(encoded);
     _ = std.base64.standard.Encoder.encode(encoded, buf.items);
     buf.clearRetainingCapacity();
-    return encode(alloc, .{ .ok = true, .eof = false, .body = @as([]const u8, encoded) });
+    return encode(alloc, .{ .ok = true, .eof = false, .pending = false, .body = @as([]const u8, encoded) });
 }
 
 fn procWait(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
     const proc = procFor(args) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such process" });
-    while (!(proc.out_eof and proc.err_eof)) {
-        if (!try pumpOnce(proc)) break;
-    }
+    if (proc.out_thread) |thread| thread.join();
+    if (proc.err_thread) |thread| thread.join();
+    proc.out_thread = null;
+    proc.err_thread = null;
     const term = try proc.child.wait(io_mod.getIo());
-    const code: i64 = switch (term) {
-        .exited => |value| @as(i64, value),
-        else => -1,
-    };
+    var code: ?i64 = null;
+    var signal: ?i64 = null;
+    switch (term) {
+        .exited => |value| code = @as(i64, value),
+        .signal => |value| signal = @as(i64, @intCast(@intFromEnum(value))),
+        else => {},
+    }
     procRelease(id);
-    return encode(alloc, .{ .ok = true, .code = code });
+    return encode(alloc, .{ .ok = true, .code = code, .signal = signal });
 }
 
 fn procKill(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
-    const id = integerArg(args, "id") orelse return invalidField(alloc, "id", "an integer");
     const proc = procFor(args) orelse return encode(alloc, .{ .ok = false, .@"error" = "no such process" });
-    proc.child.kill(io_mod.getIo());
-    procRelease(id);
-    return encode(alloc, .{ .ok = true });
+    const pid = proc.child.id orelse return encode(alloc, .{ .ok = true, .delivered = false });
+    const signal_number: i64 = integerArg(args, "signal") orelse 15;
+    const rc = std.os.linux.kill(pid, @enumFromInt(@as(u32, @intCast(signal_number))));
+    return encode(alloc, .{ .ok = true, .delivered = std.os.linux.errno(rc) == .SUCCESS });
 }
 
 fn dnsLookup(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
