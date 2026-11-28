@@ -726,8 +726,9 @@ const fs = {
   chmodSync: (value, mode) => host("fs_chmod", { path: pathOf(value), mode }),
   linkSync: (existing, value) => host("fs_link", { existing: pathOf(existing), path: pathOf(value) }),
   truncateSync: (value, length = 0) => host("fs_truncate", { path: pathOf(value), length }),
-  accessSync: (value) => {
+  accessSync: (value, mode = 0) => {
     if (!existsSync(value)) throw coded('ENOENT', "ENOENT: no such file or directory, access '" + pathOf(value) + "'")
+    if ((mode & 1) !== 0 && (host('fs_stat', { path: pathOf(value), follow: true }).mode & 0o111) === 0) throw coded('EACCES', "EACCES: permission denied, access '" + pathOf(value) + "'")
   },
   closeSync,
   constants: fsConstants,
@@ -747,7 +748,7 @@ const fs = {
   readlinkSync: (value) => host('fs_readlink', { path: pathOf(value) }).path,
   realpathSync: (value) => host('fs_realpath', { path: pathOf(value) }).path,
   renameSync: (from, to) => host('fs_rename', { from: pathOf(from), to: pathOf(to) }),
-  rmSync: (value, options) => host('fs_remove', { path: pathOf(value), recursive: options?.recursive === true, force: options?.force === true }),
+  rmSync: (value, options) => void host('fs_remove', { path: pathOf(value), recursive: options?.recursive === true, force: options?.force === true }),
   statSync: (value, options) => statOf(value, true, options),
   symlinkSync: (target, value) => host('fs_symlink', { target: pathOf(target), path: pathOf(value) }),
   unlinkSync: (value) => host('fs_remove', { path: pathOf(value), recursive: false, force: false }),
@@ -1684,6 +1685,7 @@ const spawnStreams = (file, args = [], options = {}) => {
   if (request.stdin_mode !== 'pipe') child.stdin = null
   if (request.stdout_mode !== 'pipe') child.stdout = null
   if (request.stderr_mode !== 'pipe') child.stderr = null
+  child.stdio = [child.stdin, child.stdout, child.stderr]
   nextTick(() => {
     child.emit('spawn')
     child.run().catch((error) => child.emit('error', error))

@@ -1422,7 +1422,7 @@ fn fsMkdir(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
 fn fsMkdtemp(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const prefix = stringArg(args, "prefix") orelse return invalidField(alloc, "prefix", "a string");
     const io = io_mod.getIo();
-    var random: [6]u8 = undefined;
+    var random: [3]u8 = undefined;
     std.Io.random(io, &random);
     const suffix = std.fmt.bytesToHex(random, .lower);
     const path = try std.fmt.allocPrint(alloc, "{s}{s}", .{ prefix, suffix[0..] });
