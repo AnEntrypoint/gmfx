@@ -804,6 +804,9 @@ class Writable extends FxEmitter {
     this.finished = false
     this.destroyed = false
   }
+  get writable() {
+    return !this.ending && !this.destroyed
+  }
   write(chunk, encoding, callback) {
     const done = typeof encoding === 'function' ? encoding : callback
     const enc = typeof encoding === 'string' ? encoding : 'buffer'
@@ -811,6 +814,7 @@ class Writable extends FxEmitter {
       const error = this.destroyed ? nodeError('ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed') : nodeError('ERR_STREAM_WRITE_AFTER_END', 'write after end')
       nextTick(() => {
         if (done) done(error)
+        if (this.listeners.get('error')?.length) this.emit('error', error)
       })
       return false
     }
@@ -1269,11 +1273,13 @@ class ChildProcess extends FxEmitter {
     this.procId = undefined
     this.stdin = new Writable({
       write: (chunk, encoding, callback) => {
-        host('proc_write', { id: this.procId, body: encodeBase64(toBytes(chunk, 'utf8')) })
+        if (this.procId !== undefined) host('proc_write', { id: this.procId, body: encodeBase64(typeof chunk === 'string' ? encodeUtf8(chunk) : toBytes(chunk)) })
         callback()
       },
     })
-    this.stdin.on('finish', () => host('proc_close_stdin', { id: this.procId }))
+    this.stdin.on('finish', () => {
+      if (this.procId !== undefined) host('proc_close_stdin', { id: this.procId })
+    })
     this.stdout = new Readable()
     this.stdout._read = () => {}
     this.stderr = new Readable()
