@@ -16,6 +16,8 @@ typedef struct FxRun {
     uint64_t budget_ns;
     unsigned long long budget_ms;
     int deadline_hit;
+    int exit_requested;
+    int exit_code;
     uv_timer_t timer;
     JSValue gm;
     JSValue require;
@@ -436,6 +438,18 @@ static char *deadline_message(unsigned long long budget_ms) {
     return copy_text(buffer);
 }
 
+static JSValue js_exit_now(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {
+    int32_t code = 0;
+    (void) this_val;
+    if (current_run == NULL) return JS_UNDEFINED;
+    if (argc > 0 && JS_ToInt32(ctx, &code, argv[0]) < 0) return JS_EXCEPTION;
+    current_run->exit_requested = 1;
+    current_run->exit_code = (int) (code & 0xff);
+    JSValue exc = JS_NewError(ctx);
+    JS_SetUncatchableError(ctx, exc);
+    return JS_Throw(ctx, exc);
+}
+
 static void drain_jobs(JSRuntime *rt, JSContext *ctx, char **error) {
     while (JS_IsJobPending(rt)) {
         JSContext *job_ctx = NULL;
@@ -466,7 +480,7 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
                        const char *source_name, int is_module,
                        unsigned long long budget_ms,
                        const FxRunCodeHost *host,
-                       char **out_value, char **out_error) {
+                       char **out_value, char **out_error, int *out_exit_code) {
     FxRun run;
     FxRun *previous = current_run;
     char *error = NULL;
@@ -478,6 +492,7 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
 
     *out_value = NULL;
     *out_error = NULL;
+    *out_exit_code = -1;
     memset(&run, 0, sizeof run);
     run.host = host;
     run.root = root;
@@ -498,6 +513,11 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
     run.started_ns = monotonic_ns();
     JS_SetModuleLoaderFunc(rt, normalize_module, load_module, NULL);
     JS_SetInterruptHandler(rt, interrupt_handler, &run);
+    {
+        JSValue global = JS_GetGlobalObject(ctx);
+        JS_SetPropertyStr(ctx, global, "__fxExitNow", JS_NewCFunction(ctx, js_exit_now, "__fxExitNow", 1));
+        JS_FreeValue(ctx, global);
+    }
     uv_timer_init(loop, &run.timer);
     uv_unref((uv_handle_t *) &run.timer);
     run.timer.data = &run;
@@ -589,6 +609,18 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
         }
     }
 
+    if (run.exit_requested) {
+        char exit_text[48];
+        free(error);
+        free(value);
+        value = NULL;
+        *out_exit_code = run.exit_code;
+        error = NULL;
+        if (run.exit_code != 0) {
+            snprintf(exit_text, sizeof exit_text, "process.exit(%d)", run.exit_code);
+            error = copy_text(exit_text);
+        }
+    }
     if (run.deadline_hit) {
         free(error);
         free(value);

@@ -17,6 +17,6 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
                        const char *source_name, int is_module,
                        unsigned long long budget_ms,
                        const FxRunCodeHost *host,
-                       char **out_value, char **out_error);
+                       char **out_value, char **out_error, int *out_exit_code);
 
 #endif

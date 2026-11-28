@@ -2919,7 +2919,7 @@ const processObject = {
   get version() { return processInfo().version },
   exitCode: undefined,
   cwd: () => processInfo().cwd,
-  exit: fail('process.exit'),
+  exit: (code = 0) => globalThis.__fxExitNow(code),
   nextTick: (callback, ...args) => {
     Promise.resolve().then(() => callback(...args))
   },

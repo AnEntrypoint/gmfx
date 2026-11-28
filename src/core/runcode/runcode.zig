@@ -51,6 +51,7 @@ extern fn fx_runcode_execute(
     host: *const Host,
     out_value: *?[*:0]u8,
     out_error: *?[*:0]u8,
+    out_exit_code: *c_int,
 ) c_int;
 
 pub const Outcome = struct {
@@ -58,6 +59,7 @@ pub const Outcome = struct {
     text: []u8,
     console: []u8,
     console_dropped: usize,
+    exit_code: ?u8 = null,
 
     pub fn deinit(self: Outcome, alloc: std.mem.Allocator) void {
         alloc.free(self.text);
@@ -282,7 +284,8 @@ pub fn execute(alloc: std.mem.Allocator, body: []const u8, options: Options) !Ou
     const host: Host = .{ .context = @ptrCast(&session), .call = callHost, .sink = sinkText, .embedded = embeddedSource };
     var value: ?[*:0]u8 = null;
     var error_text: ?[*:0]u8 = null;
-    const status = fx_runcode_execute(bootstrap.ptr, bootstrap.len, catalog.ptr, root.ptr, source.ptr, source.len, source_name.ptr, @intFromBool(options.format == .esm), options.deadline_ms, &host, &value, &error_text);
+    var exit_code: c_int = -1;
+    const status = fx_runcode_execute(bootstrap.ptr, bootstrap.len, catalog.ptr, root.ptr, source.ptr, source.len, source_name.ptr, @intFromBool(options.format == .esm), options.deadline_ms, &host, &value, &error_text, &exit_code);
     defer if (value) |text| std.c.free(@ptrCast(text));
     defer if (error_text) |text| std.c.free(@ptrCast(text));
     const console = try alloc.dupe(u8, session.console.items);
@@ -291,7 +294,7 @@ pub fn execute(alloc: std.mem.Allocator, body: []const u8, options: Options) !Ou
         try alloc.dupe(u8, if (value) |v| std.mem.span(v) else "null")
     else
         try alloc.dupe(u8, if (error_text) |e| std.mem.span(e) else "unknown error");
-    return .{ .ok = status == 0, .text = text, .console = console, .console_dropped = session.dropped };
+    return .{ .ok = status == 0, .text = text, .console = console, .console_dropped = session.dropped, .exit_code = if (exit_code >= 0) @as(u8, @intCast(exit_code & 0xff)) else null };
 }
 
 pub fn reportJson(alloc: std.mem.Allocator, outcome: Outcome, notice: ?[]const u8) ![]u8 {
@@ -445,7 +448,7 @@ pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Ver
     if (cli.task_file) |task| try writeTask(alloc, task, report);
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), report);
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), "\n");
-    return if (outcome.ok) 0 else 1;
+    return if (outcome.exit_code) |code| code else if (outcome.ok) 0 else 1;
 }
 
 test "fx js takes the file as its first argument and keeps the run-code flags" {
