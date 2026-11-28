@@ -2128,7 +2128,7 @@ printf '${tailMarker}\\n'
       );
       const activeCompact = await active.waitForPane(
         (pane) =>
-          pane.includes("Running ./active-overflow.sh") &&
+          pane.includes("Running command") &&
           !pane.includes(stableMarker),
         timeout,
       );
@@ -2189,7 +2189,7 @@ printf '${tailMarker}\\n'
       await active.sendKeys("Escape");
       await active.waitForPane(
         (pane) =>
-          pane.includes("Running ./active-overflow.sh") &&
+          pane.includes("Running command") &&
           !pane.includes(stableMarker) &&
           !pane.includes(futureMarker),
         timeout,
@@ -3164,7 +3164,7 @@ test.skipIf(!tmuxAvailable())(
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared command.");
-      await active.waitForText("Running sh -c", TIMEOUT);
+      await active.waitForText("Running command", TIMEOUT);
 
       await active.sendKeys("C-o");
       await active.waitForText(tailMarker, TIMEOUT);
@@ -3238,7 +3238,7 @@ test.skipIf(!tmuxAvailable())(
       await active.sendText("Run the prepared streaming command.");
       await active.waitForPane(
         (pane) =>
-          pane.includes(`Running ${FIXTURE_SHELL} -lc`) &&
+          pane.includes("Running command") &&
           !pane.includes(`${lineMarker} 001`),
         TIMEOUT,
       );
@@ -3403,7 +3403,7 @@ test.skipIf(!tmuxAvailable())(
       await active.sendText("Run the prepared streaming command.");
       await active.waitForPane(
         (pane) =>
-          pane.includes(`Running ${FIXTURE_SHELL} -lc`) &&
+          pane.includes("Running command") &&
           !pane.includes(`${commandMarker} 00005`),
         TIMEOUT,
       );
@@ -4427,7 +4427,7 @@ test.skipIf(!tmuxAvailable())(
       await active.sendKeys("Enter");
       await active.waitForPane(
         (pane) =>
-          pane.includes("Running sh -c") &&
+          pane.includes("Running command") &&
           !pane.includes(`${streamPrefix}004`),
         TIMEOUT,
       );
@@ -7998,7 +7998,7 @@ while :; do sleep 1; done
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared interrupt command.");
-      await waitForScrollback(active, "Running ./resume-cancel.sh", timeout);
+      await waitForScrollback(active, "Running command", timeout);
       await waitForCondition(
         () => existsSync(readyPath),
         "the interrupt command readiness file",

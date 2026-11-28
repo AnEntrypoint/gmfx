@@ -1837,7 +1837,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       });
       await session.waitForComposer(10_000);
       await session.sendText("stream the resize marker command");
-      await session.waitForText("Running for i in $(seq 1 96)", TIMEOUT);
+      await session.waitForText("Running command", TIMEOUT);
 
       const resizeCount = committedResizeFrameCount(tracePath);
       await new Promise((resolve) => setTimeout(resolve, 350));
