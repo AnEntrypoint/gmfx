@@ -411,6 +411,14 @@ pub const verbs = [_]Verb{
         },
     },
     .{
+        .name = "net_interfaces",
+        .description = "List the network interfaces: IPv4 and IPv6 addresses, netmasks, MAC addresses and the loopback flag.",
+        .input_schema = .{
+            .properties = &.{},
+            .required = &.{},
+        },
+    },
+    .{
         .name = "fs_realpath",
         .description = "Resolve a path to its canonical absolute form.",
         .input_schema = .{
@@ -573,6 +581,7 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "fs_remove")) return fsRemove(alloc, args);
     if (std.mem.eql(u8, name, "fs_rename")) return fsRename(alloc, args);
     if (std.mem.eql(u8, name, "fs_copy")) return fsCopy(alloc, args);
+    if (std.mem.eql(u8, name, "net_interfaces")) return netInterfaces(alloc, args);
     if (std.mem.eql(u8, name, "fs_realpath")) return fsRealpath(alloc, args);
     if (std.mem.eql(u8, name, "fs_readlink")) return fsReadlink(alloc, args);
     if (std.mem.eql(u8, name, "fs_symlink")) return fsSymlink(alloc, args);
@@ -1450,6 +1459,187 @@ fn copyTree(alloc: Allocator, from: []const u8, to: []const u8, depth: usize) an
             try copyFile(alloc, child_from, child_to);
         }
     }
+}
+
+const interface_request_bytes = 40;
+const max_interface_requests = 64;
+const iff_loopback: u16 = 0x8;
+const ipv6_table_path = "/proc/net/if_inet6";
+const max_ipv6_table_bytes = 64 * 1024;
+const ipv6_link_local_scope: u8 = 0x20;
+
+const IfConf = extern struct {
+    len: c_int,
+    pad: c_int = 0,
+    buf: usize,
+};
+
+fn ifreqFor(fd: i32, name: []const u8, request: u32) ?[interface_request_bytes]u8 {
+    var req: [interface_request_bytes]u8 = std.mem.zeroes([interface_request_bytes]u8);
+    for (name[0..@min(name.len, 15)], 0..) |byte, index| req[index] = byte;
+    if (std.os.linux.errno(std.os.linux.ioctl(fd, request, @intFromPtr(&req))) != .SUCCESS) return null;
+    return req;
+}
+
+fn readIpv6Table(alloc: Allocator) ![]u8 {
+    const io = io_mod.getIo();
+    var file = try std.Io.Dir.cwd().openFile(io, ipv6_table_path, .{});
+    defer file.close(io);
+    var content: std.ArrayList(u8) = .empty;
+    errdefer content.deinit(alloc);
+    var chunk: [4096]u8 = undefined;
+    while (true) {
+        const read_len = try std.posix.read(file.handle, &chunk);
+        if (read_len == 0) break;
+        if (content.items.len + read_len > max_ipv6_table_bytes) return error.FileTooBig;
+        try content.appendSlice(alloc, chunk[0..read_len]);
+    }
+    return content.toOwnedSlice(alloc);
+}
+
+fn formatIpv4(alloc: Allocator, bytes: []const u8) ![]u8 {
+    return std.fmt.allocPrint(alloc, "{d}.{d}.{d}.{d}", .{ bytes[0], bytes[1], bytes[2], bytes[3] });
+}
+
+fn formatMac(alloc: Allocator, bytes: []const u8) ![]u8 {
+    return std.fmt.allocPrint(alloc, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{ bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5] });
+}
+
+fn formatIpv6(alloc: Allocator, raw: [16]u8) ![]u8 {
+    var groups: [8]u16 = undefined;
+    for (&groups, 0..) |*group, index| group.* = std.mem.readInt(u16, raw[index * 2 ..][0..2], .big);
+    var best_start: usize = 8;
+    var best_len: usize = 0;
+    var start: usize = 0;
+    while (start < 8) {
+        if (groups[start] != 0) {
+            start += 1;
+            continue;
+        }
+        var end = start;
+        while (end < 8 and groups[end] == 0) end += 1;
+        if (end - start >= 2 and end - start > best_len) {
+            best_start = start;
+            best_len = end - start;
+        }
+        start = end;
+    }
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    var needs_colon = false;
+    var index: usize = 0;
+    while (index < 8) {
+        if (index == best_start) {
+            try out.writer.writeAll("::");
+            index += best_len;
+            needs_colon = false;
+            continue;
+        }
+        if (needs_colon) try out.writer.writeByte(':');
+        try out.writer.print("{x}", .{groups[index]});
+        needs_colon = true;
+        index += 1;
+    }
+    return out.toOwnedSlice();
+}
+
+fn maskBytes(prefix: u8) [16]u8 {
+    var mask: [16]u8 = std.mem.zeroes([16]u8);
+    for (&mask, 0..) |*byte, index| {
+        const covered: i32 = @as(i32, prefix) - @as(i32, @intCast(index * 8));
+        if (covered >= 8) {
+            byte.* = 0xff;
+        } else if (covered > 0) {
+            byte.* = @truncate(@as(u32, 0xff) << @intCast(8 - covered));
+        }
+    }
+    return mask;
+}
+
+fn writeInterfaceEntry(writer: *std.Io.Writer, first: *bool, name: []const u8, family: []const u8, address: []const u8, netmask: []const u8, mac: []const u8, internal: bool, cidr: []const u8, scopeid: ?u32) !void {
+    if (!first.*) try writer.writeByte(',');
+    first.* = false;
+    try writer.writeAll("{\"name\":");
+    try std.json.Stringify.value(name, .{}, writer);
+    try writer.writeAll(",\"family\":");
+    try std.json.Stringify.value(family, .{}, writer);
+    try writer.writeAll(",\"address\":");
+    try std.json.Stringify.value(address, .{}, writer);
+    try writer.writeAll(",\"netmask\":");
+    try std.json.Stringify.value(netmask, .{}, writer);
+    try writer.writeAll(",\"mac\":");
+    try std.json.Stringify.value(mac, .{}, writer);
+    try writer.print(",\"internal\":{s},\"cidr\":", .{if (internal) "true" else "false"});
+    try std.json.Stringify.value(cidr, .{}, writer);
+    if (scopeid) |id| try writer.print(",\"scopeid\":{d}", .{id});
+    try writer.writeByte('}');
+}
+
+fn netInterfaces(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    _ = args;
+    const linux = std.os.linux;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const socket_rc = linux.socket(linux.AF.INET, linux.SOCK.DGRAM | linux.SOCK.CLOEXEC, 0);
+    if (linux.errno(socket_rc) != .SUCCESS) return encode(alloc, .{ .ok = false, .@"error" = "socket failed" });
+    const fd: i32 = @intCast(socket_rc);
+    defer _ = linux.close(fd);
+
+    var buffer: [max_interface_requests * interface_request_bytes]u8 = undefined;
+    var config = IfConf{ .len = @intCast(buffer.len), .buf = @intFromPtr(&buffer) };
+    if (linux.errno(linux.ioctl(fd, linux.SIOCGIFCONF, @intFromPtr(&config))) != .SUCCESS) return encode(alloc, .{ .ok = false, .@"error" = "SIOCGIFCONF failed" });
+    const used: usize = @intCast(config.len);
+
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.writeAll("{\"ok\":true,\"interfaces\":[");
+    var first = true;
+    var offset: usize = 0;
+    while (offset + interface_request_bytes <= used) : (offset += interface_request_bytes) {
+        const request = buffer[offset..][0..interface_request_bytes];
+        const name = std.mem.sliceTo(request[0..16], 0);
+        const address = request[20..24];
+        const netmask_request = ifreqFor(fd, name, linux.SIOCGIFNETMASK) orelse continue;
+        const flags_request = ifreqFor(fd, name, linux.SIOCGIFFLAGS) orelse continue;
+        const hardware_request = ifreqFor(fd, name, linux.SIOCGIFHWADDR) orelse continue;
+        const internal = std.mem.readInt(u16, flags_request[16..18], .little) & iff_loopback != 0;
+        const netmask = netmask_request[20..24];
+        const prefix: u8 = @intCast(@popCount(std.mem.readInt(u32, netmask[0..4], .big)));
+        const address_text = try formatIpv4(scratch, address);
+        const netmask_text = try formatIpv4(scratch, netmask);
+        const cidr_text = try std.fmt.allocPrint(scratch, "{s}/{d}", .{ address_text, prefix });
+        const mac_text = try formatMac(scratch, hardware_request[18..24]);
+        try writeInterfaceEntry(&out.writer, &first, name, "IPv4", address_text, netmask_text, mac_text, internal, cidr_text, null);
+    }
+
+    const table: []const u8 = readIpv6Table(scratch) catch "";
+    var lines = std.mem.tokenizeScalar(u8, table, '\n');
+    while (lines.next()) |line| {
+        var fields = std.mem.tokenizeAny(u8, line, " \t");
+        const hex_address = fields.next() orelse continue;
+        const index_hex = fields.next() orelse continue;
+        const prefix_hex = fields.next() orelse continue;
+        const scope_hex = fields.next() orelse continue;
+        _ = fields.next() orelse continue;
+        const name = fields.next() orelse continue;
+        var raw: [16]u8 = undefined;
+        _ = std.fmt.hexToBytes(&raw, hex_address) catch continue;
+        const ifindex = std.fmt.parseInt(u32, index_hex, 16) catch continue;
+        const prefix = std.fmt.parseInt(u8, prefix_hex, 16) catch continue;
+        const scope = std.fmt.parseInt(u8, scope_hex, 16) catch continue;
+        const flags_request = ifreqFor(fd, name, linux.SIOCGIFFLAGS) orelse continue;
+        const hardware_request = ifreqFor(fd, name, linux.SIOCGIFHWADDR) orelse continue;
+        const internal = std.mem.readInt(u16, flags_request[16..18], .little) & iff_loopback != 0;
+        const address_text = try formatIpv6(scratch, raw);
+        const netmask_text = try formatIpv6(scratch, maskBytes(prefix));
+        const cidr_text = try std.fmt.allocPrint(scratch, "{s}/{d}", .{ address_text, prefix });
+        const mac_text = try formatMac(scratch, hardware_request[18..24]);
+        const scopeid: u32 = if (scope == ipv6_link_local_scope) ifindex else 0;
+        try writeInterfaceEntry(&out.writer, &first, name, "IPv6", address_text, netmask_text, mac_text, internal, cidr_text, scopeid);
+    }
+    try out.writer.writeAll("]}");
+    return out.toOwnedSlice();
 }
 
 fn fsRealpath(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {

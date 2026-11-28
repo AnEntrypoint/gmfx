@@ -18,6 +18,7 @@ pub const Row = struct {
 
 pub const table = [_]Row{
     .{ .verb = "process_info", .class = .none },
+    .{ .verb = "net_interfaces", .class = .none },
     .{ .verb = "net_fetch", .class = .network },
     .{ .verb = "proc_spawn", .class = .execute },
     .{ .verb = "proc_write", .class = .none },

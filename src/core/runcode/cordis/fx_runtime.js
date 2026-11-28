@@ -1132,11 +1132,17 @@ const spawnStreams = (file, args = [], options = {}) => {
 }
 const childProcess = { execFile, execFileSync, spawn: spawnStreams, spawnSync }
 
+const networkInterfaces = () => {
+  const out = {}
+  for (const { name, ...details } of host('net_interfaces', {}).interfaces) (out[name] ??= []).push(details)
+  return out
+}
+
 const os = {
   availableParallelism: () => processInfo().parallelism,
   constants: { signals: {}, errno: {} },
   homedir: () => processInfo().homedir,
-  networkInterfaces: fail('os.networkInterfaces'),
+  networkInterfaces,
   platform: () => processInfo().platform,
   release: () => processInfo().release,
   tmpdir: () => processInfo().tmpdir,
