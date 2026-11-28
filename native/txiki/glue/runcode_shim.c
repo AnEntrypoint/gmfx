@@ -235,6 +235,34 @@ static JSModuleDef *compile_source(JSContext *ctx, const char *text, size_t leng
     return JS_VALUE_GET_PTR(compiled);
 }
 
+static void set_import_meta(JSContext *ctx, JSModuleDef *module, const char *path) {
+    JSValue meta = JS_GetImportMeta(ctx, module);
+    if (JS_IsException(meta)) return;
+    size_t length = strlen(path);
+    const char *slash = strrchr(path, '/');
+    const char *dir = path;
+    size_t dir_length = 1;
+    if (slash == NULL) {
+        dir = ".";
+    } else if (slash == path) {
+        dir = "/";
+    } else {
+        dir_length = (size_t) (slash - path);
+    }
+    char *url = malloc(length + 8);
+    if (url == NULL) {
+        JS_FreeValue(ctx, meta);
+        return;
+    }
+    memcpy(url, "file://", 7);
+    memcpy(url + 7, path, length + 1);
+    JS_DefinePropertyValueStr(ctx, meta, "url", JS_NewString(ctx, url), JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, meta, "dirname", JS_NewStringLen(ctx, dir, dir_length), JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, meta, "filename", JS_NewString(ctx, path), JS_PROP_C_W_E);
+    free(url);
+    JS_FreeValue(ctx, meta);
+}
+
 static char *rewrite_hot(const char *text, size_t length, const char *name, size_t *out_length) {
     static const char needle[] = "import.meta.hot";
     static const char alias[] = "__fxHot";
@@ -313,6 +341,7 @@ static JSModuleDef *load_module(JSContext *ctx, const char *name, void *opaque) 
     size_t rewritten_length = 0;
     char *rewritten = rewrite_hot(text, (size_t) size, name, &rewritten_length);
     JSModuleDef *module = compile_source(ctx, rewritten ? rewritten : text, rewritten ? rewritten_length : (size_t) size, name);
+    if (module != NULL) set_import_meta(ctx, module, name);
     free(rewritten);
     free(text);
     return module;
@@ -455,6 +484,7 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
                 JS_FreeValue(ctx, compiled);
             } else {
                 JSModuleDef *definition = JS_VALUE_GET_PTR(compiled);
+                set_import_meta(ctx, definition, source_name);
                 JSValue evaluated = JS_EvalFunction(ctx, compiled);
                 if (JS_IsException(evaluated)) {
                     error = pending_error(ctx);
