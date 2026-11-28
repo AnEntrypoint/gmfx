@@ -450,6 +450,17 @@ static JSValue js_exit_now(JSContext *ctx, JSValueConst this_val, int argc, JSVa
     return JS_Throw(ctx, exc);
 }
 
+extern void tjs__execute_jobs(JSContext *ctx);
+
+static int rejections_wanted(JSContext *ctx) {
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue flag = JS_GetPropertyStr(ctx, global, "__fxRejections");
+    int wanted = JS_ToBool(ctx, flag) > 0;
+    JS_FreeValue(ctx, flag);
+    JS_FreeValue(ctx, global);
+    return wanted;
+}
+
 static void drain_jobs(JSRuntime *rt, JSContext *ctx, char **error) {
     while (JS_IsJobPending(rt)) {
         JSContext *job_ctx = NULL;
@@ -466,6 +477,7 @@ static void wait_for_promise(FxRun *run, JSRuntime *rt, JSContext *ctx, TJSRunti
     uv_loop_t *loop = gm_txiki_loop(runtime);
     for (;;) {
         drain_jobs(rt, ctx, error);
+        if (*error == NULL && rejections_wanted(ctx)) tjs__execute_jobs(ctx);
         if (*error != NULL || run->deadline_hit) return;
         if (JS_PromiseState(ctx, promise) == JS_PROMISE_REJECTED) return;
         if (!gm_txiki_loop_alive(runtime)) return;

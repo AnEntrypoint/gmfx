@@ -125,6 +125,7 @@
   const exportName = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
   globalThis.__fxCjsLoaded = (path) => loadFile(path);
   globalThis.__fxCjsWrap = (path, text) => {
+    if (path.endsWith('.json')) return 'export default ' + JSON.stringify(JSON.parse(text)) + '\n';
     if (!commonJs(path, text)) return null;
     const exported = loadFile(path);
     const lines = ['const __fxCjs = globalThis.__fxCjsLoaded(' + JSON.stringify(path) + ')', 'export default __fxCjs'];

@@ -2928,7 +2928,83 @@ const dnsPromises = {
   resolve: fail('dns.resolve'),
 }
 
+const zoneName = () => {
+  const configured = processInfo().env.TZ
+  if (configured) return String(configured).replace(/^:/, '')
+  try {
+    const link = host('fs_readlink', { path: '/etc/localtime' }).path
+    const match = /zoneinfo\/(.+)$/.exec(String(link))
+    if (match) return match[1]
+  } catch (error) {}
+  return 'UTC'
+}
+
+class DateTimeFormat {
+  constructor(locales, options = {}) {
+    this.options = options
+    this.resolved = { locale: Array.isArray(locales) ? locales[0] ?? 'en-US' : locales ?? 'en-US', calendar: 'gregory', numberingSystem: 'latn', timeZone: options.timeZone ?? zoneName() }
+  }
+  resolvedOptions() { return { ...this.resolved } }
+  format(date = new Date()) { return new Date(date).toISOString() }
+  formatToParts(date = new Date()) { return [{ type: 'literal', value: this.format(date) }] }
+  static supportedLocalesOf(locales) { return Array.isArray(locales) ? locales : locales === undefined ? [] : [locales] }
+}
+
+class NumberFormat {
+  constructor(locales, options = {}) { this.options = options }
+  resolvedOptions() { return { locale: 'en-US', numberingSystem: 'latn', style: this.options.style ?? 'decimal' } }
+  format(value) { return String(value) }
+}
+
+if (globalThis.Intl === undefined) globalThis.Intl = { DateTimeFormat, NumberFormat }
+
+const processEvents = new FxEmitter()
+const watchedSignals = new Set()
+let signalTimer = null
+const signalPoll = () => {
+  for (const name of host('signal_poll', {}).signals) processEvents.emit(name, name)
+}
+const watchSignal = (name) => {
+  if (name !== 'SIGINT' && name !== 'SIGTERM') return
+  if (!watchedSignals.has(name)) {
+    host('signal_watch', { signal: name })
+    watchedSignals.add(name)
+  }
+  if (signalTimer === null) {
+    signalTimer = setInterval(signalPoll, 25)
+    if (signalTimer && typeof signalTimer.unref === 'function') signalTimer.unref()
+  }
+}
+let rejectionBridge = false
+const bridgeRejections = () => {
+  if (rejectionBridge) return
+  rejectionBridge = true
+  globalThis.__fxRejections = true
+  globalThis.addEventListener('unhandledrejection', (event) => {
+    if (processEvents.listenerCount('unhandledRejection') === 0) return
+    event.preventDefault()
+    processEvents.emit('unhandledRejection', event.reason, event.promise)
+  })
+}
+const watchEvent = (name) => {
+  if (name === 'unhandledRejection') bridgeRejections()
+  else watchSignal(String(name))
+}
+const processEventApi = {
+  on(name, listener) { watchEvent(name); processEvents.on(name, listener); return processObject },
+  addListener(name, listener) { watchEvent(name); processEvents.addListener(name, listener); return processObject },
+  once(name, listener) { watchEvent(name); processEvents.once(name, listener); return processObject },
+  prependListener(name, listener) { watchEvent(name); processEvents.prependListener(name, listener); return processObject },
+  off(name, listener) { processEvents.off(name, listener); return processObject },
+  removeListener(name, listener) { processEvents.removeListener(name, listener); return processObject },
+  removeAllListeners(name) { processEvents.removeAllListeners(name); return processObject },
+  emit: (name, ...args) => processEvents.emit(name, ...args),
+  listeners: (name) => processEvents.listeners(name),
+  listenerCount: (name) => processEvents.listenerCount(name),
+}
+
 const processObject = {
+  ...processEventApi,
   get env() { return processInfo().env },
   get argv() { return processInfo().argv },
   get execPath() { return processInfo().execPath },

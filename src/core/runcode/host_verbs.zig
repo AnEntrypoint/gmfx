@@ -18,10 +18,29 @@ pub const Verb = struct {
     input_schema: model_tool_schema.ObjectSchema = .{},
 };
 
+var signal_pending: [2]std.atomic.Value(bool) = .{ .init(false), .init(false) };
+
+fn onWatchedSignal(signal: std.posix.SIG) callconv(.c) void {
+    if (signal == std.posix.SIG.INT) signal_pending[0].store(true, .release);
+    if (signal == std.posix.SIG.TERM) signal_pending[1].store(true, .release);
+}
+
 pub const verbs = [_]Verb{
     .{
         .name = "process_info",
         .description = "Report cwd, pid, platform, homedir, tmpdir, parallelism and env.",
+    },
+    .{
+        .name = "signal_watch",
+        .description = "Catch SIGINT or SIGTERM so the process is not ended by it; read what arrived with signal_poll.",
+        .input_schema = .{
+            .properties = &.{.{ .name = "signal", .json_type = .string }},
+            .required = &.{"signal"},
+        },
+    },
+    .{
+        .name = "signal_poll",
+        .description = "Return the watched signals that arrived since the last poll.",
     },
     .{
         .name = "net_fetch",
@@ -593,6 +612,8 @@ fn dispatch(alloc: Allocator, name: []const u8, args: std.json.ObjectMap) anyerr
     if (std.mem.eql(u8, name, "fs_readlink")) return fsReadlink(alloc, args);
     if (std.mem.eql(u8, name, "fs_symlink")) return fsSymlink(alloc, args);
     if (std.mem.eql(u8, name, "fs_link")) return fsLink(alloc, args);
+    if (std.mem.eql(u8, name, "signal_watch")) return signalWatch(alloc, args);
+    if (std.mem.eql(u8, name, "signal_poll")) return signalPoll(alloc);
     if (std.mem.eql(u8, name, "net_fetch")) return netFetch(alloc, args);
     if (std.mem.eql(u8, name, "dns_lookup")) return dnsLookup(alloc, args);
     if (std.mem.eql(u8, name, "watch_start")) return watchStart(alloc, args);
@@ -789,6 +810,32 @@ fn fsExists(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         else => return err,
     };
     return encode(alloc, .{ .ok = true, .exists = true });
+}
+
+fn signalWatch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
+    const name = stringArg(args, "signal") orelse return invalidField(alloc, "signal", "SIGINT or SIGTERM");
+    const number = if (std.mem.eql(u8, name, "SIGINT")) std.posix.SIG.INT else if (std.mem.eql(u8, name, "SIGTERM")) std.posix.SIG.TERM else return invalidField(alloc, "signal", "SIGINT or SIGTERM");
+    const action: std.posix.Sigaction = .{
+        .handler = .{ .handler = onWatchedSignal },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    std.posix.sigaction(number, &action, null);
+    return encode(alloc, .{ .ok = true });
+}
+
+fn signalPoll(alloc: Allocator) anyerror![]u8 {
+    var arrived: [2][]const u8 = undefined;
+    var count: usize = 0;
+    if (signal_pending[0].swap(false, .acq_rel)) {
+        arrived[count] = "SIGINT";
+        count += 1;
+    }
+    if (signal_pending[1].swap(false, .acq_rel)) {
+        arrived[count] = "SIGTERM";
+        count += 1;
+    }
+    return encode(alloc, .{ .ok = true, .signals = arrived[0..count] });
 }
 
 fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
