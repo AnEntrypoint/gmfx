@@ -1492,7 +1492,7 @@ const executionFailure = (cmd, code, signal, killed, stdout, stderr) => {
 const execFile = (file, ...rest) => {
   const callback = typeof rest[rest.length - 1] === 'function' ? rest.pop() : undefined
   const { argv, options } = normalizeExecArgs(rest[0], rest[1])
-  const child = spawnStreams(file, argv, { ...options, stdio: 'pipe' })
+  const child = spawnStreams(file, argv, { ...options, stdio: 'pipe', windowsHide: options.windowsHide === undefined ? undefined : Boolean(options.windowsHide) })
   const encoding = outputEncoding(options, 'utf8')
   const limit = options.maxBuffer === undefined ? 1024 * 1024 : Number(options.maxBuffer)
   const out = []
@@ -1612,6 +1612,21 @@ class ChildProcess extends FxEmitter {
 const stdioMode = (mode) => (mode === undefined || mode === 'overlapped' ? 'pipe' : mode)
 
 const checkChildOptions = (options) => {
+  if (typeof options.stdio === 'string' && !['pipe', 'ignore', 'inherit', 'overlapped'].includes(options.stdio)) {
+    throw typeErrorCoded('ERR_INVALID_ARG_VALUE', "The argument 'stdio' is invalid. Received '" + options.stdio + "'")
+  }
+  if (options.shell !== undefined && typeof options.shell !== 'boolean' && typeof options.shell !== 'string') {
+    throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.shell" property must be one of type boolean or string. Received ' + receivedText(options.shell))
+  }
+  if (options.signal !== undefined && options.signal !== null && typeof options.signal !== 'object') {
+    throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.signal" property must be an instance of AbortSignal. Received ' + receivedText(options.signal))
+  }
+  if (options.windowsHide !== undefined && typeof options.windowsHide !== 'boolean') {
+    throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.windowsHide" property must be of type boolean. Received ' + receivedText(options.windowsHide))
+  }
+  if (options.maxBuffer !== undefined && !(typeof options.maxBuffer === 'number' && options.maxBuffer >= 0)) {
+    throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "options.maxBuffer" is out of range. It must be a positive number. Received ' + (typeof options.maxBuffer === 'string' ? "'" + options.maxBuffer + "'" : String(options.maxBuffer)))
+  }
   if (options.timeout !== undefined && (!Number.isInteger(options.timeout) || options.timeout < 0)) {
     throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "timeout" is out of range. It must be an unsigned integer. Received ' + (typeof options.timeout === 'string' ? "'" + options.timeout + "'" : String(options.timeout)))
   }
