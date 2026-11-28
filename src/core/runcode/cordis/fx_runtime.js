@@ -1917,10 +1917,34 @@ const net = {
   },
 }
 
+const dnsNotFound = (hostname) => {
+  const error = new Error('getaddrinfo ENOTFOUND ' + String(hostname))
+  error.code = 'ENOTFOUND'
+  error.syscall = 'getaddrinfo'
+  error.hostname = String(hostname)
+  return error
+}
+
+const dnsEntries = (hostname) => {
+  const name = String(hostname)
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return [{ address: name, family: 4 }]
+  if (name.includes(':')) return [{ address: name, family: 6 }]
+  if (name === 'localhost') return [{ address: '127.0.0.1', family: 4 }, { address: '::1', family: 6 }]
+  try {
+    const reply = host('dns_lookup', { url: 'https://' + name + '/' })
+    return [{ address: reply.address, family: reply.family }]
+  } catch (error) {
+    throw dnsNotFound(name)
+  }
+}
+
 const dnsPromises = {
-  lookup: async (hostname) => {
-    const reply = host('dns_lookup', { url: 'https://' + String(hostname) + '/' })
-    return { address: reply.address, family: reply.family }
+  lookup: async (hostname, options) => {
+    const settings = typeof options === 'object' && options !== null ? options : {}
+    const family = typeof options === 'number' ? options : settings.family ?? 0
+    const entries = dnsEntries(hostname).filter((entry) => Number(family) === 0 || entry.family === Number(family))
+    if (entries.length === 0) throw dnsNotFound(hostname)
+    return settings.all === true ? entries : entries[0]
   },
   resolve: fail('dns.resolve'),
 }
