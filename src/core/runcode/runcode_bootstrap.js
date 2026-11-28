@@ -117,5 +117,24 @@
     return loadFile(resolved);
   };
   const require = makeRequire(rootDir);
+  const commonJs = (path, text) => {
+    if (path.endsWith('.cjs')) return true;
+    if (!path.endsWith('.js') || /^\s*(import|export)\s/m.test(text)) return false;
+    return /\bmodule\.exports\b|\bexports\.[A-Za-z_$]/.test(text);
+  };
+  const exportName = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+  globalThis.__fxCjsLoaded = (path) => loadFile(path);
+  globalThis.__fxCjsWrap = (path, text) => {
+    if (!commonJs(path, text)) return null;
+    const exported = loadFile(path);
+    const lines = ['const __fxCjs = globalThis.__fxCjsLoaded(' + JSON.stringify(path) + ')', 'export default __fxCjs'];
+    if (exported !== null && (typeof exported === 'object' || typeof exported === 'function')) {
+      Object.keys(exported).forEach((name, index) => {
+        if (name === 'default' || !exportName.test(name)) return;
+        lines.push('const __fxN' + index + ' = __fxCjs[' + JSON.stringify(name) + ']', 'export { __fxN' + index + ' as ' + name + ' }');
+      });
+    }
+    return lines.join('\n') + '\n';
+  };
   return [gm, require];
 })

@@ -263,6 +263,22 @@ static void set_import_meta(JSContext *ctx, JSModuleDef *module, const char *pat
     JS_FreeValue(ctx, meta);
 }
 
+static JSValue call_cjs_wrap(JSContext *ctx, const char *name, const char *text, size_t length) {
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue wrap = JS_GetPropertyStr(ctx, global, "__fxCjsWrap");
+    JS_FreeValue(ctx, global);
+    if (!JS_IsFunction(ctx, wrap)) {
+        JS_FreeValue(ctx, wrap);
+        return JS_NULL;
+    }
+    JSValue args[2] = { JS_NewString(ctx, name), JS_NewStringLen(ctx, text, length) };
+    JSValue result = JS_Call(ctx, wrap, JS_UNDEFINED, 2, args);
+    JS_FreeValue(ctx, wrap);
+    JS_FreeValue(ctx, args[0]);
+    JS_FreeValue(ctx, args[1]);
+    return result;
+}
+
 static char *rewrite_hot(const char *text, size_t length, const char *name, size_t *out_length) {
     static const char needle[] = "import.meta.hot";
     static const char alias[] = "__fxHot";
@@ -338,6 +354,22 @@ static JSModuleDef *load_module(JSContext *ctx, const char *name, void *opaque) 
         return NULL;
     }
     text[size] = '\0';
+    JSValue wrapped = call_cjs_wrap(ctx, name, text, (size_t) size);
+    if (JS_IsException(wrapped)) {
+        free(text);
+        return NULL;
+    }
+    if (!JS_IsNull(wrapped)) {
+        size_t wrapped_length = 0;
+        const char *wrapped_text = JS_ToCStringLen(ctx, &wrapped_length, wrapped);
+        JSModuleDef *cjs_module = wrapped_text != NULL ? compile_source(ctx, wrapped_text, wrapped_length, name) : NULL;
+        if (wrapped_text != NULL) JS_FreeCString(ctx, wrapped_text);
+        JS_FreeValue(ctx, wrapped);
+        if (cjs_module != NULL) set_import_meta(ctx, cjs_module, name);
+        free(text);
+        return cjs_module;
+    }
+    JS_FreeValue(ctx, wrapped);
     size_t rewritten_length = 0;
     char *rewritten = rewrite_hot(text, (size_t) size, name, &rewritten_length);
     JSModuleDef *module = compile_source(ctx, rewritten ? rewritten : text, rewritten ? rewritten_length : (size_t) size, name);
