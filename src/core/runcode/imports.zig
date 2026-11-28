@@ -62,6 +62,14 @@ fn importKeywordEnd(body: []const u8, start: usize) ?usize {
     };
 }
 
+fn attributesEnd(body: []const u8, start: usize) ?usize {
+    if (!std.mem.startsWith(u8, body[start..], "with")) return null;
+    var index = skipBlanks(body, start + "with".len);
+    if (index >= body.len or body[index] != '{') return null;
+    while (index < body.len and body[index] != '}') index += 1;
+    return if (index < body.len) index + 1 else null;
+}
+
 fn statementEnd(body: []const u8, from: usize) usize {
     var index = from;
     while (index < body.len) {
@@ -73,7 +81,11 @@ fn statementEnd(body: []const u8, from: usize) usize {
                     if (body[index] == '\\') index += 1;
                 }
                 index = @min(index + 1, body.len);
-                const after_blanks = skipBlanks(body, index);
+                var after_blanks = skipBlanks(body, index);
+                if (attributesEnd(body, after_blanks)) |end| {
+                    index = end;
+                    after_blanks = skipBlanks(body, index);
+                }
                 if (after_blanks < body.len and body[after_blanks] == ';') return after_blanks + 1;
                 return index;
             },
@@ -99,4 +111,11 @@ test "hoist leaves dynamic import calls in place" {
     defer split.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("", split.imports);
     try std.testing.expectEqualStrings(body, split.code);
+}
+
+test "an import attributes clause stays inside the hoisted import" {
+    const body = "import data from './d.json' with { type: 'json' }\nreturn data;\n";
+    const split = try hoist(std.testing.allocator, body);
+    defer split.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("import data from './d.json' with { type: 'json' }; ", split.imports);
 }
