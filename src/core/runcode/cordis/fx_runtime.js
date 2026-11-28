@@ -472,7 +472,7 @@ const fsPromises = {
 const cryptoBytes = (size) => decodeBase64(host('random_bytes', { n: size }).base64)
 
 const randomBytes = (size, callback) => {
-  const bytes = cryptoBytes(size)
+  const bytes = wrapBytes(cryptoBytes(size))
   if (typeof callback === 'function') {
     Promise.resolve().then(() => callback(null, bytes))
     return undefined
