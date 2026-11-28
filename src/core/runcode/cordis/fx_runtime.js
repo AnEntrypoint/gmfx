@@ -1231,10 +1231,22 @@ const execFile = (file, ...rest) => {
   const { argv, options } = normalizeExecArgs(rest[0], rest[1])
   const child = spawnStreams(file, argv, options)
   const encoding = outputEncoding(options, 'utf8')
+  const limit = options.maxBuffer === undefined ? 1024 * 1024 : Number(options.maxBuffer)
   const out = []
   const err = []
-  child.stdout.on('data', (chunk) => out.push(toBytes(chunk)))
-  child.stderr.on('data', (chunk) => err.push(toBytes(chunk)))
+  const seen = { stdout: 0, stderr: 0 }
+  let overflow = null
+  const collect = (name, list) => (chunk) => {
+    const bytes = toBytes(chunk)
+    seen[name] += bytes.length
+    list.push(bytes)
+    if (seen[name] > limit && overflow === null) {
+      overflow = name
+      child.kill('SIGTERM')
+    }
+  }
+  child.stdout.on('data', collect('stdout', out))
+  child.stderr.on('data', collect('stderr', err))
   let finished = false
   const finish = (failure, stdout, stderr) => {
     if (finished) return
@@ -1243,8 +1255,16 @@ const execFile = (file, ...rest) => {
   }
   child.on('error', (error) => finish(error, decodeOutput(new Uint8Array(0), encoding), decodeOutput(new Uint8Array(0), encoding)))
   child.on('close', (code, signal) => {
-    const stdout = decodeOutput(concatBytes(out), encoding)
-    const stderr = decodeOutput(concatBytes(err), encoding)
+    const stdout = decodeOutput(concatBytes(out).subarray(0, limit), encoding)
+    const stderr = decodeOutput(concatBytes(err).subarray(0, limit), encoding)
+    if (overflow !== null) {
+      const error = new RangeError(overflow + ' maxBuffer length exceeded')
+      error.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+      error.killed = null
+      error.signal = null
+      finish(error, stdout, stderr)
+      return
+    }
     const failed = code !== 0 || signal !== null
     finish(failed ? executionFailure(commandLine(file, argv), code, signal, child.killed, stdout, stderr) : null, stdout, stderr)
   })
