@@ -567,6 +567,7 @@ const createReadStream = (value, options = {}) => {
   const flag = settings.flags ?? 'r'
   const decoder = null
   const stream = new Readable({ encoding, autoDestroy: autoClose })
+  stream.highWaterMark = highWaterMark
   stream.readableHighWaterMark = highWaterMark
   const target = pathOf(value)
   let failure = null
@@ -941,105 +942,374 @@ class Readable extends FxEmitter {
   constructor(options = {}) {
     super()
     if (typeof options.read === 'function') this._read = options.read
-    this.buffered = []
-    this.bufferedBytes = 0
-    this.ended = false
-    this.endScheduled = false
-    this.endEmitted = false
-    this.autoDestroy = options.autoDestroy ?? true
-    this.destroyed = false
-    this.reading = false
-    this.flowing = null
     this.objectMode = options.objectMode ?? false
+    this.autoDestroy = options.autoDestroy ?? true
+    checkHighWaterMark(options.highWaterMark)
+    this.highWaterMark = options.highWaterMark ?? (this.objectMode ? 16 : 65536)
+    this.readableHighWaterMark = this.highWaterMark
     if (options.encoding !== undefined && options.encoding !== null && stringDecoderEncodings[String(options.encoding).toLowerCase()] === undefined) {
       throw typeErrorCoded('ERR_UNKNOWN_ENCODING', 'Unknown encoding: ' + String(options.encoding))
     }
     this.encoding = options.encoding ?? null
     this.decoder = this.encoding !== null ? new StringDecoder(this.encoding) : null
-    checkHighWaterMark(options.highWaterMark)
-    this.highWaterMark = options.highWaterMark ?? (this.objectMode ? 16 : 16384)
-    this.readableHighWaterMark = this.highWaterMark
+    this.buffer = []
+    this.length = 0
+    this.flowing = null
+    this.ended = false
+    this.endEmitted = false
+    this.reading = false
+    this.sync = false
+    this.needReadable = false
+    this.emittedReadable = false
+    this.readableListening = false
+    this.resumeScheduled = false
+    this.paused = false
+    this.destroyed = false
+    this.errored = null
+    this.pipes = []
+    this.maybeReadPending = false
   }
   get readableEncoding() {
     return this.encoding
   }
+  get readableLength() {
+    return this.length
+  }
+  get readableFlowing() {
+    return this.flowing
+  }
+  get readableEnded() {
+    return this.endEmitted
+  }
   _read() {
     this.destroy(nodeError('ERR_METHOD_NOT_IMPLEMENTED', 'The _read() method is not implemented'))
   }
-  push(chunk) {
+  listenerAdded(event) {
+    if (event === 'data') {
+      if (this.flowing !== false) this.resume()
+    } else if (event === 'readable' && !this.endEmitted && !this.readableListening) {
+      this.readableListening = true
+      this.needReadable = true
+      this.flowing = false
+      this.emittedReadable = false
+      if (this.length > 0) this.emitReadable()
+      else if (!this.reading) nextTick(() => this.read(0))
+    }
+  }
+  listenerRemoved(event) {
+    if (event === 'readable') nextTick(() => this.updateReadableListening())
+  }
+  updateReadableListening() {
+    this.readableListening = this.listenerCount('readable') > 0
+    if (this.resumeScheduled && this.paused === false) this.flowing = true
+    else if (this.listenerCount('data') > 0) this.resume()
+    else if (!this.readableListening) this.flowing = null
+  }
+  push(chunk, encoding) {
+    return this.readableAddChunk(chunk, encoding, false)
+  }
+  unshift(chunk, encoding) {
+    const accepted = this.readableAddChunk(chunk, encoding, true)
+    return accepted === false ? false : !this.ended
+  }
+  isPaused() {
+    return this.paused === true
+  }
+  readableAddChunk(chunk, encoding, addToFront) {
     if (chunk === null) {
-      if (this.decoder !== null) {
-        const rest = this.decoder.end()
-        if (rest.length > 0) {
-          this.buffered.push(rest)
-          this.bufferedBytes += rest.length
-        }
-      }
-      this.ended = true
       this.reading = false
-      this.scheduleEnd()
+      this.onEofChunk()
       return false
+    }
+    let value = chunk
+    if (!this.objectMode) {
+      if (typeof value === 'string') {
+        const bytes = toBytes(value, encoding ?? 'utf8')
+        value = addToFront && this.encoding !== null ? fromBytes(bytes, this.encoding) : wrapBytes(bytes)
+      }
+      if (value.length === 0) {
+        if (!addToFront) this.reading = false
+        return this.needMoreData()
+      }
+    } else if (this.decoder !== null && typeof value === 'object' && value !== null && !ArrayBuffer.isView(value)) {
+      throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "buf" argument must be an instance of Buffer, TypedArray, or DataView. Received ' + nodeReceived(value))
+    }
+    if (addToFront && this.decoder !== null && !this.objectMode && typeof value !== 'string') value = fromBytes(value, 'utf8')
+    if (addToFront) {
+      if (this.endEmitted) {
+        nextTick(() => this.emit('error', nodeError('ERR_STREAM_UNSHIFT_AFTER_END_EVENT', 'stream.unshift() after end event')))
+        return false
+      }
+      this.addChunk(value, true)
+      return true
     }
     if (this.ended) {
-      this.emit('error', nodeError('ERR_STREAM_PUSH_AFTER_EOF', 'stream.push() after EOF'))
+      const error = nodeError('ERR_STREAM_PUSH_AFTER_EOF', 'stream.push() after EOF')
+      this.errored = error
+      nextTick(() => {
+        this.emit('error', error)
+        if (this.autoDestroy) {
+          this.destroyed = true
+          this.emit('close')
+        }
+      })
       return false
     }
-    let entry = chunk
-    let size = 1
-    if (this.objectMode) {
-      if (this.decoder !== null && typeof chunk === 'object' && chunk !== null && !ArrayBuffer.isView(chunk)) {
-        throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "buf" argument must be an instance of Buffer, TypedArray, or DataView. Received ' + nodeReceived(chunk))
-      }
-    } else if (this.decoder !== null) {
-      entry = this.decoder.write(typeof chunk === 'string' ? encodeUtf8(chunk) : toBytes(chunk))
-      if (entry.length === 0) return this.bufferedBytes < this.readableHighWaterMark
-      size = entry.length
-    } else {
-      size = typeof chunk === 'string' ? chunk.length : (chunk.length ?? 1)
-    }
-    this.buffered.push(entry)
-    this.bufferedBytes += size
-    const accepted = this.bufferedBytes < this.readableHighWaterMark
     this.reading = false
-    if (this.flowing) this.flush()
-    else if ((this.registry.get('readable') ?? []).length > 0) nextTick(() => this.emit('readable'))
-    return accepted
-  }
-  unshift(chunk) {
-    if (chunk === null || chunk === undefined) return false
-    this.buffered.unshift(chunk)
-    this.bufferedBytes += typeof chunk === 'string' ? chunk.length : (chunk.length ?? 1)
-    return true
-  }
-  flush() {
-    if (this.flushing) return
-    this.flushing = true
-    try {
-      while (this.flowing && !this.destroyed) {
-        if (this.buffered.length > 0) {
-          const chunk = this.buffered.shift()
-          this.bufferedBytes -= typeof chunk === 'string' ? chunk.length : (chunk.length ?? 1)
-          this.emit('data', chunk)
-          continue
-        }
-        if (this.ended || this.reading) break
-        this.reading = true
-        this._read(65536)
-      }
-    } finally {
-      this.flushing = false
+    if (this.decoder !== null && !this.objectMode) {
+      value = this.decoder.write(value)
+      if (value.length === 0) return this.needMoreData()
     }
-    this.scheduleEnd()
+    this.addChunk(value, false)
+    return this.needMoreData()
   }
-  scheduleEnd() {
-    if (!this.ended || this.buffered.length > 0 || this.endScheduled || this.endEmitted) return
-    this.endScheduled = true
+  needMoreData() {
+    return !this.ended && (this.needReadable || this.length < this.highWaterMark || this.length === 0)
+  }
+  addChunk(value, addToFront) {
+    const size = this.objectMode ? 1 : value.length
+    if (!addToFront && this.flowing && this.length === 0 && !this.sync && this.listenerCount('data') > 0) {
+      this.emit('data', value)
+    } else {
+      this.length += size
+      if (addToFront) this.buffer.unshift(value)
+      else this.buffer.push(value)
+      if (this.needReadable) this.emitReadable()
+    }
+    this.maybeReadMore()
+  }
+  onEofChunk() {
+    if (this.ended) return
+    if (this.decoder !== null) {
+      const rest = this.decoder.end()
+      if (rest.length > 0) {
+        this.buffer.push(rest)
+        this.length += rest.length
+      }
+    }
+    this.ended = true
+    if (this.sync) {
+      this.emitReadable()
+    } else {
+      this.needReadable = false
+      this.emittedReadable = true
+      this.emitReadable_()
+    }
+  }
+  emitReadable() {
+    this.needReadable = false
+    if (!this.emittedReadable) {
+      this.emittedReadable = true
+      nextTick(() => this.emitReadable_())
+    }
+  }
+  emitReadable_() {
+    if (!this.destroyed && (this.length > 0 || this.ended)) {
+      this.emit('readable')
+      this.emittedReadable = false
+    }
+    this.needReadable = !this.flowing && !this.ended && this.length <= this.highWaterMark
+    this.flow()
+  }
+  maybeReadMore() {
+    if (this.maybeReadPending) return
+    this.maybeReadPending = true
     nextTick(() => {
-      if (this.endEmitted || this.buffered.length > 0) return
+      while (!this.reading && !this.ended && (this.length < this.highWaterMark || (this.flowing && this.length === 0))) {
+        const before = this.length
+        this.read(0)
+        if (this.length === before) break
+      }
+      this.maybeReadPending = false
+    })
+  }
+  howMuchToRead(n) {
+    if (n <= 0 || (this.length === 0 && this.ended)) return 0
+    if (this.objectMode) return 1
+    if (Number.isNaN(n)) {
+      if (this.flowing && this.buffer.length > 0) return this.buffer[0].length
+      return this.length
+    }
+    if (n <= this.length) return n
+    return this.ended ? this.length : 0
+  }
+  takeFromBuffer(amount) {
+    if (this.length === 0) return null
+    if (this.objectMode) {
+      this.length -= 1
+      return this.buffer.shift()
+    }
+    const parts = []
+    let need = amount
+    while (need > 0 && this.buffer.length > 0) {
+      const head = this.buffer[0]
+      if (head.length <= need) {
+        parts.push(head)
+        this.buffer.shift()
+        need -= head.length
+        this.length -= head.length
+      } else {
+        parts.push(typeof head === 'string' ? head.slice(0, need) : head.subarray(0, need))
+        this.buffer[0] = typeof head === 'string' ? head.slice(need) : head.subarray(need)
+        this.length -= need
+        need = 0
+      }
+    }
+    if (parts.length === 0) return null
+    if (typeof parts[0] === 'string') return parts.join('')
+    return parts.length === 1 ? parts[0] : wrapBytes(concatBytes(parts))
+  }
+  read(n) {
+    let amount = n === undefined ? NaN : Number.isInteger(n) ? n : Number.parseInt(n, 10)
+    const requested = amount
+    if (amount !== 0) this.emittedReadable = false
+    if (amount === 0 && this.needReadable && (this.length >= this.highWaterMark || this.ended)) {
+      if (this.length === 0 && this.ended) this.endReadable()
+      else this.emitReadable()
+      return null
+    }
+    amount = this.howMuchToRead(amount)
+    if (amount === 0 && this.ended) {
+      if (this.length === 0) this.endReadable()
+      return null
+    }
+    let doRead = this.needReadable
+    if (this.length === 0 || this.length - amount < this.highWaterMark) doRead = true
+    if (this.ended || this.reading || this.destroyed) {
+      doRead = false
+    } else if (doRead) {
+      this.reading = true
+      this.sync = true
+      if (this.length === 0) this.needReadable = true
+      this._read(this.highWaterMark)
+      this.sync = false
+      if (!this.reading) amount = this.howMuchToRead(requested)
+    }
+    const ret = amount > 0 ? this.takeFromBuffer(amount) : null
+    if (ret === null) {
+      this.needReadable = this.length <= this.highWaterMark
+      amount = 0
+    }
+    if (this.length === 0) {
+      if (!this.ended) this.needReadable = true
+      if (requested !== amount && this.ended) this.endReadable()
+    }
+    if (ret !== null) this.emit('data', ret)
+    return ret
+  }
+  endReadable() {
+    if (this.endEmitted) return
+    this.ended = true
+    nextTick(() => this.endReadableNT())
+  }
+  endReadableNT() {
+    if (!this.endEmitted && this.length === 0 && this.errored === null) {
       this.endEmitted = true
       this.emit('end')
       if (this.autoDestroy) this.destroy()
+    }
+  }
+  flow() {
+    while (this.flowing && !this.destroyed && this.read() !== null);
+  }
+  resume() {
+    if (!this.flowing) {
+      this.flowing = !this.readableListening
+      if (!this.resumeScheduled) {
+        this.resumeScheduled = true
+        nextTick(() => this.resume_())
+      }
+    }
+    this.paused = false
+    return this
+  }
+  resume_() {
+    if (!this.reading) this.read(0)
+    this.resumeScheduled = false
+    this.emit('resume')
+    this.flow()
+    if (this.flowing && !this.reading) this.read(0)
+  }
+  pause() {
+    if (this.flowing !== false) {
+      this.flowing = false
+      this.emit('pause')
+    }
+    this.paused = true
+    return this
+  }
+  setEncoding(encoding) {
+    if (stringDecoderEncodings[String(encoding).toLowerCase()] === undefined) throw typeErrorCoded('ERR_UNKNOWN_ENCODING', 'Unknown encoding: ' + String(encoding))
+    const decoder = new StringDecoder(encoding)
+    this.decoder = decoder
+    this.encoding = String(encoding).toLowerCase() === 'utf-8' ? 'utf8' : encoding
+    let content = ''
+    for (const part of this.buffer) content += typeof part === 'string' ? part : decoder.write(part)
+    this.buffer = content.length > 0 ? [content] : []
+    this.length = content.length
+    return this
+  }
+  pipe(destination) {
+    const source = this
+    const entry = { destination, source: this }
+    entry.onData = (chunk) => {
+      if (destination.write(chunk) === false) source.pause()
+    }
+    entry.onDrain = () => source.resume()
+    entry.onEnd = () => destination.end()
+    entry.onError = (error) => {
+      cleanup(entry)
+      if (destination.listenerCount('error') === 0) destination.emit('error', error)
+    }
+    entry.onClose = () => cleanup(entry)
+    entry.onFinish = () => cleanup(entry)
+    this.pipes.push(entry)
+    destination.emit('pipe', source)
+    this.on('data', entry.onData)
+    this.once('end', entry.onEnd)
+    destination.on('drain', entry.onDrain)
+    destination.prependListener('error', entry.onError)
+    destination.once('close', entry.onClose)
+    destination.once('finish', entry.onFinish)
+    if (destination.writableNeedDrain === true) this.pause()
+    else if (!this.flowing) this.resume()
+    return destination
+  }
+  unpipe(destination) {
+    if (this.pipes.length === 0) return this
+    if (destination === undefined) {
+      const entries = this.pipes
+      this.pipes = []
+      this.pause()
+      for (const entry of entries) releasePipe(this, entry)
+      return this
+    }
+    const entry = this.pipes.find((item) => item.destination === destination)
+    if (entry === undefined) return this
+    cleanup(entry)
+    return this
+  }
+  wrap(stream) {
+    let paused = false
+    this._read = () => {
+      if (paused) {
+        paused = false
+        stream.resume()
+      }
+    }
+    stream.on('data', (chunk) => {
+      if (!this.push(chunk) && typeof stream.pause === 'function') {
+        paused = true
+        stream.pause()
+      }
     })
+    stream.on('end', () => this.push(null))
+    stream.on('error', (error) => this.destroy(error))
+    stream.on('close', () => this.destroy())
+    for (const key in stream) {
+      if (this[key] === undefined && typeof stream[key] === 'function') this[key] = stream[key].bind(stream)
+    }
+    return this
   }
   destroy(error) {
     if (this.destroyed) return this
@@ -1050,73 +1320,6 @@ class Readable extends FxEmitter {
     })
     return this
   }
-  listenerAdded(event) {
-    if (event === 'data' && this.flowing !== false) this.resume()
-    if (event === 'readable') this.flowing = false
-  }
-  listenerRemoved(event) {
-    if (event === 'readable') {
-      nextTick(() => {
-        if (this.listenerCount('readable') === 0 && this.flowing === false) this.flowing = null
-      })
-    }
-  }
-  get readableFlowing() {
-    return this.flowing
-  }
-  pause() {
-    this.flowing = false
-    return this
-  }
-  resume() {
-    this.flowing = true
-    nextTick(() => this.flush())
-    return this
-  }
-  get readableLength() {
-    return this.bufferedBytes
-  }
-  read(size) {
-    if (size === 0) {
-      const mark = this.readableHighWaterMark ?? 16384
-      while (!this.ended && !this.destroyed && !this.reading && this.bufferedBytes < mark) {
-        this.reading = true
-        this._read(65536)
-      }
-      return null
-    }
-    if (this.buffered.length === 0 && !this.ended && !this.destroyed && !this.reading) {
-      this.reading = true
-      this._read(65536)
-    }
-    if (this.buffered.length === 0) {
-      this.scheduleEnd()
-      return null
-    }
-    if (this.objectMode) {
-      const entry = this.buffered.shift()
-      this.bufferedBytes -= 1
-      return entry
-    }
-    const data = this.buffered.length === 1 ? this.buffered[0] : this.buffered.map((part) => (typeof part === 'string' ? part : String(part))).join('')
-    this.buffered = []
-    this.bufferedBytes = 0
-    return data
-  }
-  setEncoding(encoding) {
-    this.encoding = String(encoding).toLowerCase() === 'utf-8' ? 'utf8' : encoding
-    this.decoder = new StringDecoder(this.encoding)
-    return this
-  }
-  pipe(destination) {
-    this.on('data', (chunk) => {
-      if (destination.write(chunk) === false) this.pause()
-    })
-    destination.on('drain', () => this.resume())
-    this.on('end', () => destination.end())
-    destination.emit('pipe', this)
-    return destination
-  }
   static from(iterable) {
     const readable = new Readable({ objectMode: true })
     const pump = async () => {
@@ -1126,6 +1329,23 @@ class Readable extends FxEmitter {
     pump()
     return readable
   }
+}
+
+const releasePipe = (source, entry) => {
+  source.removeListener('data', entry.onData)
+  source.removeListener('end', entry.onEnd)
+  entry.destination.removeListener('drain', entry.onDrain)
+  entry.destination.removeListener('error', entry.onError)
+  entry.destination.removeListener('close', entry.onClose)
+  entry.destination.removeListener('finish', entry.onFinish)
+  entry.destination.emit('unpipe', source)
+}
+
+const cleanup = (entry) => {
+  const source = entry.source
+  source.pipes = source.pipes.filter((item) => item !== entry)
+  if (source.pipes.length === 0) source.pause()
+  releasePipe(source, entry)
 }
 
 class Writable extends FxEmitter {
@@ -1255,7 +1475,7 @@ class Writable extends FxEmitter {
         if (entry.callback) entry.callback(null)
       }
       if (this.destroyed) this.errorBuffer()
-      if (this.length === 0 && this.needDrain) {
+      if (!this.ending && !this.destroyed && this.length === 0 && this.needDrain) {
         this.needDrain = false
         this.emit('drain')
       }
