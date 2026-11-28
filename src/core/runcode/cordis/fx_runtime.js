@@ -2159,6 +2159,12 @@ const checkChildOptions = (options) => {
   if (options.signal !== undefined && options.signal !== null && typeof options.signal !== 'object') {
     throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.signal" property must be an instance of AbortSignal. Received ' + receivedText(options.signal))
   }
+  for (const key of ['uid', 'gid']) {
+    const id = options[key]
+    if (id !== undefined && !(Number.isInteger(id) && id >= -2147483648 && id <= 2147483647)) {
+      throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.' + key + '" property must be int32. Received ' + receivedText(id))
+    }
+  }
   if (options.windowsHide !== undefined && typeof options.windowsHide !== 'boolean') {
     throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.windowsHide" property must be of type boolean. Received ' + receivedText(options.windowsHide))
   }
