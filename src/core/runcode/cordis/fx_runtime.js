@@ -1143,7 +1143,7 @@ const utilTypes = { isPromise: (value) => value instanceof Promise }
 
 const moduleApi = { createRequire: fail('module.createRequire'), stripTypeScriptTypes: fail('module.stripTypeScriptTypes') }
 
-const envRecord = (env) => Object.fromEntries(Object.entries(env).map(([key, value]) => [key, String(value)]))
+const envRecord = (env) => Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
 
 const outputEncoding = (options, fallback) => (options.encoding === undefined ? fallback : options.encoding)
 
