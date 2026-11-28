@@ -453,7 +453,7 @@ static void wait_for_promise(FxRun *run, JSRuntime *rt, JSContext *ctx, TJSRunti
     for (;;) {
         drain_jobs(rt, ctx, error);
         if (*error != NULL || run->deadline_hit) return;
-        if (JS_PromiseState(ctx, promise) != JS_PROMISE_PENDING) return;
+        if (JS_PromiseState(ctx, promise) == JS_PROMISE_REJECTED) return;
         if (!gm_txiki_loop_alive(runtime)) return;
         uv_run(loop, UV_RUN_ONCE);
     }
@@ -499,6 +499,7 @@ int fx_runcode_execute(const char *bootstrap, size_t bootstrap_length,
     JS_SetModuleLoaderFunc(rt, normalize_module, load_module, NULL);
     JS_SetInterruptHandler(rt, interrupt_handler, &run);
     uv_timer_init(loop, &run.timer);
+    uv_unref((uv_handle_t *) &run.timer);
     run.timer.data = &run;
 
     JSValue boot = install_bootstrap(ctx, &run, bootstrap, bootstrap_length, verbs_json, root);

@@ -24,8 +24,17 @@ uv_loop_t *gm_txiki_loop(TJSRuntime *runtime) {
     return &runtime->loop;
 }
 
+static void count_pending_handle(uv_handle_t *handle, void *arg) {
+    int *count = arg;
+    if (!uv_is_active(handle) || !uv_has_ref(handle) || handle->type == UV_ASYNC || handle->type == UV_IDLE) return;
+    if (handle->type == UV_TIMER && uv_timer_get_repeat((uv_timer_t *) handle) > 0) return;
+    *count += 1;
+}
+
 int gm_txiki_loop_alive(TJSRuntime *runtime) {
-    return uv_loop_alive(&runtime->loop);
+    int count = 0;
+    uv_walk(&runtime->loop, count_pending_handle, &count);
+    return count > 0 || runtime->loop.active_reqs.count > 0;
 }
 
 void gm_txiki_loop_turn(TJSRuntime *runtime) {
