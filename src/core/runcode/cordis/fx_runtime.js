@@ -304,15 +304,33 @@ const fdEntry = (fd) => {
 
 const targetOf = (value) => (typeof value === 'number' ? fdEntry(value).path : pathOf(value))
 
-const statsFrom = (info) => ({
-  size: info.size,
-  mode: info.mode,
-  mtimeMs: info.mtimeMs,
-  mtime: new Date(info.mtimeMs),
-  isFile: () => info.type === 'file',
-  isDirectory: () => info.type === 'directory',
-  isSymbolicLink: () => info.type === 'symlink',
-})
+const statsFrom = (info) => {
+  const atimeMs = info.atimeMs ?? info.mtimeMs
+  const ctimeMs = info.ctimeMs ?? info.mtimeMs
+  return {
+    dev: 0,
+    mode: info.mode,
+    nlink: info.nlink ?? 1,
+    uid: 0,
+    gid: 0,
+    rdev: 0,
+    blksize: 4096,
+    ino: info.ino ?? 0,
+    size: info.size,
+    blocks: info.blocks ?? 0,
+    atimeMs,
+    mtimeMs: info.mtimeMs,
+    ctimeMs,
+    birthtimeMs: ctimeMs,
+    atime: new Date(atimeMs),
+    mtime: new Date(info.mtimeMs),
+    ctime: new Date(ctimeMs),
+    birthtime: new Date(ctimeMs),
+    isFile: () => info.type === 'file',
+    isDirectory: () => info.type === 'directory',
+    isSymbolicLink: () => info.type === 'symlink',
+  }
+}
 
 const direntFrom = (entry) => ({
   name: entry.name,
@@ -633,6 +651,56 @@ class Dir {
   }
 }
 
+const zeroStats = () => {
+  const epoch = new Date(0)
+  return {
+    dev: 0, mode: 0, nlink: 0, uid: 0, gid: 0, rdev: 0, blksize: 0, ino: 0, size: 0, blocks: 0,
+    atimeMs: 0, mtimeMs: 0, ctimeMs: 0, birthtimeMs: 0,
+    atime: epoch, mtime: epoch, ctime: epoch, birthtime: epoch,
+    isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false,
+  }
+}
+
+const fileWatchers = new Map()
+
+const statOrZero = (target) => statOf(target, true, { throwIfNoEntry: false }) ?? zeroStats()
+
+const sameStats = (left, right) => left.size === right.size && left.mtimeMs === right.mtimeMs && left.ino === right.ino && left.isFile() === right.isFile()
+
+const watchFile = (filename, options, listener) => {
+  const callback = typeof options === 'function' ? options : listener
+  const settings = typeof options === 'function' ? {} : options ?? {}
+  const target = pathOf(filename)
+  let entry = fileWatchers.get(target)
+  if (entry === undefined) {
+    const initial = statOrZero(target)
+    entry = { listeners: [], last: initial, pendingMissing: initial.ino === 0, timer: null }
+    entry.timer = setInterval(() => {
+      const curr = statOrZero(target)
+      const changed = entry.pendingMissing || !sameStats(curr, entry.last)
+      entry.pendingMissing = false
+      if (!changed) return
+      const prev = entry.last
+      entry.last = curr
+      for (const fn of [...entry.listeners]) fn(curr, prev)
+    }, settings.interval ?? 5007)
+    fileWatchers.set(target, entry)
+  }
+  if (typeof callback === 'function') entry.listeners.push(callback)
+  return { ref: () => this, unref: () => this }
+}
+
+const unwatchFile = (filename, listener) => {
+  const target = pathOf(filename)
+  const entry = fileWatchers.get(target)
+  if (entry === undefined) return
+  entry.listeners = listener === undefined ? [] : entry.listeners.filter((fn) => fn !== listener)
+  if (entry.listeners.length === 0) {
+    clearInterval(entry.timer)
+    fileWatchers.delete(target)
+  }
+}
+
 const fs = {
   appendFileSync: (value, data, options) => writeFileSync(value, data, { ...(typeof options === "object" && options !== null ? options : {}), flag: "a" }),
   chmodSync: (value, mode) => host("fs_chmod", { path: pathOf(value), mode }),
@@ -663,7 +731,7 @@ const fs = {
   statSync: (value, options) => statOf(value, true, options),
   symlinkSync: (target, value) => host('fs_symlink', { target: pathOf(target), path: pathOf(value) }),
   unlinkSync: (value) => host('fs_remove', { path: pathOf(value), recursive: false, force: false }),
-  unwatchFile: fail('fs.unwatchFile'),
+  unwatchFile,
   watch: (path) => {
     const id = host('watch_start', { path: String(path) }).id
     return {
@@ -671,7 +739,7 @@ const fs = {
       close: () => host('watch_close', { id }),
     }
   },
-  watchFile: fail('fs.watchFile'),
+  watchFile,
   writeFileSync,
   writeSync,
 }

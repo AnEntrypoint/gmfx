@@ -1290,12 +1290,18 @@ fn fsStat(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const follow = boolArg(args, "follow", true);
     const io = io_mod.getIo();
     const stat = try std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = follow });
+    const atime_ms: i64 = if (stat.atime) |value| value.toMilliseconds() else stat.mtime.toMilliseconds();
     return encode(alloc, .{
         .ok = true,
         .type = kindName(stat.kind),
         .size = stat.size,
         .mode = stat.permissions.toMode(),
+        .ino = @as(u64, @intCast(stat.inode)),
+        .nlink = @as(u64, @intCast(stat.nlink)),
+        .blocks = (stat.size + 511) / 512,
+        .atimeMs = atime_ms,
         .mtimeMs = stat.mtime.toMilliseconds(),
+        .ctimeMs = stat.ctime.toMilliseconds(),
     });
 }
 
