@@ -1476,10 +1476,10 @@ class Writable extends FxEmitter {
       this.destroy(error)
       return
     }
+    for (const entry of entries) this.pending -= 1
     if (this.buffered.length > 0) this.clearBuffer()
     const callbacks = () => {
       for (const entry of entries) {
-        this.pending -= 1
         if (entry.callback) entry.callback(null)
       }
       if (this.destroyed) this.errorBuffer()
