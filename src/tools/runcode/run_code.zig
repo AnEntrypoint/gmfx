@@ -432,6 +432,7 @@ pub fn freddieCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: 
     var forwarded: std.ArrayList([]const u8) = .empty;
     defer forwarded.deinit(alloc);
     if (permission) |mode| try forwarded.appendSlice(alloc, &.{ "--permission-mode", mode });
+    try forwarded.appendSlice(alloc, &.{ "--format", "esm" });
     try forwarded.append(alloc, entry);
     try forwarded.append(alloc, "--");
     try forwarded.appendSlice(alloc, args[index..]);
