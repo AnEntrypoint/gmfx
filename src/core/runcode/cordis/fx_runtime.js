@@ -3313,7 +3313,7 @@ const agent = (options = {}) => {
     prompt,
     session,
     cancel,
-    get session() { return state.session },
+    get sessionId() { return state.session },
   }
 }
 
