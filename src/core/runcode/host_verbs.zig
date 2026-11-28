@@ -517,6 +517,7 @@ pub const verbs = [_]Verb{
         .input_schema = .{
             .properties = &.{
                 .{ .name = "algorithm", .json_type = .string },
+                .{ .name = "output_length", .json_type = .integer },
                 .{ .name = "base64", .json_type = .string },
             },
             .required = &.{ "algorithm", "base64" },
@@ -1820,7 +1821,36 @@ fn hashDigest(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     if (std.mem.eql(u8, algorithm, "sha256")) return digestReply(alloc, std.crypto.hash.sha2.Sha256, bytes);
     if (std.mem.eql(u8, algorithm, "sha512")) return digestReply(alloc, std.crypto.hash.sha2.Sha512, bytes);
     if (std.mem.eql(u8, algorithm, "md5")) return digestReply(alloc, std.crypto.hash.Md5, bytes);
-    return invalidField(alloc, "algorithm", "sha1, sha256, sha512 or md5");
+    if (std.mem.eql(u8, algorithm, "sha224")) return digestReply(alloc, std.crypto.hash.sha2.Sha224, bytes);
+    if (std.mem.eql(u8, algorithm, "sha384")) return digestReply(alloc, std.crypto.hash.sha2.Sha384, bytes);
+    if (std.mem.eql(u8, algorithm, "sha512-224")) return digestReply(alloc, std.crypto.hash.sha2.Sha512_224, bytes);
+    if (std.mem.eql(u8, algorithm, "sha512-256")) return digestReply(alloc, std.crypto.hash.sha2.Sha512_256, bytes);
+    if (std.mem.eql(u8, algorithm, "sha3-224")) return digestReply(alloc, std.crypto.hash.sha3.Sha3_224, bytes);
+    if (std.mem.eql(u8, algorithm, "sha3-256")) return digestReply(alloc, std.crypto.hash.sha3.Sha3_256, bytes);
+    if (std.mem.eql(u8, algorithm, "sha3-384")) return digestReply(alloc, std.crypto.hash.sha3.Sha3_384, bytes);
+    if (std.mem.eql(u8, algorithm, "sha3-512")) return digestReply(alloc, std.crypto.hash.sha3.Sha3_512, bytes);
+    if (std.mem.eql(u8, algorithm, "blake2b512")) return digestReply(alloc, std.crypto.hash.blake2.Blake2b512, bytes);
+    if (std.mem.eql(u8, algorithm, "blake2s256")) return digestReply(alloc, std.crypto.hash.blake2.Blake2s256, bytes);
+    if (std.mem.eql(u8, algorithm, "shake128")) return xofReply(alloc, std.crypto.hash.sha3.Shake128, bytes, outputLengthArg(args, 16));
+    if (std.mem.eql(u8, algorithm, "shake256")) return xofReply(alloc, std.crypto.hash.sha3.Shake256, bytes, outputLengthArg(args, 32));
+    return invalidField(alloc, "algorithm", "a supported hash algorithm");
+}
+
+fn outputLengthArg(args: std.json.ObjectMap, default_length: usize) usize {
+    const value = integerArg(args, "output_length") orelse return default_length;
+    return if (value < 0) default_length else @intCast(value);
+}
+
+fn xofReply(alloc: std.mem.Allocator, comptime Hash: type, bytes: []const u8, length: usize) ![]u8 {
+    const out = try alloc.alloc(u8, length);
+    defer alloc.free(out);
+    var hasher = Hash.init(.{});
+    hasher.update(bytes);
+    hasher.final(out);
+    const hex = try alloc.alloc(u8, length * 2);
+    defer alloc.free(hex);
+    for (out, 0..) |byte, index| _ = std.fmt.bufPrint(hex[index * 2 ..][0..2], "{x:0>2}", .{byte}) catch unreachable;
+    return encode(alloc, .{ .ok = true, .hex = @as([]const u8, hex) });
 }
 
 fn digestReply(alloc: std.mem.Allocator, comptime Hash: type, bytes: []const u8) ![]u8 {

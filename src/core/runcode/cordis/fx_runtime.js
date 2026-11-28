@@ -628,15 +628,17 @@ const randomUUID = () => {
   return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20)
 }
 
-const createHash = (algorithm) => {
+const createHash = (algorithm, options = {}) => {
   const chunks = []
+  const request = { algorithm: String(algorithm).toLowerCase() }
+  if (options?.outputLength !== undefined) request.output_length = Number(options.outputLength)
   const hash = {
     update(data, encoding) {
       chunks.push(toBytes(data, encoding))
       return hash
     },
     digest(encoding) {
-      const reply = host('hash_digest', { algorithm, base64: encodeBase64(concatBytes(chunks)) })
+      const reply = host('hash_digest', { ...request, base64: encodeBase64(concatBytes(chunks)) })
       return fromBytes(decodeHex(reply.hex), encoding)
     },
   }
