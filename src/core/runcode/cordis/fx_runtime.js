@@ -304,9 +304,64 @@ const statOf = (value, follow, options) => {
 
 const readFileSync = (value, options) => fromBytes(decodeBase64(host('fs_read', { path: targetOf(value) }).base64), encodingOf(options))
 
+const typeErrorCoded = (code, message) => {
+  const error = new TypeError(message)
+  error.code = code
+  return error
+}
+
+const receivedText = (value) => (typeof value === 'string' ? "type string ('" + value + "')" : 'type ' + typeof value + ' (' + String(value) + ')')
+
+const writeOptionMode = (mode) => {
+  if (mode === undefined) return undefined
+  if (typeof mode === 'number' && Number.isInteger(mode) && mode >= 0) return mode
+  if (typeof mode === 'string' && /^[0-7]+$/.test(mode)) return parseInt(mode, 8)
+  throw typeErrorCoded('ERR_INVALID_ARG_VALUE', "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '" + String(mode) + "'")
+}
+
+const validateWriteOptions = (options) => {
+  if (options.signal !== undefined) {
+    if (typeof options.signal !== 'object' || options.signal === null) {
+      throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.signal" property must be an instance of AbortSignal. Received ' + receivedText(options.signal))
+    }
+    if (options.signal.aborted) {
+      const error = new Error('The operation was aborted')
+      error.name = 'AbortError'
+      error.code = 'ABORT_ERR'
+      throw error
+    }
+  }
+  if (options.flush !== undefined && typeof options.flush !== 'boolean') {
+    throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.flush" property must be of type boolean. Received ' + receivedText(options.flush))
+  }
+}
+
+const pathExists = (target) => {
+  try {
+    host('fs_stat', { path: target, follow: true })
+    return true
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
+}
+
 const writeFileSync = (value, data, options) => {
-  const flag = typeof options === 'object' && options !== null ? options.flag : undefined
-  host('fs_write', { path: targetOf(value), base64: encodeBase64(toBytes(data, encodingOf(options))), append: flag === 'a' })
+  const settings = typeof options === 'object' && options !== null ? options : {}
+  validateWriteOptions(settings)
+  const mode = writeOptionMode(settings.mode)
+  const flag = settings.flag ?? 'w'
+  const target = targetOf(value)
+  const base64 = encodeBase64(toBytes(data, encodingOf(options)))
+  if (flag.startsWith('r')) {
+    host('fs_stat', { path: target, follow: true })
+    host('fs_write_at', { path: target, position: 0, base64 })
+    return
+  }
+  const existed = pathExists(target)
+  if (flag.includes('x') && existed) throw coded('EEXIST', "EEXIST: file already exists, open '" + target + "'")
+  host('fs_write', { path: target, base64, append: flag.startsWith('a') })
+  if (mode !== undefined && !existed) host('fs_chmod', { path: target, mode })
 }
 
 const openSync = (value, flags = 'r') => {
