@@ -1569,6 +1569,7 @@ class ChildProcess extends FxEmitter {
     this.stderr._read = () => {}
   }
   kill(signal = 'SIGTERM') {
+    if (typeof signal === 'string' && signalNumbers[signal] === undefined) throw typeErrorCoded('ERR_UNKNOWN_SIGNAL', 'Unknown signal: ' + signal)
     if (this.procId === undefined || this.exitCode !== null || this.signalCode !== null) return false
     const reply = host('proc_kill', { id: this.procId, signal: typeof signal === 'number' ? signal : signalNumbers[signal] })
     if (reply.delivered) this.killed = true
@@ -1610,7 +1611,16 @@ class ChildProcess extends FxEmitter {
 
 const stdioMode = (mode) => (mode === undefined || mode === 'overlapped' ? 'pipe' : mode)
 
+const checkChildOptions = (options) => {
+  if (options.timeout !== undefined && (!Number.isInteger(options.timeout) || options.timeout < 0)) {
+    throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "timeout" is out of range. It must be an unsigned integer. Received ' + (typeof options.timeout === 'string' ? "'" + options.timeout + "'" : String(options.timeout)))
+  }
+  const signal = options.killSignal
+  const known = typeof signal === 'number' ? Object.values(signalNumbers).includes(signal) : signalNumbers[signal] !== undefined
+  if (signal !== undefined && !known) throw typeErrorCoded('ERR_UNKNOWN_SIGNAL', 'Unknown signal: ' + String(signal))
+}
 const spawnStreams = (file, args = [], options = {}) => {
+  checkChildOptions(options)
   const [command, commandArgs] = shellInvocation(file, args.map(String), options)
   const request = { file: String(command), args: commandArgs.map(String) }
   const stdioModes = Array.isArray(options.stdio) ? options.stdio : [options.stdio ?? 'pipe', options.stdio ?? 'pipe', options.stdio ?? 'pipe']
