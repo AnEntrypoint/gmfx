@@ -1132,65 +1132,201 @@ class Writable extends FxEmitter {
   constructor(options = {}) {
     super()
     if (typeof options.write === 'function') this.writeImpl = options.write
-    this.chunks = []
-    this.length = 0
+    if (typeof options.writev === 'function') this.writevImpl = options.writev
     this.objectMode = options.objectMode ?? false
     checkHighWaterMark(options.highWaterMark)
-    this.highWaterMark = options.highWaterMark ?? (this.objectMode ? 16 : 16384)
+    this.highWaterMark = options.highWaterMark ?? (this.objectMode ? 16 : 65536)
+    this.decodeStrings = options.decodeStrings !== false
+    this.defaultEncoding = options.defaultEncoding ?? 'utf8'
+    this.autoDestroy = options.autoDestroy ?? true
+    this.chunks = []
+    this.length = 0
+    this.buffered = []
+    this.writing = false
+    this.current = null
+    this.sync = false
+    this.corked = 0
+    this.needDrain = false
     this.pending = 0
     this.ending = false
     this.finished = false
     this.destroyed = false
+    this.errored = null
+    this.finishCallbacks = []
   }
   get writable() {
     return !this.ending && !this.destroyed
   }
+  get writableEnded() {
+    return this.ending
+  }
+  get writableFinished() {
+    return this.finished
+  }
+  get writableCorked() {
+    return this.corked
+  }
+  get writableLength() {
+    return this.length
+  }
+  get writableHighWaterMark() {
+    return this.highWaterMark
+  }
+  get writableNeedDrain() {
+    return this.needDrain && !this.destroyed
+  }
+  setDefaultEncoding(encoding) {
+    if (stringDecoderEncodings[String(encoding).toLowerCase()] === undefined) throw typeErrorCoded('ERR_UNKNOWN_ENCODING', 'Unknown encoding: ' + String(encoding))
+    this.defaultEncoding = String(encoding).toLowerCase()
+    return this
+  }
   write(chunk, encoding, callback) {
     const done = typeof encoding === 'function' ? encoding : callback
-    const enc = typeof encoding === 'string' ? encoding : 'buffer'
-    if (this.ending || this.destroyed) {
-      const error = this.destroyed ? nodeError('ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed') : nodeError('ERR_STREAM_WRITE_AFTER_END', 'write after end')
+    const enc = typeof encoding === 'string' ? encoding : this.defaultEncoding
+    let value = chunk
+    let valueEncoding = typeof chunk === 'string' ? enc : 'buffer'
+    if (!this.objectMode && typeof value === 'string' && this.decodeStrings) {
+      value = wrapBytes(toBytes(value, enc))
+      valueEncoding = 'buffer'
+    }
+    if (this.ending) {
+      this.writeAfterEnd(done)
+      return false
+    }
+    if (this.destroyed) {
       nextTick(() => {
-        if (done) done(error)
-        if (this.registry.get('error')?.length) this.emit('error', error)
+        if (done) done(nodeError('ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed'))
       })
       return false
     }
-    const size = this.objectMode ? 1 : typeof chunk === 'string' ? chunk.length : chunk.length ?? 1
+    const size = this.objectMode ? 1 : value.length ?? 1
     this.length += size
+    const ret = this.length < this.highWaterMark
+    if (!ret) this.needDrain = true
     this.pending += 1
-    const finishWrite = (error) => {
-      this.pending -= 1
-      this.length -= size
+    const entry = { chunk: value, encoding: valueEncoding, callback: done, size }
+    if (this.writing || this.corked > 0 || this.errored !== null) this.buffered.push(entry)
+    else this.doWrite(entry)
+    return ret && this.errored === null && !this.destroyed
+  }
+  writeAfterEnd(done) {
+    const error = nodeError('ERR_STREAM_WRITE_AFTER_END', 'write after end')
+    nextTick(() => {
       if (done) done(error)
-      if (this.ending && this.pending === 0) this.finishStream()
-    }
-    if (this.writeImpl) this.writeImpl.call(this, chunk, enc, finishWrite)
+    })
+    this.destroy(error)
+  }
+  doWrite(entry) {
+    this.writing = true
+    this.current = [entry]
+    this.sync = true
+    const onwrite = (error) => this.onwrite([entry], error)
+    if (this.writeImpl) this.writeImpl.call(this, entry.chunk, entry.encoding, onwrite)
     else {
-      this.chunks.push(chunk)
-      finishWrite()
+      this.chunks.push(entry.chunk)
+      onwrite()
     }
-    return this.length < this.highWaterMark
+    this.sync = false
+  }
+  onwrite(entries, error) {
+    if (this.current === null || this.current[0] !== entries[0]) return
+    this.current = null
+    this.writing = false
+    for (const entry of entries) this.length -= entry.size
+    const wasSync = this.sync
+    if (error) {
+      this.errored = error
+      const callbacks = () => {
+        for (const entry of entries) {
+          this.pending -= 1
+          if (entry.callback) entry.callback(error)
+        }
+      }
+      if (wasSync) nextTick(callbacks)
+      else callbacks()
+      this.errorBuffer()
+      this.destroy(error)
+      return
+    }
+    if (this.buffered.length > 0) this.clearBuffer()
+    const callbacks = () => {
+      for (const entry of entries) {
+        this.pending -= 1
+        if (entry.callback) entry.callback(null)
+      }
+      if (this.destroyed) this.errorBuffer()
+      if (this.length === 0 && this.needDrain) {
+        this.needDrain = false
+        this.emit('drain')
+      }
+      this.maybeFinish()
+    }
+    if (wasSync) nextTick(callbacks)
+    else callbacks()
+  }
+  clearBuffer() {
+    if (this.corked > 0 || this.writing || this.errored !== null || this.destroyed) return
+    if (this.buffered.length === 0) return
+    if (this.buffered.length > 1 && this.writevImpl) {
+      const batch = this.buffered.splice(0)
+      this.writing = true
+      this.current = batch
+      this.sync = true
+      const chunks = batch.map((entry) => ({ chunk: entry.chunk, encoding: entry.encoding }))
+      this.writevImpl.call(this, chunks, (error) => this.onwrite(batch, error))
+      this.sync = false
+      return
+    }
+    this.doWrite(this.buffered.shift())
+  }
+  errorBuffer() {
+    if (this.writing) return
+    const error = this.errored ?? nodeError('ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed')
+    const pendingEntries = this.buffered.splice(0)
+    for (const entry of pendingEntries) {
+      this.pending -= 1
+      this.length -= entry.size
+      if (entry.callback) entry.callback(error)
+    }
+  }
+  cork() {
+    this.corked += 1
+  }
+  uncork() {
+    if (this.corked === 0) return
+    this.corked -= 1
+    if (this.corked === 0) this.clearBuffer()
   }
   end(chunk, encoding, callback) {
     const done = typeof chunk === 'function' ? chunk : typeof encoding === 'function' ? encoding : callback
     if (chunk !== undefined && chunk !== null && typeof chunk !== 'function') this.write(chunk, typeof encoding === 'string' ? encoding : undefined)
+    if (this.corked > 0) {
+      this.corked = 1
+      this.uncork()
+    }
     this.ending = true
-    if (done) this.once('finish', done)
-    if (this.pending === 0) this.finishStream()
+    if (done) {
+      if (this.finished) nextTick(() => done())
+      else this.finishCallbacks.push(done)
+    }
+    this.maybeFinish()
     return this
+  }
+  maybeFinish() {
+    const needFinish = this.ending && !this.destroyed && this.errored === null && this.length === 0 && this.buffered.length === 0 && !this.finished && !this.writing && this.pending === 0
+    if (needFinish) nextTick(() => this.finishStream())
   }
   finishStream() {
     if (this.finished) return
     this.finished = true
-    nextTick(() => {
-      this.emit('finish')
-      this.emit('close')
-    })
+    for (const callback of this.finishCallbacks.splice(0)) callback()
+    this.emit('finish')
+    if (this.autoDestroy) this.destroy()
   }
   destroy(error) {
     if (this.destroyed) return this
     this.destroyed = true
+    if (!this.writing) this.errorBuffer()
     nextTick(() => {
       if (error) this.emit('error', error)
       this.emit('close')
@@ -1661,9 +1797,14 @@ class ChildProcess extends FxEmitter {
         callback()
       },
     })
-    this.stdin.on('finish', () => {
-      if (this.procId !== undefined) host('proc_close_stdin', { id: this.procId })
-    })
+    const closeStdin = () => {
+      if (this.procId !== undefined && this.stdinClosed !== true) {
+        this.stdinClosed = true
+        host('proc_close_stdin', { id: this.procId })
+      }
+    }
+    this.stdin.on('finish', closeStdin)
+    this.stdin.on('close', closeStdin)
     this.stdout = new Readable()
     this.stdout._read = () => {}
     this.stderr = new Readable()
