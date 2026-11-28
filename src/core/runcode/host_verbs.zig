@@ -1865,6 +1865,78 @@ const Md4 = struct {
     }
 };
 
+const Ripemd160 = struct {
+    pub const digest_length = 20;
+    const r_left = [_]usize{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8, 3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12, 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2, 4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13 };
+    const r_right = [_]usize{ 5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2, 15, 5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13, 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14, 12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11 };
+    const s_left = [_]u5{ 11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8, 7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12, 11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5, 11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12, 9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6 };
+    const s_right = [_]u5{ 8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6, 9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11, 9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5, 15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8, 8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11 };
+    const k_left = [_]u32{ 0x00000000, 0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xA953FD4E };
+    const k_right = [_]u32{ 0x50A28BE6, 0x5C4DD124, 0x6D703EF3, 0x7A6D76E9, 0x00000000 };
+
+    fn boolFn(round: usize, x: u32, y: u32, z: u32) u32 {
+        return switch (round) {
+            0 => x ^ y ^ z,
+            1 => (x & y) | (~x & z),
+            2 => (x | ~y) ^ z,
+            3 => (x & z) | (y & ~z),
+            else => x ^ (y | ~z),
+        };
+    }
+
+    fn compress(state: *[5]u32, block: *const [64]u8) void {
+        var x: [16]u32 = undefined;
+        for (0..16) |index| x[index] = std.mem.readInt(u32, block[index * 4 ..][0..4], .little);
+        var al = state[0];
+        var bl = state[1];
+        var cl = state[2];
+        var dl = state[3];
+        var el = state[4];
+        var ar = al;
+        var br = bl;
+        var cr = cl;
+        var dr = dl;
+        var er = el;
+        for (0..80) |j| {
+            const round = j / 16;
+            var t = std.math.rotl(u32, al +% boolFn(round, bl, cl, dl) +% x[r_left[j]] +% k_left[round], s_left[j]) +% el;
+            al = el;
+            el = dl;
+            dl = std.math.rotl(u32, cl, @as(u5, 10));
+            cl = bl;
+            bl = t;
+            t = std.math.rotl(u32, ar +% boolFn(4 - round, br, cr, dr) +% x[r_right[j]] +% k_right[round], s_right[j]) +% er;
+            ar = er;
+            er = dr;
+            dr = std.math.rotl(u32, cr, @as(u5, 10));
+            cr = br;
+            br = t;
+        }
+        const t = state[1] +% cl +% dr;
+        state[1] = state[2] +% dl +% er;
+        state[2] = state[3] +% el +% ar;
+        state[3] = state[4] +% al +% br;
+        state[4] = state[0] +% bl +% cr;
+        state[0] = t;
+    }
+
+    pub fn hash(bytes: []const u8, out: *[digest_length]u8, options: anytype) void {
+        _ = options;
+        var state = [5]u32{ 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0 };
+        var offset: usize = 0;
+        while (offset + 64 <= bytes.len) : (offset += 64) compress(&state, bytes[offset..][0..64]);
+        var tail = std.mem.zeroes([128]u8);
+        const rest = bytes.len - offset;
+        for (bytes[offset..], 0..) |byte, index| tail[index] = byte;
+        tail[rest] = 0x80;
+        const tail_len: usize = if (rest < 56) 64 else 128;
+        std.mem.writeInt(u64, tail[tail_len - 8 ..][0..8], @as(u64, bytes.len) *% 8, .little);
+        compress(&state, tail[0..64]);
+        if (tail_len == 128) compress(&state, tail[64..128]);
+        for (state, 0..) |word, index| std.mem.writeInt(u32, out[index * 4 ..][0..4], word, .little);
+    }
+};
+
 fn hashDigest(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const algorithm = stringArg(args, "algorithm") orelse return invalidField(alloc, "algorithm", "a string");
     const decoded = try base64Arg(alloc, args);
@@ -1878,6 +1950,7 @@ fn hashDigest(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     if (std.mem.eql(u8, algorithm, "sha512")) return digestReply(alloc, std.crypto.hash.sha2.Sha512, bytes);
     if (std.mem.eql(u8, algorithm, "md5")) return digestReply(alloc, std.crypto.hash.Md5, bytes);
     if (std.mem.eql(u8, algorithm, "md4")) return digestReply(alloc, Md4, bytes);
+    if (std.mem.eql(u8, algorithm, "ripemd160")) return digestReply(alloc, Ripemd160, bytes);
     if (std.mem.eql(u8, algorithm, "sha224")) return digestReply(alloc, std.crypto.hash.sha2.Sha224, bytes);
     if (std.mem.eql(u8, algorithm, "sha384")) return digestReply(alloc, std.crypto.hash.sha2.Sha384, bytes);
     if (std.mem.eql(u8, algorithm, "sha512-224")) return digestReply(alloc, std.crypto.hash.sha2.Sha512_224, bytes);
