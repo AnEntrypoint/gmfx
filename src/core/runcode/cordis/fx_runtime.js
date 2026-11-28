@@ -1421,7 +1421,33 @@ const util = { TextDecoder, inspect, isDeepStrictEqual, parseArgs, parseEnv, pro
 
 const utilTypes = { isPromise: (value) => value instanceof Promise }
 
-const moduleApi = { createRequire: fail('module.createRequire'), stripTypeScriptTypes: fail('module.stripTypeScriptTypes') }
+const requireCache = new Map()
+const resolveFrom = (dir, request) => {
+  const stack = []
+  for (const part of (request.startsWith('/') ? request : dir + '/' + request).split('/')) {
+    if (part === '..') stack.pop()
+    else if (part !== '' && part !== '.') stack.push(part)
+  }
+  return '/' + stack.join('/')
+}
+const loadModule = (path) => {
+  if (requireCache.has(path)) return requireCache.get(path).exports
+  const record = { exports: {} }
+  requireCache.set(path, record)
+  if (path.endsWith('.json')) {
+    record.exports = JSON.parse(readText(path))
+    return record.exports
+  }
+  new Function('module', 'exports', 'require', readText(path))(record, record.exports, createRequire(path))
+  return record.exports
+}
+const createRequire = (filename) => {
+  const text = String(filename.href ?? filename)
+  const local = decodeURIComponent(text.startsWith('file://') ? text.slice(7) : text)
+  const dir = local.slice(0, local.lastIndexOf('/'))
+  return (request) => loadModule(resolveFrom(dir, String(request)))
+}
+const moduleApi = { createRequire, stripTypeScriptTypes: fail('module.stripTypeScriptTypes') }
 
 const envRecord = (env) => Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
 
