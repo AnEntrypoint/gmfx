@@ -1477,16 +1477,26 @@ class StringDecoder {
     this.pending = new Uint8Array(0)
   }
   write(chunk) {
-    const bytes = concatBytes([this.pending, toBytes(chunk)])
+    let bytes = concatBytes([this.pending, toBytes(chunk)])
+    let head = ''
+    if (this.encoding === 'ucs2' && this.pending.length === 1 && bytes.length >= 2) {
+      head = fromBytes(bytes.subarray(0, 2), 'ucs2')
+      bytes = bytes.subarray(2)
+    }
     const keep = this.trailingBytes(bytes)
     this.pending = bytes.slice(bytes.length - keep)
     const complete = bytes.subarray(0, bytes.length - keep)
-    return this.encoding === 'utf8' ? decodeUtf8(complete) : fromBytes(complete, this.encoding)
+    return head + (this.encoding === 'utf8' ? decodeUtf8(complete) : fromBytes(complete, this.encoding))
   }
   trailingBytes(bytes) {
     if (this.encoding === 'utf8') return incompleteTail(bytes)
     if (this.encoding === 'base64' || this.encoding === 'base64url') return bytes.length % 3
-    if (this.encoding === 'ucs2') return bytes.length % 2
+    if (this.encoding === 'ucs2') {
+      const odd = bytes.length % 2
+      const last = bytes.length - odd - 2
+      const unit = last >= 0 ? bytes[last] | (bytes[last + 1] << 8) : 0
+      return odd + (unit >= 0xd800 && unit <= 0xdbff ? 2 : 0)
+    }
     return 0
   }
   end(chunk) {
