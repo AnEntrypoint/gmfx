@@ -408,3 +408,54 @@ None of this exists in the tree (grep for rollback, last known good, js-root: no
 | G20 | Table-driven generation of `fx:host` and of the `.d.ts` from ToolSpec schemas | partial: the module and the Node alias modules are generated from host_module.zig; arg and result schemas and the `.d.ts` are planned |
 
 Correction to the owner's plan: an Anthropic-compatible custom endpoint is no longer a gap. src/core/config/configured_provider.zig defines `Protocol = openai-chat-completions | anthropic-messages`, src/gateway/messages_protocol.zig implements the codec, and libfx's sdk/custom-provider.js accepts `protocol`. What remains planned is a provider whose transport is a JS function.
+
+## 8. Browser: fx on thebird's single edge.js instance (Stage 3 of specs/edge-js.md)
+
+Status: design for thebird to implement; nothing in this section is built on either side yet. fx-core.wasm and fx-term.wasm keep bundling no JS engine. The page owns exactly one edge.js instance (the pin in section 9) and fx reaches it through new `fx_*` imports in the existing `fx` import module (web/vendor/fx/wasm-runtime.js, next to `fx_host_tool_call`). A network log with a second engine wasm is a failed witness.
+
+### 8.1 What fx needs from the engine
+
+`run_code`, `fx js`, `fx freddie` and the `fx:host` modules all reduce to one operation: run one script or body to completion on an edge.js environment, with `fx:host` verb calls going back to fx, a console sink, a deadline and an exit code. The native route does this in one process (native/edgejs/fx_edge.cc: `fxHost.call(name, argsJson)` is a synchronous native function). The browser route keeps the same operation and moves the two directions across the wasm boundary.
+
+### 8.2 Imports (fx wasm calls the page; every one is `WebAssembly.Suspending`)
+
+| import | arguments | result |
+| --- | --- | --- |
+| `fx_js_available()` | none | 1 when the page holds an edge.js instance or can load one, else 0. Does not load the engine. |
+| `fx_js_run(reqPtr, reqLen, outPtr, outCap, statusPtr)` | `req` is JSON: `{ run_id, file?, body?, format: "esm" \| "cjs", deadline_ms, argv: [..], cwd, env: {..}, permission_mode, handle }` | length of the report JSON written to `out`; the report is the one the native runner prints: `{ ok, value, console, console_dropped, error?, exit_code? }`. A negative value is an error (-1 no engine, -2 cancelled, -3 report larger than `outCap`, in which case the page keeps it for the read pair below). `status[0]` bit 0 is set when the engine failed to start. |
+| `fx_js_result_read(offset, ptr, cap)` and `fx_js_result_release()` | as `fx_host_tool_result_read` and `fx_host_tool_result_release` | the same chunked read of an oversized report |
+| `fx_js_cancel(runIdPtr, runIdLen)` | run id | stops the run: the page rejects pending verb calls and interrupts the environment |
+
+The first `fx_js_run` is what loads the engine (streamed, cached, behind the page's own loading UI); `fx_js_available` never does.
+
+### 8.3 Exports (the page calls the fx wasm; this is how a script reaches the verbs)
+
+| export | arguments | result |
+| --- | --- | --- |
+| `fx_verb_call(handle, namePtr, nameLen, argsPtr, argsLen, outPtr, outCap)` | `handle` is the value from the run request; `args` is the verb's JSON arguments | length of the reply JSON written to `out`, or a negative code as for `fx_host_tool_call` |
+| `fx_verb_reply_read(offset, ptr, cap)` and `fx_verb_reply_release()` | as above | chunked read when the reply is larger than `outCap` |
+
+`fx_verb_call` dispatches through the same Zig path as native `fx_edge_host_call`: the verb table in src/core/runcode/host_verbs.zig, the gate in host_verb_gate.zig first. The permission gate therefore stays in fx on both routes; the page does not decide what a verb may do.
+
+Re-entrancy: `fx_js_run` suspends the fx stack (JSPI) while the engine runs, and the engine calls `fx_verb_call` on the same wasm instance while that stack is suspended. fx guarantees that `fx_verb_call` uses no state that a suspended frame holds open: the run context lives behind `handle`, in a table, not on the suspended stack. thebird must call `fx_verb_call` only between a `fx_js_run` and its return.
+
+### 8.4 Inside the engine (prelude, loaded once per environment)
+
+- `fxHost.call(name, argsJson)` is a synchronous function on native. In the browser the page defines it as a JSPI-suspending function that awaits `fx_verb_call`; where a script runs on a stack that cannot suspend, `fxHost.callAsync(name, argsJson)` returns a promise with the same reply. fx's JS (bootstrap and `fx:host` modules) uses `callAsync` only where it must and `call` everywhere else, so one source serves both routes.
+- The same prelude refuses the Node I/O modules outside yolo, exactly as docs/edgejs-engine.md describes for the native route (it is a policy gate, not a sandbox). In the browser the Node `fs`, `net` and `child_process` modules are backed by thebird's workspace and network layers; fx treats them as untrusted for permission purposes and routes writes through verbs.
+- One environment per run: each edge `Run*` call re-bootstraps Node, so every `fx_js_run` creates a fresh environment on the shared engine and frees it afterwards. This costs a Node bootstrap per call; thebird reports the warm figure. It does not create a second engine.
+- The console sink, the deadline (a page timer that interrupts the environment) and `process.exit` are the prelude's, so the report is identical on both routes. The parity suite and freddie's conformance suite are the equivalence test between them.
+
+### 8.5 What thebird provides
+
+1. One edge.js instance for the page, created before or at the first `fx_js_run`, shared with thebird's own `node` and `tjs`-style shell commands (they call the same `edge.run`).
+2. The two import groups above in wasm-runtime.js, behind an option (`options.edge`) so a page without an engine keeps `fx_js_available()` at 0 and fx reports "no JS engine" for run_code instead of failing.
+3. Streaming load and a cache for the engine bytes; time to shell does not wait for it.
+
+### 8.6 Witness (Stage 3)
+
+A live page where `fx ask` runs bash and a `run_code` body that calls `fx:host` verbs and `node -e` on the same edge instance, with one engine wasm request in the network log and its size recorded, plus a red check: a build that bundles an engine into fx-core.wasm or loads a second engine produces two engine requests.
+
+## 9. Engine pin (shared with gm and thebird)
+
+One edge.js pin is recorded once for gm, fx and thebird. Today fx links the tree gm built for its spike: edge.js 0.2.5 (`VERSION.txt`), QuickJS-NG engine, tree at /workspace/tmp/gm/edgejs/src (no `.git`, so no commit id is available from it). The commit id and the archive sha256 belong to gm's pin file; fx adopts them unchanged and does not keep its own. Until gm records them, fx's build input is `-Dedgejs=<dir>` against that tree.
