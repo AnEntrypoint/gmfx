@@ -1598,9 +1598,73 @@ const pipeline = (...streams) => {
 
 const stream = { PassThrough, Readable, Writable, Transform: PassThrough, pipeline }
 
+const compareBytes = (left, right) => {
+  const shared = Math.min(left.length, right.length)
+  for (let index = 0; index < shared; index += 1) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1
+  }
+  return left.length === right.length ? 0 : left.length < right.length ? -1 : 1
+}
+
 class FxBuffer extends Uint8Array {
   toString(encoding, start = 0, end = this.length) {
     return fromBytes(this.subarray(start, end), encoding ?? 'utf8')
+  }
+  toJSON() {
+    return { type: 'Buffer', data: Array.from(this) }
+  }
+  equals(other) {
+    return compareBytes(this, other) === 0
+  }
+  compare(other) {
+    return compareBytes(this, other)
+  }
+  copy(target, targetStart = 0, sourceStart = 0, sourceEnd = this.length) {
+    const source = this.subarray(sourceStart, sourceEnd)
+    const count = Math.min(source.length, target.length - targetStart)
+    if (count <= 0) return 0
+    target.set(source.subarray(0, count), targetStart)
+    return count
+  }
+  write(text, offset = 0, length = this.length - offset, encoding = 'utf8') {
+    const bytes = toBytes(text, typeof offset === 'string' ? offset : encoding)
+    const at = typeof offset === 'number' ? offset : 0
+    const count = Math.min(bytes.length, this.length - at, length)
+    this.set(bytes.subarray(0, count), at)
+    return count
+  }
+  slice(start, end) {
+    return this.subarray(start, end)
+  }
+  readUIntBE(offset, byteLength) {
+    let value = 0
+    for (let index = 0; index < byteLength; index += 1) value = value * 256 + this[offset + index]
+    return value
+  }
+  readUIntLE(offset, byteLength) {
+    let value = 0
+    for (let index = byteLength - 1; index >= 0; index -= 1) value = value * 256 + this[offset + index]
+    return value
+  }
+  view() {
+    return new DataView(this.buffer, this.byteOffset, this.byteLength)
+  }
+}
+
+const numericAccessors = {
+  UInt8: ['Uint8', 1], Int8: ['Int8', 1],
+  UInt16BE: ['Uint16', 2, false], UInt16LE: ['Uint16', 2, true], Int16BE: ['Int16', 2, false], Int16LE: ['Int16', 2, true],
+  UInt32BE: ['Uint32', 4, false], UInt32LE: ['Uint32', 4, true], Int32BE: ['Int32', 4, false], Int32LE: ['Int32', 4, true],
+  FloatBE: ['Float32', 4, false], FloatLE: ['Float32', 4, true], DoubleBE: ['Float64', 8, false], DoubleLE: ['Float64', 8, true],
+}
+for (const [name, [kind, size, little]] of Object.entries(numericAccessors)) {
+  const littleEndian = little === true
+  FxBuffer.prototype['read' + name] = function read(offset = 0) {
+    return this.view()['get' + kind](offset, littleEndian)
+  }
+  FxBuffer.prototype['write' + name] = function write(value, offset = 0) {
+    this.view()['set' + kind](offset, value, littleEndian)
+    return offset + size
   }
 }
 
@@ -1621,9 +1685,15 @@ Buffer.alloc = (size, fill = 0, encoding) => {
 }
 Buffer.byteLength = (value, encoding) => (typeof value === 'string' ? toBytes(value, encoding).length : value.byteLength)
 Buffer.isBuffer = (value) => value instanceof FxBuffer
-Buffer.concat = (list) => wrapBytes(concatBytes(list))
+Buffer.concat = (list, totalLength) => {
+  const bytes = concatBytes(list)
+  if (totalLength === undefined) return wrapBytes(bytes)
+  const exact = new Uint8Array(totalLength)
+  exact.set(bytes.subarray(0, totalLength))
+  return wrapBytes(exact)
+}
 
-const buffer = { Buffer, constants: { MAX_LENGTH: 4294967296, MAX_STRING_LENGTH: 536870888 } }
+const buffer = { Buffer, constants: { MAX_LENGTH: Number.MAX_SAFE_INTEGER, MAX_STRING_LENGTH: 536870888 } }
 
 class TextDecoder {
   constructor(encoding = 'utf-8') {
