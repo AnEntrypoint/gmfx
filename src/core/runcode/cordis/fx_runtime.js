@@ -2939,22 +2939,22 @@ const zoneName = () => {
   return 'UTC'
 }
 
-class DateTimeFormat {
-  constructor(locales, options = {}) {
-    this.options = options
-    this.resolved = { locale: Array.isArray(locales) ? locales[0] ?? 'en-US' : locales ?? 'en-US', calendar: 'gregory', numberingSystem: 'latn', timeZone: options.timeZone ?? zoneName() }
-  }
-  resolvedOptions() { return { ...this.resolved } }
-  format(date = new Date()) { return new Date(date).toISOString() }
-  formatToParts(date = new Date()) { return [{ type: 'literal', value: this.format(date) }] }
-  static supportedLocalesOf(locales) { return Array.isArray(locales) ? locales : locales === undefined ? [] : [locales] }
+function DateTimeFormat(locales, options = {}) {
+  if (!(this instanceof DateTimeFormat)) return new DateTimeFormat(locales, options)
+  this.options = options
+  this.resolved = { locale: Array.isArray(locales) ? locales[0] ?? 'en-US' : locales ?? 'en-US', calendar: 'gregory', numberingSystem: 'latn', timeZone: options.timeZone ?? zoneName() }
 }
+DateTimeFormat.prototype.resolvedOptions = function () { return { ...this.resolved } }
+DateTimeFormat.prototype.format = function (date = new Date()) { return new Date(date).toISOString() }
+DateTimeFormat.prototype.formatToParts = function (date = new Date()) { return [{ type: 'literal', value: this.format(date) }] }
+DateTimeFormat.supportedLocalesOf = (locales) => (Array.isArray(locales) ? locales : locales === undefined ? [] : [locales])
 
-class NumberFormat {
-  constructor(locales, options = {}) { this.options = options }
-  resolvedOptions() { return { locale: 'en-US', numberingSystem: 'latn', style: this.options.style ?? 'decimal' } }
-  format(value) { return String(value) }
+function NumberFormat(locales, options = {}) {
+  if (!(this instanceof NumberFormat)) return new NumberFormat(locales, options)
+  this.options = options
 }
+NumberFormat.prototype.resolvedOptions = function () { return { locale: 'en-US', numberingSystem: 'latn', style: this.options.style ?? 'decimal' } }
+NumberFormat.prototype.format = function (value) { return String(value) }
 
 if (globalThis.Intl === undefined) globalThis.Intl = { DateTimeFormat, NumberFormat }
 
