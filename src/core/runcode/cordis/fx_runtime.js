@@ -838,14 +838,20 @@ const createHash = (algorithm, options = {}) => {
     throw error
   }
   if (options?.outputLength !== undefined) request.output_length = Number(options.outputLength)
+  let finalized = false
   const hash = {
     update(data, encoding) {
+      if (finalized) throw nodeError('ERR_CRYPTO_HASH_FINALIZED', 'Digest already called')
+      if (typeof data !== 'string' && !ArrayBuffer.isView(data)) throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received ' + receivedText(data))
       chunks.push(toBytes(data, encoding))
       return hash
     },
     digest(encoding) {
+      if (finalized) throw nodeError('ERR_CRYPTO_HASH_FINALIZED', 'Digest already called')
+      finalized = true
       const reply = host('hash_digest', { ...request, base64: encodeBase64(concatBytes(chunks)) })
-      return fromBytes(decodeHex(reply.hex), encoding)
+      const bytes = decodeHex(reply.hex)
+      return encoding === undefined ? wrapBytes(bytes) : fromBytes(bytes, encoding)
     },
   }
   return hash
