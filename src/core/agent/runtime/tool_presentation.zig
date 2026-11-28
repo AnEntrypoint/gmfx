@@ -1234,6 +1234,7 @@ pub fn finishExecutedToolStatus(
 ) !void {
     if (!status_started) return;
     const inner_rows = try run_code_presentation.resultRows(arena, call, result.model_output, result.status == .success);
+    debug_trace.logf("tool", "finish_status call={s} status={s} inner_rows={d} model_output={s}", .{ call.name, @tagName(result.status), inner_rows.len, result.model_output[0..@min(result.model_output.len, 240)] });
     const activity_kind = activityKindForCall(arena, hooks.tool_registry, call);
     const command_decision = if (activity_kind == .command)
         try commandOutcomeDecision(arena, result_memory.command_process_presentation)
