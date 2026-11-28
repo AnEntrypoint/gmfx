@@ -501,6 +501,7 @@ const openFailure = (code, target) => {
     EBADF: 'bad file descriptor',
   }
   const error = nodeError(code, code + ': ' + messages[code] + ", open '" + target + "'")
+  error.errno = { ENOENT: -2, EEXIST: -17, EBADF: -9 }[code]
   error.syscall = 'open'
   error.path = target
   return error
@@ -630,6 +631,7 @@ const createReadStream = (value, options = {}) => {
     const text = decoder.write(chunk)
     if (text.length > 0) stream.push(text)
   }
+  if (failure !== null) nextTick(() => stream.destroy(failure))
   nextTick(() => {
     if (failure === null) {
       stream.emit('open', 3)
