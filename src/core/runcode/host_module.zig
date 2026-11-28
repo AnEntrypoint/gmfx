@@ -61,7 +61,7 @@ pub const table = [_]Row{
     provided("string_decoder", "stringDecoder", &.{"StringDecoder"}),
     provided("timers/promises", "timersPromises", &.{ "scheduler", "setTimeout" }),
     provided("url", "url", &.{ "URL", "URLSearchParams", "fileURLToPath", "pathToFileURL" }),
-    provided("util", "util", &.{ "TextDecoder", "inspect", "isDeepStrictEqual", "parseArgs", "parseEnv", "promisify" }),
+    provided("util", "util", &.{ "TextDecoder", "inspect", "isDeepStrictEqual", "parseArgs", "parseEnv", "promisify", "stripVTControlCharacters" }),
     provided("util/types", "utilTypes", &.{"isPromise"}),
     provided("vm", "vm", &.{ "Script", "createContext", "runInContext", "runInNewContext" }),
     provided("worker_threads", "workerThreads", &.{ "MessageChannel", "Worker", "parentPort", "workerData" }),
