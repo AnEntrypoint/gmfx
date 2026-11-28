@@ -1398,10 +1398,24 @@ fn fsMkdir(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const io = io_mod.getIo();
     const cwd = std.Io.Dir.cwd();
     if (boolArg(args, "recursive", false)) {
+        if (cwd.statFile(io, path, .{})) |stat| {
+            if (stat.kind != .directory) return error.PathAlreadyExists;
+            return encode(alloc, .{ .ok = true });
+        } else |err| if (err != error.FileNotFound) return err;
+        var first: []const u8 = path;
+        var probe = std.fs.path.dirname(path);
+        while (probe) |parent| : (probe = std.fs.path.dirname(parent)) {
+            _ = cwd.statFile(io, parent, .{}) catch |err| {
+                if (err != error.FileNotFound) return err;
+                first = parent;
+                continue;
+            };
+            break;
+        }
         try cwd.createDirPath(io, path);
-    } else {
-        try cwd.createDir(io, path, .default_dir);
+        return encode(alloc, .{ .ok = true, .first = first });
     }
+    try cwd.createDir(io, path, .default_dir);
     return encode(alloc, .{ .ok = true });
 }
 

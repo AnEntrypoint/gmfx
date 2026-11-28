@@ -10,7 +10,7 @@ const fail = (name) => function unsupportedFunction() {
   throw coded('ERR_FX_UNSUPPORTED', name + ' is not available in fx: the embedded runtime does not provide it')
 }
 
-const hostErrnoCodes = { FileNotFound: 'ENOENT', NotDir: 'ENOTDIR', AccessDenied: 'EACCES', PermissionDenied: 'EACCES', IsDir: 'EISDIR' }
+const hostErrnoCodes = { FileNotFound: 'ENOENT', NotDir: 'ENOTDIR', AccessDenied: 'EACCES', PermissionDenied: 'EACCES', IsDir: 'EISDIR', PathAlreadyExists: 'EEXIST' }
 
 const host = (name, args) => {
   const reply = globalThis.gm[name](args ?? {})
@@ -719,7 +719,7 @@ const fs = {
   createReadStream,
   existsSync,
   lstatSync: (value, options) => statOf(value, false, options),
-  mkdirSync: (value, options) => host('fs_mkdir', { path: pathOf(value), recursive: options?.recursive === true }),
+  mkdirSync: (value, options) => host('fs_mkdir', { path: pathOf(value), recursive: options?.recursive === true }).first,
   mkdtempSync: (prefix) => host('fs_mkdtemp', { prefix }).path,
   openSync,
   readFileSync,
