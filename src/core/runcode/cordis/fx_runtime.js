@@ -78,18 +78,52 @@ const decodeUtf8 = (bytes) => {
   let i = 0
   while (i < bytes.length) {
     const lead = bytes[i]
-    let code = 0xfffd
-    let extra = 0
-    if (lead < 0x80) code = lead
-    else if (lead >= 0xf0) { code = lead & 7; extra = 3 }
-    else if (lead >= 0xe0) { code = lead & 15; extra = 2 }
-    else if (lead >= 0xc0) { code = lead & 31; extra = 1 }
-    i += 1
-    for (let k = 0; k < extra && i < bytes.length; k += 1) {
-      code = (code << 6) | (bytes[i] & 63)
+    if (lead < 0x80) {
+      out += String.fromCharCode(lead)
       i += 1
+      continue
     }
-    out += String.fromCodePoint(code > 0x10ffff ? 0xfffd : code)
+    let need = 0
+    let code = 0
+    let min = 0
+    if (lead >= 0xc2 && lead <= 0xdf) {
+      need = 1
+      code = lead & 0x1f
+      min = 0x80
+    } else if (lead >= 0xe0 && lead <= 0xef) {
+      need = 2
+      code = lead & 0x0f
+      min = 0x800
+    } else if (lead >= 0xf0 && lead <= 0xf4) {
+      need = 3
+      code = lead & 0x07
+      min = 0x10000
+    } else {
+      out += '\ufffd'
+      i += 1
+      continue
+    }
+    let read = 1
+    let valid = true
+    for (; read <= need; read += 1) {
+      const next = bytes[i + read]
+      if (next === undefined || (next & 0xc0) !== 0x80) {
+        valid = false
+        break
+      }
+      code = (code << 6) | (next & 0x3f)
+    }
+    if (!valid) {
+      out += '\ufffd'
+      i += read
+      continue
+    }
+    if (code < min || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) {
+      out += '\ufffd'
+    } else {
+      out += String.fromCodePoint(code)
+    }
+    i += need + 1
   }
   return out
 }
