@@ -315,6 +315,86 @@ const fdEntry = (fd) => {
 
 const targetOf = (value) => (typeof value === 'number' ? fdEntry(value).path : pathOf(value))
 
+const cpError = (code, message, errno, syscall) => {
+  const error = nodeError(code, message)
+  if (errno !== undefined) error.errno = errno
+  if (syscall !== undefined) error.syscall = syscall
+  return error
+}
+const cpInvalid = (detail, path) => cpError('ERR_FS_CP_EINVAL', 'Invalid src or dest: cp returned EINVAL (' + detail + ') ' + path, -22, 'cp')
+const cpStatOrNull = (path, follow) => {
+  try {
+    return statOf(path, follow)
+  } catch (error) {
+    return null
+  }
+}
+const cpIsSubdir = (parent, child) => {
+  const parentParts = normalizePath(parent).split('/')
+  const childParts = normalizePath(child).split('/')
+  return parentParts.length <= childParts.length && parentParts.every((part, index) => childParts[index] === part)
+}
+const cpResolve = (base, target) => (target.startsWith('/') ? normalizePath(target) : normalizePath(base.slice(0, base.lastIndexOf('/')) + '/' + target))
+const cpStatFor = (path, follow) => {
+  try {
+    return statOf(path, follow)
+  } catch (error) {
+    if (error.code === 'ENOENT') throw cpError('ENOENT', 'ENOENT: no such file or directory, ' + (follow ? 'stat' : 'lstat') + " '" + path + "'", -2, follow ? 'stat' : 'lstat')
+    throw error
+  }
+}
+const copyTree = (from, to, options = {}) => {
+  const opts = { force: true, recursive: false, dereference: false, errorOnExist: false, ...options }
+  const src = pathOf(from)
+  const dest = pathOf(to)
+  const follow = opts.dereference === true
+  const srcStat = cpStatFor(src, follow)
+  const destStat = cpStatOrNull(dest, follow)
+  if (destStat !== null && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev) throw cpInvalid('src and dest cannot be the same', dest)
+  if (srcStat.isDirectory() && !opts.recursive) throw cpError('ERR_FS_EISDIR', 'Recursive option is required to copy a directory: ' + src, -21, 'cp')
+  if (destStat !== null) {
+    if (srcStat.isDirectory() && !destStat.isDirectory()) throw cpError('ERR_FS_CP_DIR_TO_NON_DIR', 'Cannot overwrite non-directory with directory: cp returned EISDIR (cannot overwrite non-directory ' + dest + ' with directory ' + src + ') ' + dest, -21, 'cp')
+    if (!srcStat.isDirectory() && destStat.isDirectory()) throw cpError('ERR_FS_CP_NON_DIR_TO_DIR', 'Cannot overwrite directory with non-directory: cp returned ENOTDIR (cannot overwrite directory ' + dest + ' with non-directory ' + src + ') ' + dest, -20, 'cp')
+  }
+  if (srcStat.isDirectory() && cpIsSubdir(src, dest)) throw cpInvalid('cannot copy ' + src + ' to a subdirectory of self ' + dest, dest)
+  if (srcStat.isSymbolicLink()) return copyLink(src, dest, destStat, opts)
+  if (srcStat.isDirectory()) {
+    if (destStat === null) host('fs_mkdir', { path: dest, recursive: false })
+    for (const name of fs.readdirSync(src)) copyTree(src + '/' + name, dest + '/' + name, opts)
+    return undefined
+  }
+  if (destStat !== null) {
+    if (!opts.force) {
+      if (opts.errorOnExist) throw cpError('ERR_FS_CP_EEXIST', 'Target already exists: cp returned EEXIST (' + dest + ' already exists)', -17, 'cp')
+      return undefined
+    }
+    host('fs_remove', { path: dest, recursive: false, force: false })
+  }
+  host('fs_copy', { from: src, to: dest, recursive: false })
+  return undefined
+}
+const copyEntry = (from, to, options = {}) => {
+  const dest = pathOf(to)
+  const parent = dest.slice(0, dest.lastIndexOf('/'))
+  if (parent !== '' && !fs.existsSync(parent)) host('fs_mkdir', { path: parent, recursive: true })
+  return copyTree(from, to, options)
+}
+const copyLink = (src, dest, destStat, opts) => {
+  let resolvedSrc = fs.readlinkSync(src)
+  if (!resolvedSrc.startsWith('/')) resolvedSrc = cpResolve(src, resolvedSrc)
+  const sourceIsDirectory = cpStatOrNull(resolvedSrc, true)?.isDirectory() === true
+  if (destStat === null) return fs.symlinkSync(resolvedSrc, dest)
+  if (!destStat.isSymbolicLink()) {
+    if (!opts.force) return undefined
+    throw cpError('EEXIST', "EEXIST: file already exists, symlink '" + resolvedSrc + "' -> '" + dest + "'", -17, 'symlink')
+  }
+  let resolvedDest = fs.readlinkSync(dest)
+  if (!resolvedDest.startsWith('/')) resolvedDest = cpResolve(dest, resolvedDest)
+  if (sourceIsDirectory && cpIsSubdir(resolvedSrc, resolvedDest)) throw cpInvalid('cannot copy ' + resolvedSrc + ' to a subdirectory of self ' + resolvedDest, dest)
+  if (sourceIsDirectory && cpIsSubdir(resolvedDest, resolvedSrc)) throw cpError('ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY', 'Cannot overwrite symlink in subdirectory of self: cp returned EINVAL (cannot overwrite ' + resolvedDest + ' with ' + resolvedSrc + ') ' + dest, -22, 'cp')
+  host('fs_remove', { path: dest, recursive: false, force: false })
+  return fs.symlinkSync(resolvedSrc, dest)
+}
 const statsFrom = (info) => {
   const atimeMs = info.atimeMs ?? info.mtimeMs
   const ctimeMs = info.ctimeMs ?? info.mtimeMs
@@ -786,7 +866,7 @@ const fsPromises = {
   appendFile: asAsync(fs.appendFileSync),
   chmod: asAsync((value, mode) => host('fs_chmod', { path: pathOf(value), mode })),
   constants: fsConstants,
-  cp: asAsync((from, to, options) => host('fs_copy', { from: pathOf(from), to: pathOf(to), recursive: options?.recursive === true })),
+  cp: asAsync((from, to, options) => copyEntry(from, to, options)),
   link: asAsync((existing, value) => host('fs_link', { existing: pathOf(existing), path: pathOf(value) })),
   lstat: asAsync(fs.lstatSync),
   mkdir: asAsync(fs.mkdirSync),
@@ -797,6 +877,8 @@ const fsPromises = {
   readdir: asAsync(fs.readdirSync),
   opendir: (value) => Promise.resolve().then(() => new Dir(pathOf(value), fs.readdirSync(value, { withFileTypes: true }))),
   realpath: asAsync(fs.realpathSync),
+  readlink: asAsync(fs.readlinkSync),
+  symlink: asAsync(fs.symlinkSync),
   rename: asAsync(fs.renameSync),
   rm: asAsync(fs.rmSync),
   stat: asAsync(fs.statSync),
