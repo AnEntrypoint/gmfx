@@ -805,6 +805,13 @@ const randomUUID = () => {
 const createHash = (algorithm, options = {}) => {
   const chunks = []
   const request = { algorithm: String(algorithm).toLowerCase() }
+  const fixedDigestBytes = { md4: 16, md5: 16, sha1: 20, ripemd160: 20, sha224: 28, 'sha512-224': 28, 'sha3-224': 28, sha256: 32, 'sha512-256': 32, 'sha3-256': 32, blake2s256: 32, sha384: 48, 'sha3-384': 48, sha512: 64, 'sha3-512': 64, blake2b512: 64 }
+  const xof = request.algorithm.startsWith('shake')
+  if (options?.outputLength !== undefined && !xof && options.outputLength !== fixedDigestBytes[request.algorithm]) {
+    const error = new Error('error:030000B2:digital envelope routines::not XOF or invalid length')
+    error.code = 'ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH'
+    throw error
+  }
   if (options?.outputLength !== undefined) request.output_length = Number(options.outputLength)
   const hash = {
     update(data, encoding) {
