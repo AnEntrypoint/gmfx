@@ -788,6 +788,7 @@ fn processInfo(alloc: Allocator) anyerror![]u8 {
     try writeField(&out, &first, "release", std.mem.sliceTo(&uts.release, 0));
     try writeField(&out, &first, "homedir", io_mod.homeDir() orelse "");
     try writeField(&out, &first, "tmpdir", io_mod.getenv("TMPDIR") orelse "/tmp");
+    try writeField(&out, &first, "tz", io_mod.getenv("TZ") orelse "");
     try writeField(&out, &first, "parallelism", std.Thread.getCpuCount() catch 1);
     try out.writer.writeAll(",\"env\":{");
     if (io_mod.environMap()) |map| {

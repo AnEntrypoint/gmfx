@@ -2929,7 +2929,7 @@ const dnsPromises = {
 }
 
 const zoneName = () => {
-  const configured = processInfo().env.TZ
+  const configured = processInfo().tz
   if (configured) return String(configured).replace(/^:/, '')
   try {
     const link = host('fs_readlink', { path: '/etc/localtime' }).path
