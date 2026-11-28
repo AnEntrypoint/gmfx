@@ -755,8 +755,9 @@ fn processInfo(alloc: Allocator) anyerror![]u8 {
     try writeField(&out, &first, "argv", [_][]const u8{});
     try writeField(&out, &first, "pid", std.c.getpid());
     try writeField(&out, &first, "platform", nodePlatform());
-    try writeField(&out, &first, "version", "");
-    try writeField(&out, &first, "release", "");
+    const uts = std.posix.uname();
+    try writeField(&out, &first, "version", std.mem.sliceTo(&uts.version, 0));
+    try writeField(&out, &first, "release", std.mem.sliceTo(&uts.release, 0));
     try writeField(&out, &first, "homedir", io_mod.homeDir() orelse "");
     try writeField(&out, &first, "tmpdir", io_mod.getenv("TMPDIR") orelse "/tmp");
     try writeField(&out, &first, "parallelism", std.Thread.getCpuCount() catch 1);
