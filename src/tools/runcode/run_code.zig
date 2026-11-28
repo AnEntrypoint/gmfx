@@ -487,7 +487,6 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
 }
 
 pub fn rollbackCli(alloc: std.mem.Allocator, file: []const u8, ctx_base: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry) !u8 {
-    const io_mod = @import("../../core/shared/io.zig");
     var ctx = ctx_base;
     var managed = managed_execution.Runtime.init(alloc);
     defer managed.deinit();
@@ -850,7 +849,6 @@ test "the batching notice follows the third consecutive single-verb body and not
 
 test "an error thrown while loading a required file names the file and its line" {
     const builtin_tools = @import("../../builtins/tools.zig");
-    const io_mod = @import("../../core/shared/io.zig");
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io_mod.getIo(), .{ .sub_path = "broken.cjs", .data = "const a = 1;\nconst b = 2;\nthrow new Error('boom');\n" });
