@@ -2,6 +2,7 @@ const std = @import("std");
 const url_policy = @import("../../tools/web/url_policy.zig");
 const http_fetch = @import("../../tools/web/http_fetch.zig");
 const net_serve = @import("net_serve.zig");
+const script_args = @import("script_args.zig");
 const pty_host = @import("pty_host.zig");
 const sqlite_host = @import("sqlite_host.zig");
 const builtin = @import("builtin");
@@ -756,7 +757,7 @@ fn processInfo(alloc: Allocator) anyerror![]u8 {
     try out.writer.writeAll("{\"ok\":true");
     var first = false;
     try writeField(&out, &first, "cwd", cwd);
-    try writeField(&out, &first, "argv", [_][]const u8{});
+    try writeField(&out, &first, "argv", script_args.argv);
     try writeField(&out, &first, "pid", std.c.getpid());
     try writeField(&out, &first, "platform", nodePlatform());
     const uts = std.posix.uname();

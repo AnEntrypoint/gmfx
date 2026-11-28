@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_mod = @import("../../core/shared/io.zig");
 const build_options = @import("build_options");
 const tool_dispatch = @import("../../core/tooling/tool_dispatch.zig");
 const model_tool_schema = @import("../../core/tooling/model_tool_schema.zig");
@@ -375,6 +376,68 @@ fn mcpTools(alloc: std.mem.Allocator, ctx: tool_dispatch.DispatchContext) ![]con
     };
 }
 
+pub fn isFreddieToken(token: []const u8) bool {
+    return std.mem.eql(u8, token, "freddie");
+}
+
+const freddie_entry = "apps/cli/src/bin.js";
+
+fn hasFreddieEntry(alloc: std.mem.Allocator, root: []const u8) bool {
+    const entry = std.fs.path.join(alloc, &.{ root, freddie_entry }) catch return false;
+    defer alloc.free(entry);
+    _ = std.Io.Dir.cwd().statFile(io_mod.getIo(), entry, .{}) catch return false;
+    return true;
+}
+
+pub fn resolveFreddieRoot(alloc: std.mem.Allocator, flag: ?[]const u8, env_root: ?[]const u8, cwd: []const u8, home: ?[]const u8) !?[]u8 {
+    if (flag) |root| return if (hasFreddieEntry(alloc, root)) try alloc.dupe(u8, root) else null;
+    if (env_root) |root| if (hasFreddieEntry(alloc, root)) return try alloc.dupe(u8, root);
+    const project = try std.fs.path.join(alloc, &.{ cwd, ".fx", "js" });
+    if (hasFreddieEntry(alloc, project)) return project;
+    alloc.free(project);
+    if (home) |base| {
+        const user = try std.fs.path.join(alloc, &.{ base, ".fx", "js" });
+        if (hasFreddieEntry(alloc, user)) return user;
+        alloc.free(user);
+    }
+    return null;
+}
+
+pub fn freddieCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry) !u8 {
+    var js_root: ?[]const u8 = null;
+    var permission: ?[]const u8 = null;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        if (std.mem.eql(u8, args[index], "--js-root") and index + 1 < args.len) {
+            index += 1;
+            js_root = args[index];
+        } else if (std.mem.eql(u8, args[index], "--permission-mode") and index + 1 < args.len) {
+            index += 1;
+            permission = args[index];
+        } else break;
+    }
+    if (index >= args.len) {
+        try std.Io.File.stderr().writeStreamingAll(io_mod.getIo(), "usage: fx freddie [--js-root <dir>] [--permission-mode <mode>] <profile> [args...]\n");
+        return 2;
+    }
+    const root = (try resolveFreddieRoot(alloc, js_root, io_mod.getenv("FX_JS_ROOT"), ctx_base.workspace_root, io_mod.homeDir())) orelse {
+        try std.Io.File.stderr().writeStreamingAll(io_mod.getIo(), "fx freddie: no freddie checkout found (looked for apps/cli/src/bin.js under --js-root, FX_JS_ROOT, <project>/.fx/js and ~/.fx/js)\n");
+        return 2;
+    };
+    defer alloc.free(root);
+    const entry = try std.fs.path.join(alloc, &.{ root, freddie_entry });
+    defer alloc.free(entry);
+    const resolve_mod = @import("../../core/runcode/resolve.zig");
+    resolve_mod.root_override = root;
+    var forwarded: std.ArrayList([]const u8) = .empty;
+    defer forwarded.deinit(alloc);
+    if (permission) |mode| try forwarded.appendSlice(alloc, &.{ "--permission-mode", mode });
+    try forwarded.append(alloc, entry);
+    try forwarded.append(alloc, "--");
+    try forwarded.appendSlice(alloc, args[index..]);
+    return runCli(alloc, forwarded.items, ctx_base, registry);
+}
+
 pub fn isCliToken(token: []const u8) bool {
     return std.mem.eql(u8, token, "run-code") or std.mem.eql(u8, token, "js");
 }
@@ -392,6 +455,10 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
     var edge_engine = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
+        if (std.mem.eql(u8, args[index], "--")) {
+            try forwarded.appendSlice(alloc, args[index..]);
+            break;
+        }
         if (std.mem.eql(u8, args[index], "--engine") and index + 1 < args.len) {
             index += 1;
             edge_engine = std.mem.eql(u8, args[index], "edge");
@@ -860,4 +927,20 @@ test "verbs gives names alone, one verb's description and input schema, and refu
     });
     if (result.status != .success) return error.RunCodeDidNotSucceed;
     try std.testing.expect(std.mem.indexOf(u8, result.body, "path;Read a whole file as base64.;path;true;unknown verb: no_such_verb") != null);
+}
+
+test "the freddie checkout is the first root that holds apps/cli/src/bin.js" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "env/apps/cli/src");
+    try tmp.dir.writeFile(io_mod.getIo(), .{ .sub_path = "env/apps/cli/src/bin.js", .data = "" });
+    const base = try tmp.dir.realPathFileAlloc(io_mod.getIo(), ".", std.testing.allocator);
+    defer std.testing.allocator.free(base);
+    const env_root = try std.fs.path.join(std.testing.allocator, &.{ base, "env" });
+    defer std.testing.allocator.free(env_root);
+    const found = (try resolveFreddieRoot(std.testing.allocator, null, env_root, base, null)).?;
+    defer std.testing.allocator.free(found);
+    try std.testing.expectEqualStrings(env_root, found);
+    try std.testing.expect((try resolveFreddieRoot(std.testing.allocator, "/nonexistent-freddie", env_root, base, null)) == null);
+    try std.testing.expect((try resolveFreddieRoot(std.testing.allocator, null, null, base, null)) == null);
 }

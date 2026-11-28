@@ -3916,6 +3916,19 @@ fn mainC(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) !v
         if (code != 0) std.process.exit(code);
         return;
     }
+    if (cli_args.len >= 1 and run_code_tool.isFreddieToken(cli_args[0])) {
+        io_mod.setRawEnviron(raw_env);
+        const process_args = argsFromRaw(raw_args);
+        var threaded = std.Io.Threaded.init(processAllocator(), processIoOptions(process_args, environBlockFromRaw(raw_env)));
+        defer threaded.deinit();
+        io_mod.setIo(threaded.io());
+        const alloc = processAllocator();
+        const cwd = try io_mod.realpathAlloc(alloc, ".");
+        const ctx: tool_dispatch_mod.DispatchContext = .{ .allocator = alloc, .execution_authority = .ordinary, .workspace_root = cwd };
+        const code = try run_code_tool.freddieCli(alloc, cli_args[1..], ctx, builtin_tools.registry_with_tower);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
     if (cli_args.len >= 2 and run_code_tool.isCliToken(cli_args[0])) {
         io_mod.setRawEnviron(raw_env);
         const process_args = argsFromRaw(raw_args);

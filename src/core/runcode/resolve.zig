@@ -68,8 +68,10 @@ pub fn resolve(alloc: std.mem.Allocator, mode: Mode, base: []const u8, specifier
     return error.ModuleNotFound;
 }
 
+pub var root_override: ?[]const u8 = null;
+
 fn jsRoot() ?[]const u8 {
-    return io_mod.getenv("FX_JS_ROOT");
+    return root_override orelse io_mod.getenv("FX_JS_ROOT");
 }
 
 fn joinRoot(arena: std.mem.Allocator, parts: []const []const u8) (Failure || std.mem.Allocator.Error)![]u8 {

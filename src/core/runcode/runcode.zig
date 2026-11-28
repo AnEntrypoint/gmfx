@@ -4,6 +4,7 @@ const imports = @import("imports.zig");
 const cordis = @import("cordis.zig");
 const resolve = @import("resolve.zig");
 const host_module = @import("host_module.zig");
+const script_args = @import("script_args.zig");
 
 const bootstrap: []const u8 = @embedFile("runcode_bootstrap.js");
 
@@ -326,6 +327,7 @@ pub const CliOptions = struct {
     background: bool = false,
     task_output: ?[]const u8 = null,
     task_file: ?[]const u8 = null,
+    script_args: []const []const u8 = &.{},
 };
 
 pub fn parseCliArgs(args: []const []const u8) !CliOptions {
@@ -335,7 +337,10 @@ pub fn parseCliArgs(args: []const []const u8) !CliOptions {
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--file") and index + 1 < args.len) {
+        if (std.mem.eql(u8, arg, "--")) {
+            options.script_args = args[index + 1 ..];
+            break;
+        } else if (std.mem.eql(u8, arg, "--file") and index + 1 < args.len) {
             index += 1;
             file_path = args[index];
         } else if (std.mem.eql(u8, arg, "--deadline-ms") and index + 1 < args.len) {
@@ -433,6 +438,7 @@ pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Ver
     const body = try io_mod.readFileToEnd(alloc, &file, max_read_bytes);
     defer alloc.free(body);
     const root = std.fs.path.dirname(absolute) orelse "/";
+    try script_args.set(alloc, absolute, cli.script_args);
     const outcome = try execute(alloc, body, .{ .format = cli.format, .deadline_ms = cli.deadline_ms, .body_path = absolute, .root = root, .verbs = verbs, .run_id = cli.run_id });
     defer outcome.deinit(alloc);
     const report = try reportJson(alloc, outcome, null);
@@ -449,6 +455,14 @@ pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Ver
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), report);
     try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), "\n");
     return if (outcome.exit_code) |code| code else if (outcome.ok) 0 else 1;
+}
+
+test "arguments after -- reach the script and are not parsed as flags" {
+    const parsed = try parseCliArgs(&.{ "main.mjs", "--", "web", "--format", "x" });
+    try std.testing.expectEqualStrings("main.mjs", parsed.file);
+    try std.testing.expectEqual(@as(usize, 3), parsed.script_args.len);
+    try std.testing.expectEqualStrings("web", parsed.script_args[0]);
+    try std.testing.expectEqual(Format.esm, parsed.format);
 }
 
 test "fx js takes the file as its first argument and keeps the run-code flags" {
