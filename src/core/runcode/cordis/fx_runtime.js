@@ -845,7 +845,147 @@ const promisify = (operation) => (...args) => new Promise((resolve, reject) => {
   operation(...args, (error, value) => (error ? reject(error) : resolve(value)))
 })
 
-const util = { TextDecoder, inspect, isDeepStrictEqual, parseArgs: fail('util.parseArgs'), parseEnv, promisify }
+const parseArgsError = (code, message) => {
+  const error = new TypeError(message)
+  error.code = code
+  return error
+}
+
+const parseArgsOptionOf = (options, name) => (Object.prototype.hasOwnProperty.call(options, name) ? options[name] : undefined)
+
+const parseArgsLongFor = (options, short) => {
+  for (const name of Object.keys(options)) if (options[name].short === short) return name
+  return short
+}
+
+const parseArgsIsShortGroup = (arg, options) => arg.length > 2 && arg[0] === '-' && arg[1] !== '-' && parseArgsOptionOf(options, parseArgsLongFor(options, arg[1]))?.type !== 'string'
+
+const parseArgsIsShortValue = (arg, options) => arg.length > 2 && arg[0] === '-' && arg[1] !== '-' && parseArgsOptionOf(options, parseArgsLongFor(options, arg[1]))?.type === 'string'
+
+const parseArgsToken = (name, rawName, index, value, inlineValue) => {
+  const token = { kind: 'option', name, rawName, index }
+  if (value !== undefined) token.value = value
+  if (inlineValue !== undefined) token.inlineValue = inlineValue
+  return token
+}
+
+const parseArgsTokenize = (args, options, allowNegative) => {
+  const tokens = []
+  const remaining = [...args]
+  let index = -1
+  let groupCount = 0
+  while (remaining.length > 0) {
+    const arg = remaining.shift()
+    const next = remaining[0]
+    if (groupCount > 0) groupCount -= 1
+    else index += 1
+    if (arg === '--') {
+      tokens.push({ kind: 'option-terminator', index })
+      for (const rest of remaining) {
+        index += 1
+        tokens.push({ kind: 'positional', index, value: rest })
+      }
+      break
+    }
+    if (arg.length === 2 && arg[0] === '-' && arg[1] !== '-') {
+      const name = parseArgsLongFor(options, arg[1])
+      let value
+      let inlineValue
+      if (parseArgsOptionOf(options, name)?.type === 'string' && next !== undefined) {
+        value = remaining.shift()
+        inlineValue = false
+      }
+      tokens.push(parseArgsToken(name, arg, index, value, inlineValue))
+      if (value !== undefined) index += 1
+      continue
+    }
+    if (parseArgsIsShortGroup(arg, options)) {
+      const expanded = []
+      for (let at = 1; at < arg.length; at += 1) {
+        const short = arg[at]
+        if (parseArgsOptionOf(options, parseArgsLongFor(options, short))?.type !== 'string' || at === arg.length - 1) {
+          expanded.push('-' + short)
+        } else {
+          expanded.push('-' + arg.slice(at))
+          break
+        }
+      }
+      remaining.unshift(...expanded)
+      groupCount = expanded.length
+      continue
+    }
+    if (parseArgsIsShortValue(arg, options)) {
+      tokens.push(parseArgsToken(parseArgsLongFor(options, arg[1]), '-' + arg[1], index, arg.slice(2), true))
+      continue
+    }
+    if (arg.length > 2 && arg.startsWith('--') && !arg.includes('=')) {
+      let name = arg.slice(2)
+      if (allowNegative && !parseArgsOptionOf(options, name) && name.startsWith('no-') && parseArgsOptionOf(options, name.slice(3))?.type === 'boolean') name = name.slice(3)
+      let value
+      let inlineValue
+      if (parseArgsOptionOf(options, name)?.type === 'string' && next !== undefined) {
+        value = remaining.shift()
+        inlineValue = false
+      }
+      tokens.push(parseArgsToken(name, arg, index, value, inlineValue))
+      if (value !== undefined) index += 1
+      continue
+    }
+    if (arg.length > 2 && arg.startsWith('--')) {
+      const equal = arg.indexOf('=')
+      const name = arg.slice(2, equal)
+      tokens.push(parseArgsToken(name, '--' + name, index, arg.slice(equal + 1), true))
+      continue
+    }
+    tokens.push({ kind: 'positional', index, value: arg })
+  }
+  return tokens
+}
+
+const parseArgs = (config = {}) => {
+  const args = config.args ?? []
+  const options = config.options ?? {}
+  const strict = config.strict ?? true
+  const allowPositionals = config.allowPositionals ?? !strict
+  const allowNegative = config.allowNegative ?? false
+  const tokens = parseArgsTokenize(args, options, allowNegative)
+  const values = {}
+  const positionals = []
+  for (const token of tokens) {
+    if (token.kind === 'option') {
+      const negated = token.rawName.startsWith('--no-') && token.name === token.rawName.slice(5)
+      const option = parseArgsOptionOf(options, token.name)
+      if (strict) {
+        const hint = allowPositionals ? ". To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- " + JSON.stringify(token.rawName) + "'" : ''
+        if (!option) throw parseArgsError('ERR_PARSE_ARGS_UNKNOWN_OPTION', "Unknown option '" + token.rawName + "'" + hint)
+        const label = (option.short ? '-' + option.short + ', ' : '') + '--' + token.name
+        if (option.type === 'string' && token.value === undefined) throw parseArgsError('ERR_PARSE_ARGS_INVALID_OPTION_VALUE', "Option '" + label + " <value>' argument missing")
+        if (option.type === 'string' && !token.inlineValue && token.value.length > 1 && token.value[0] === '-') {
+          const shortForm = token.rawName.length === 2 ? " or '-" + token.name[0] + "-XYZ'" : ''
+          throw parseArgsError('ERR_PARSE_ARGS_INVALID_OPTION_VALUE', "Option '" + token.rawName + "' argument is ambiguous.\nDid you forget to specify the option argument for '" + token.rawName + "'?\nTo specify an option argument starting with a dash use '--" + token.name + "=-XYZ'" + shortForm + '.')
+        }
+        if (option.type === 'boolean' && token.value !== undefined) throw parseArgsError('ERR_PARSE_ARGS_INVALID_OPTION_VALUE', "Option '" + label + "' does not take an argument")
+      }
+      if (token.name === '__proto__') continue
+      let value = token.value
+      if (negated) value = false
+      else if (value === undefined) value = true
+      if (option?.multiple) values[token.name] = [...(values[token.name] ?? []), value]
+      else values[token.name] = value
+    } else if (token.kind === 'positional') {
+      if (!allowPositionals) throw parseArgsError('ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL', "Unexpected argument '" + token.value + "'. This command does not take positional arguments")
+      positionals.push(token.value)
+    }
+  }
+  for (const name of Object.keys(options)) {
+    if (options[name].default !== undefined && values[name] === undefined) values[name] = options[name].default
+  }
+  const result = { values, positionals }
+  if (config.tokens) result.tokens = tokens
+  return result
+}
+
+const util = { TextDecoder, inspect, isDeepStrictEqual, parseArgs, parseEnv, promisify }
 
 const utilTypes = { isPromise: (value) => value instanceof Promise }
 
