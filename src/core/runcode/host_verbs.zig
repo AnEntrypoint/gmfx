@@ -1289,7 +1289,7 @@ fn fsRead(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const io = io_mod.getIo();
     var file = try std.Io.Dir.cwd().openFile(io, path, .{});
     defer file.close(io);
-    const bytes = try io_mod.readFileToEnd(alloc, &file, max_file_bytes);
+    const bytes = try readToEndOfStream(alloc, &file, max_file_bytes);
     defer alloc.free(bytes);
     const encoded = try encodeBase64(alloc, bytes);
     defer alloc.free(encoded);
@@ -1495,13 +1495,18 @@ fn readIpv6Table(alloc: Allocator) ![]u8 {
     const io = io_mod.getIo();
     var file = try std.Io.Dir.cwd().openFile(io, ipv6_table_path, .{});
     defer file.close(io);
+    return readToEndOfStream(alloc, &file, max_ipv6_table_bytes);
+}
+
+/// Reads until end of stream. Procfs files report size 0, so a size-based read stops at once.
+fn readToEndOfStream(alloc: Allocator, file: *std.Io.File, max_bytes: usize) ![]u8 {
     var content: std.ArrayList(u8) = .empty;
     errdefer content.deinit(alloc);
     var chunk: [4096]u8 = undefined;
     while (true) {
         const read_len = try std.posix.read(file.handle, &chunk);
         if (read_len == 0) break;
-        if (content.items.len + read_len > max_ipv6_table_bytes) return error.FileTooBig;
+        if (content.items.len + read_len > max_bytes) return error.FileTooBig;
         try content.appendSlice(alloc, chunk[0..read_len]);
     }
     return content.toOwnedSlice(alloc);
