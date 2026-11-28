@@ -1132,6 +1132,8 @@ const normalizeExecArgs = (args, options) => (Array.isArray(args) ? { argv: args
 
 const commandLine = (file, argv) => [file, ...argv].join(' ')
 
+const shellInvocation = (file, argv, options) => (options.shell ? [typeof options.shell === 'string' ? options.shell : '/bin/sh', ['-c', commandLine(file, argv)]] : [file, argv])
+
 const commandFailure = (file, argv, result, options) => {
   const stdout = decodeOutput(result.stdout, outputEncoding(options, 'utf8'))
   const stderr = decodeOutput(result.stderr, outputEncoding(options, 'utf8'))
@@ -1183,7 +1185,8 @@ const execFile = (file, ...rest) => {
   let stderr
   let result
   try {
-    result = runCommand(file, argv, options)
+    const [command, commandArgs] = shellInvocation(file, argv, options)
+    result = runCommand(command, commandArgs, options)
   } catch (error) {
     if (error.code === 'ENOTDIR') throw Object.assign(spawnFailure(file, argv, 'ENOTDIR'), { message: 'spawn ENOTDIR' })
     failure = spawnFailure(file, argv, error.code ?? 'EFXHOST')
@@ -1263,7 +1266,8 @@ class ChildProcess extends FxEmitter {
 }
 
 const spawnStreams = (file, args = [], options = {}) => {
-  const request = { file: String(file), args: args.map(String) }
+  const [command, commandArgs] = shellInvocation(file, args.map(String), options)
+  const request = { file: String(command), args: commandArgs.map(String) }
   if (options.cwd !== undefined) request.cwd = String(options.cwd)
   if (options.env !== undefined) request.env_json = JSON.stringify(envRecord(options.env))
   const reply = globalThis.gm.proc_spawn(request)
