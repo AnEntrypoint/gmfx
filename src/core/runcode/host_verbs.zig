@@ -1815,6 +1815,56 @@ fn randomBytes(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     return encode(alloc, .{ .ok = true, .base64 = encoded });
 }
 
+const Md4 = struct {
+    pub const digest_length = 16;
+
+    fn compress(state: *[4]u32, block: *const [64]u8) void {
+        var x: [16]u32 = undefined;
+        for (0..16) |index| x[index] = std.mem.readInt(u32, block[index * 4 ..][0..4], .little);
+        var v = state.*;
+        const round1 = [_]u5{ 3, 7, 11, 19 };
+        const round2 = [_]u5{ 3, 5, 9, 13 };
+        const round3 = [_]u5{ 3, 9, 11, 15 };
+        const order2 = [_]usize{ 0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15 };
+        const order3 = [_]usize{ 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 };
+        for (0..16) |step| {
+            const f = (v[1] & v[2]) | (~v[1] & v[3]);
+            v[0] = std.math.rotl(u32, v[0] +% f +% x[step], round1[step % 4]);
+            const rotated = [4]u32{ v[3], v[0], v[1], v[2] };
+            v = rotated;
+        }
+        for (0..16) |step| {
+            const f = (v[1] & v[2]) | (v[1] & v[3]) | (v[2] & v[3]);
+            v[0] = std.math.rotl(u32, v[0] +% f +% x[order2[step]] +% 0x5A827999, round2[step % 4]);
+            const rotated = [4]u32{ v[3], v[0], v[1], v[2] };
+            v = rotated;
+        }
+        for (0..16) |step| {
+            const f = v[1] ^ v[2] ^ v[3];
+            v[0] = std.math.rotl(u32, v[0] +% f +% x[order3[step]] +% 0x6ED9EBA1, round3[step % 4]);
+            const rotated = [4]u32{ v[3], v[0], v[1], v[2] };
+            v = rotated;
+        }
+        for (0..4) |index| state[index] +%= v[index];
+    }
+
+    pub fn hash(bytes: []const u8, out: *[digest_length]u8, options: anytype) void {
+        _ = options;
+        var state = [4]u32{ 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476 };
+        var offset: usize = 0;
+        while (offset + 64 <= bytes.len) : (offset += 64) compress(&state, bytes[offset..][0..64]);
+        var tail = std.mem.zeroes([128]u8);
+        const rest = bytes.len - offset;
+        for (bytes[offset..], 0..) |byte, index| tail[index] = byte;
+        tail[rest] = 0x80;
+        const tail_len: usize = if (rest < 56) 64 else 128;
+        std.mem.writeInt(u64, tail[tail_len - 8 ..][0..8], @as(u64, bytes.len) *% 8, .little);
+        compress(&state, tail[0..64]);
+        if (tail_len == 128) compress(&state, tail[64..128]);
+        for (state, 0..) |word, index| std.mem.writeInt(u32, out[index * 4 ..][0..4], word, .little);
+    }
+};
+
 fn hashDigest(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const algorithm = stringArg(args, "algorithm") orelse return invalidField(alloc, "algorithm", "a string");
     const decoded = try base64Arg(alloc, args);
@@ -1827,6 +1877,7 @@ fn hashDigest(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     if (std.mem.eql(u8, algorithm, "sha256")) return digestReply(alloc, std.crypto.hash.sha2.Sha256, bytes);
     if (std.mem.eql(u8, algorithm, "sha512")) return digestReply(alloc, std.crypto.hash.sha2.Sha512, bytes);
     if (std.mem.eql(u8, algorithm, "md5")) return digestReply(alloc, std.crypto.hash.Md5, bytes);
+    if (std.mem.eql(u8, algorithm, "md4")) return digestReply(alloc, Md4, bytes);
     if (std.mem.eql(u8, algorithm, "sha224")) return digestReply(alloc, std.crypto.hash.sha2.Sha224, bytes);
     if (std.mem.eql(u8, algorithm, "sha384")) return digestReply(alloc, std.crypto.hash.sha2.Sha384, bytes);
     if (std.mem.eql(u8, algorithm, "sha512-224")) return digestReply(alloc, std.crypto.hash.sha2.Sha512_224, bytes);
