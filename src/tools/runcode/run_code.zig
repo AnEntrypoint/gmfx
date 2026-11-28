@@ -37,7 +37,7 @@ pub fn describe(comptime tools: []const tool_dispatch.Tool) []const u8 {
             first = false;
         }
         for (host_verbs.names) |name| {
-            if (std.mem.startsWith(u8, name, "proc_") or std.mem.startsWith(u8, name, "dns_") or std.mem.startsWith(u8, name, "watch_") or std.mem.startsWith(u8, name, "serve_") or std.mem.startsWith(u8, name, "ws_") or std.mem.startsWith(u8, name, "pty_") or std.mem.startsWith(u8, name, "sqlite_") or std.mem.eql(u8, name, "net_interfaces")) continue;
+            if (std.mem.startsWith(u8, name, "proc_") or std.mem.startsWith(u8, name, "dns_") or std.mem.startsWith(u8, name, "watch_") or std.mem.startsWith(u8, name, "serve_") or std.mem.startsWith(u8, name, "ws_") or std.mem.startsWith(u8, name, "pty_") or std.mem.startsWith(u8, name, "sqlite_") or std.mem.startsWith(u8, name, "signal_") or std.mem.eql(u8, name, "net_interfaces")) continue;
             text = text ++ "," ++ name;
         }
         const final = text ++ ".";
