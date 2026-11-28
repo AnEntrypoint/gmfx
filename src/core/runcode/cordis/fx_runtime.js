@@ -3140,9 +3140,9 @@ const sessionPersistence = (options = {}) => {
   const headerOf = (key) => {
     const rows = all('SELECT header FROM sessions WHERE id = ' + sqlText(key))
     if (rows.length === 0) throw new Error('no such session: ' + key)
-    return JSON.parse(rows[0].header)
+    return JSON.parse(rows[0][0])
   }
-  const nextSeq = (key) => Number(all('SELECT COALESCE(MAX(seq) + 1, 0) AS next FROM events WHERE id = ' + sqlText(key))[0].next)
+  const nextSeq = (key) => Number(all('SELECT COALESCE(MAX(seq) + 1, 0) AS next FROM events WHERE id = ' + sqlText(key))[0][0])
   const insertAll = (key, events) => {
     exec('BEGIN IMMEDIATE')
     try {
@@ -3156,7 +3156,7 @@ const sessionPersistence = (options = {}) => {
       throw error
     }
   }
-  const rowsOf = (key, from) => all('SELECT seq, time, type, data FROM events WHERE id = ' + sqlText(key) + ' AND seq >= ' + Number(from) + ' ORDER BY seq').map((row) => ({ seq: Number(row.seq), time: Number(row.time), type: row.type, data: JSON.parse(row.data) }))
+  const rowsOf = (key, from) => all('SELECT seq, time, type, data FROM events WHERE id = ' + sqlText(key) + ' AND seq >= ' + Number(from) + ' ORDER BY seq').map((row) => ({ seq: Number(row[0]), time: Number(row[1]), type: row[2], data: JSON.parse(row[3]) }))
   const closeOpenTurn = (key, events) => {
     let open = null
     for (const event of events) {
@@ -3189,8 +3189,8 @@ const sessionPersistence = (options = {}) => {
       const meta = headerOf(key)
       return { meta, events: rowsOf(key, seq) }
     },
-    list: () => all('SELECT header FROM sessions WHERE id IN (SELECT DISTINCT id FROM events) ORDER BY id').map((row) => JSON.parse(row.header)),
-    listSnapshots: () => all('SELECT header, revision FROM sessions WHERE id IN (SELECT DISTINCT id FROM events) ORDER BY id').map((row) => ({ header: JSON.parse(row.header), revision: Number(row.revision) })),
+    list: () => all('SELECT header FROM sessions WHERE id IN (SELECT DISTINCT id FROM events) ORDER BY id').map((row) => JSON.parse(row[0])),
+    listSnapshots: () => all('SELECT header, revision FROM sessions WHERE id IN (SELECT DISTINCT id FROM events) ORDER BY id').map((row) => ({ header: JSON.parse(row[0]), revision: Number(row[1]) })),
     close: () => host('sqlite_close', { id }),
   }
 }
