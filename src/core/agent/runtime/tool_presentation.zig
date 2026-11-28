@@ -1234,7 +1234,6 @@ pub fn finishExecutedToolStatus(
 ) !void {
     if (!status_started) return;
     const inner_rows = try run_code_presentation.resultRows(arena, call, result.model_output, result.status == .success);
-    debug_trace.logf("tool", "finish_status call={s} status={s} inner_rows={d} model_output={s}", .{ call.name, @tagName(result.status), inner_rows.len, result.model_output[0..@min(result.model_output.len, 240)] });
     const activity_kind = activityKindForCall(arena, hooks.tool_registry, call);
     const command_decision = if (activity_kind == .command)
         try commandOutcomeDecision(arena, result_memory.command_process_presentation)
@@ -1669,10 +1668,14 @@ pub fn finishCommittedFileStatus(
     advertised_dynamic_tool_names: []const []const u8,
 ) !void {
     if (!status_started) return;
+    const described = if (run_code_presentation.isRunCode(call.name))
+        try run_code_presentation.leadingCall(arena, hooks.tool_registry, call) orelse call
+    else
+        call;
     const base_line = try hooks.describe_tool_action_completed(
         hooks.ctx,
         arena,
-        call,
+        described,
         display_target,
         advertised_dynamic_tool_names,
     );
