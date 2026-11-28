@@ -4387,7 +4387,8 @@ pub fn Runtime(comptime App: type) type {
             const presentation = result.committed_file_presentation orelse return false;
             if (result.status != .success or
                 (!std.mem.eql(u8, result.tool_name, "write_file") and
-                    !std.mem.eql(u8, result.tool_name, "edit_file")) or
+                    !std.mem.eql(u8, result.tool_name, "edit_file") and
+                    !run_code_presentation.isRunCode(result.tool_name)) or
                 !@hasDecl(App, "preparePersistedFileDiff") or
                 !@hasDecl(App, "registerAndEmitDiffBlock")) return false;
 
@@ -4420,10 +4421,14 @@ pub fn Runtime(comptime App: type) type {
 
             var action_arena = std.heap.ArenaAllocator.init(app.alloc);
             defer mem_utils.deinit_arena(action_arena);
+            const described = if (run_code_presentation.isRunCode(call.name))
+                try run_code_presentation.leadingCall(action_arena.allocator(), app.toolAdvertisementSet(agent).registry, call) orelse call
+            else
+                call;
             const base = try app.describeToolActionCompletedWithAdvertised(
                 agent,
                 action_arena.allocator(),
-                call,
+                described,
                 presentation.path,
                 &.{},
             );
