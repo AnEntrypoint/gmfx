@@ -2920,6 +2920,12 @@ const processObject = {
   exitCode: undefined,
   cwd: () => processInfo().cwd,
   exit: (code = 0) => globalThis.__fxExitNow(code),
+  kill: (pid, signal = 'SIGTERM') => {
+    const name = String(signal).replace(/^SIG/, '')
+    const result = childProcess.spawnSync('kill', ['-s', name, String(pid)])
+    if (result.status !== 0) throw Object.assign(nodeError('ESRCH', 'kill ESRCH'), { errno: -3, syscall: 'kill' })
+    return true
+  },
   nextTick: (callback, ...args) => {
     Promise.resolve().then(() => callback(...args))
   },
