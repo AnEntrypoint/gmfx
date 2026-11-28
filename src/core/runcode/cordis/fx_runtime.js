@@ -1575,7 +1575,7 @@ const inflateBits = (input) => {
   let count = 0
   const bits = (need) => {
     while (count < need) {
-      if (pos >= input.length) throw new Error('zlib: unexpected end of input')
+      if (pos >= input.length) throw zlibError('Z_BUF_ERROR', 'unexpected end of file')
       buffer |= input[pos] << count
       pos += 1
       count += 8
@@ -1683,23 +1683,45 @@ const gzipBytes = (bytes) => concatBytes([
 const skipZeroTerminated = (input, from) => {
   let at = from
   while (at < input.length && input[at] !== 0) at += 1
-  if (at >= input.length) throw new Error('zlib: unexpected end of input')
+  if (at >= input.length) throw zlibError('Z_BUF_ERROR', 'unexpected end of file')
   return at + 1
 }
 
-const gunzipBytes = (input) => {
-  if (input[0] !== 0x1f || input[1] !== 0x8b) throw new Error('incorrect header check')
-  const flags = input[3]
-  let pos = 10
+const zlibError = (code, message) => {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+const gunzipMember = (input, start) => {
+  if (input[start] !== 0x1f || input[start + 1] !== 0x8b) throw zlibError('Z_DATA_ERROR', 'incorrect header check')
+  if (input.length - start < 10) throw zlibError('Z_BUF_ERROR', 'unexpected end of file')
+  const flags = input[start + 3]
+  let pos = start + 10
   if (flags & 4) pos += 2 + (input[pos] | (input[pos + 1] << 8))
   if (flags & 8) pos = skipZeroTerminated(input, pos)
   if (flags & 16) pos = skipZeroTerminated(input, pos)
   if (flags & 2) pos += 2
   const result = inflateRaw(input.subarray(pos))
   const trailer = pos + result.consumed
-  const expected = (input[trailer] | (input[trailer + 1] << 8) | (input[trailer + 2] << 16) | (input[trailer + 3] << 24)) >>> 0
-  if (expected !== crc32(result.data)) throw new Error('zlib: gzip CRC mismatch')
-  return result.data
+  if (trailer + 8 > input.length) throw zlibError('Z_BUF_ERROR', 'unexpected end of file')
+  const crc = (input[trailer] | (input[trailer + 1] << 8) | (input[trailer + 2] << 16) | (input[trailer + 3] << 24)) >>> 0
+  const size = (input[trailer + 4] | (input[trailer + 5] << 8) | (input[trailer + 6] << 16) | (input[trailer + 7] << 24)) >>> 0
+  if (crc !== crc32(result.data)) throw zlibError('Z_DATA_ERROR', 'incorrect data check')
+  if (size !== result.data.length >>> 0) throw zlibError('Z_DATA_ERROR', 'incorrect length check')
+  return { data: result.data, end: trailer + 8 }
+}
+
+const gunzipBytes = (input) => {
+  if (input.length === 0) throw zlibError('Z_BUF_ERROR', 'unexpected end of file')
+  const parts = []
+  let pos = 0
+  while (pos < input.length) {
+    const member = gunzipMember(input, pos)
+    parts.push(member.data)
+    pos = member.end
+  }
+  return concatBytes(parts)
 }
 
 const deflateBytes = (bytes) => concatBytes([new Uint8Array([0x78, 0x01]), storedDeflate(bytes), u32be(adler32(bytes))])
@@ -1713,14 +1735,20 @@ const inflateBytes = (input) => {
   return result.data
 }
 
-const asInput = (data) => (typeof data === 'string' ? encodeUtf8(data) : toBytes(data, undefined))
+const asInput = (data) => {
+  if (typeof data === 'string') return encodeUtf8(data)
+  if (data instanceof ArrayBuffer) return new Uint8Array(data)
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "chunk" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received ' + receivedText(data))
+}
 
 const zlibAsync = (transform) => (data, ...rest) => {
   const callback = rest[rest.length - 1]
+  const input = asInput(data)
   queueMicrotask(() => {
     let output
     try {
-      output = wrapBytes(transform(asInput(data)))
+      output = wrapBytes(transform(input))
     } catch (error) {
       callback(error)
       return
