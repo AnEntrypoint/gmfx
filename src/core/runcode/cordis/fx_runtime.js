@@ -12,10 +12,21 @@ const fail = (name) => function unsupportedFunction() {
 
 const hostErrnoCodes = { FileNotFound: 'ENOENT', NotDir: 'ENOTDIR', AccessDenied: 'EACCES', PermissionDenied: 'EACCES', IsDir: 'EISDIR', PathAlreadyExists: 'EEXIST' }
 
+const fsErrnoText = { ENOENT: 'no such file or directory', EEXIST: 'file already exists', ENOTDIR: 'not a directory', EISDIR: 'illegal operation on a directory', EACCES: 'permission denied' }
+const fsVerbSyscalls = { fs_read: 'open', fs_stat: 'stat', fs_readdir: 'scandir', fs_mkdir: 'mkdir' }
+const hostFailure = (name, args, reply) => {
+  const code = reply.code ?? hostErrnoCodes[reply.error] ?? 'EFXHOST'
+  const syscall = fsVerbSyscalls[name]
+  if (fsErrnoText[code] === undefined || syscall === undefined || args?.path === undefined) return coded(code, reply.error ?? name + ' failed')
+  const error = coded(code, code + ': ' + fsErrnoText[code] + ', ' + syscall + " '" + args.path + "'")
+  error.syscall = syscall
+  error.path = args.path
+  return error
+}
 const host = (name, args) => {
   const reply = globalThis.gm[name](args ?? {})
   if (reply === null || typeof reply !== 'object') throw coded('EFXHOST', 'fx host verb ' + name + ' returned no reply')
-  if (reply.ok === false) throw coded(reply.code ?? hostErrnoCodes[reply.error] ?? 'EFXHOST', reply.error ?? name + ' failed')
+  if (reply.ok === false) throw hostFailure(name, args, reply)
   return reply
 }
 
@@ -424,8 +435,13 @@ const writeFileSync = (value, data, options) => {
 
 const openSync = (value, flags = 'r') => {
   const target = pathOf(value)
-  if (flags.startsWith('r')) host('fs_stat', { path: target, follow: true })
-  else host('fs_write', { path: target, base64: '', append: flags.startsWith('a') })
+  if (flags.startsWith('r')) {
+    try {
+      host('fs_stat', { path: target, follow: true })
+    } catch (error) {
+      throw openFailure(error.code, target)
+    }
+  } else host('fs_write', { path: target, base64: '', append: flags.startsWith('a') })
   const fd = nextFd
   nextFd += 1
   fds.set(fd, { path: target, position: 0, append: flags.startsWith('a') })
@@ -711,7 +727,7 @@ const fs = {
   linkSync: (existing, value) => host("fs_link", { existing: pathOf(existing), path: pathOf(value) }),
   truncateSync: (value, length = 0) => host("fs_truncate", { path: pathOf(value), length }),
   accessSync: (value) => {
-    if (!existsSync(value)) throw coded('ENOENT', 'ENOENT: no such file or directory, access ' + pathOf(value))
+    if (!existsSync(value)) throw coded('ENOENT', "ENOENT: no such file or directory, access '" + pathOf(value) + "'")
   },
   closeSync,
   constants: fsConstants,
