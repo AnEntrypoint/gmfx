@@ -419,6 +419,30 @@ pub fn runCli(alloc: std.mem.Allocator, args: []const []const u8, ctx_base: tool
     return runcode.runCommand(alloc, forwarded.items, verbs);
 }
 
+pub fn rollbackCli(alloc: std.mem.Allocator, file: []const u8, ctx_base: tool_dispatch.DispatchContext, registry: tool_dispatch.Registry) !u8 {
+    const io_mod = @import("../../core/shared/io.zig");
+    var ctx = ctx_base;
+    var managed = managed_execution.Runtime.init(alloc);
+    defer managed.deinit();
+    ctx.managed_executions = &managed;
+    const absolute = try io_mod.realpathAlloc(alloc, file);
+    defer alloc.free(absolute);
+    var quoted: std.Io.Writer.Allocating = .init(alloc);
+    defer quoted.deinit();
+    try std.json.Stringify.value(absolute, .{}, &quoted.writer);
+    const body = try std.fmt.allocPrint(alloc, "import {{ rollback }} from 'fx:host/loader'\nconst back = await rollback({s})\nreturn {{ revision: back.revision, value: back.module.value ?? null }}\n", .{quoted.written()});
+    defer alloc.free(body);
+    const catalog = try buildCatalog(alloc, ctx, registry, true);
+    defer alloc.free(catalog);
+    var bridge: Bridge = .{ .ctx = ctx, .registry = registry };
+    const verbs: runcode.Verbs = .{ .context = &bridge, .catalog = catalog, .invoke = invokeVerb };
+    const root = std.fs.path.dirname(absolute) orelse "/";
+    const outcome = try runcode.execute(alloc, body, .{ .format = .esm, .deadline_ms = 60_000, .body_path = absolute, .root = root, .verbs = verbs });
+    defer outcome.deinit(alloc);
+    try runcode.writeReport(alloc, outcome);
+    return if (outcome.ok) 0 else 1;
+}
+
 pub fn call(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput, registry: tool_dispatch.Registry) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const input = erased.as(Input);
     const catalog = buildCatalog(ctx.allocator, ctx, registry, bodyNeedsMcpCatalog(input.body)) catch return .{ .failure = try ctx.allocator.dupe(u8, "run_code could not list its verbs") };

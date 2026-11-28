@@ -3902,6 +3902,20 @@ fn mainC(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) !v
         try command_runner.runForegroundSessionBootstrap(cli_args);
         return;
     }
+    if ((cli_args.len == 3 or (cli_args.len == 5 and std.mem.eql(u8, cli_args[3], "--permission-mode"))) and run_code_tool.isCliToken(cli_args[0]) and std.mem.eql(u8, cli_args[1], "rollback")) {
+        io_mod.setRawEnviron(raw_env);
+        const process_args = argsFromRaw(raw_args);
+        var threaded = std.Io.Threaded.init(processAllocator(), processIoOptions(process_args, environBlockFromRaw(raw_env)));
+        defer threaded.deinit();
+        io_mod.setIo(threaded.io());
+        const alloc = processAllocator();
+        const cwd = try io_mod.realpathAlloc(alloc, ".");
+        var ctx: tool_dispatch_mod.DispatchContext = .{ .allocator = alloc, .execution_authority = .ordinary, .workspace_root = cwd };
+        if (cli_args.len == 5) ctx.permission_mode = std.meta.stringToEnum(@TypeOf(ctx.permission_mode), cli_args[4]) orelse return error.UsageRunCode;
+        const code = try run_code_tool.rollbackCli(alloc, cli_args[2], ctx, builtin_tools.registry_with_tower);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
     if (cli_args.len >= 2 and run_code_tool.isCliToken(cli_args[0])) {
         io_mod.setRawEnviron(raw_env);
         const process_args = argsFromRaw(raw_args);

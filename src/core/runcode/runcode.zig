@@ -413,6 +413,13 @@ fn startBackground(alloc: std.mem.Allocator, absolute: []const u8, task: []const
     });
 }
 
+pub fn writeReport(alloc: std.mem.Allocator, outcome: Outcome) !void {
+    const report = try reportJson(alloc, outcome, null);
+    defer alloc.free(report);
+    try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), report);
+    try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), "\n");
+}
+
 pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Verbs) !u8 {
     const cli = try parseCliArgs(args);
     if (cli.task_output) |task| return printTask(alloc, task);

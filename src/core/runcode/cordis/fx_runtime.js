@@ -2449,6 +2449,19 @@ const agentModule = { core: agentCore, persistence: agentPersistence }
 
 const loaderState = { lastGood: new Map(), hot: new Map(), rev: new Map(), reloads: 0, history: new Map() }
 
+const historyFile = (target) => target.slice(0, target.lastIndexOf('/')) + '/.fx-history.json'
+const readHistoryFile = (file) => (host('fs_exists', { path: file }).exists === true ? JSON.parse(readText(file)) : {})
+const historyOf = (target) => {
+  if (!loaderState.history.has(target)) loaderState.history.set(target, readHistoryFile(historyFile(target))[target] ?? [])
+  return loaderState.history.get(target)
+}
+const saveHistory = (target) => {
+  const file = historyFile(target)
+  const all = readHistoryFile(file)
+  all[target] = loaderState.history.get(target)
+  host('fs_write', { path: file, base64: encodeBase64(toBytes(JSON.stringify(all), 'utf8')), append: false })
+}
+
 const hashText = (text) => {
   let hash = 5381
   for (let index = 0; index < text.length; index += 1) hash = ((hash * 33) ^ text.charCodeAt(index)) >>> 0
@@ -2521,9 +2534,9 @@ const reloadModule = async (path) => {
     loaderState.lastGood.set(target, mod)
     loaderState.rev.set(target, revision)
     loaderState.reloads += 1
-    const past = loaderState.history.get(target) ?? []
+    const past = historyOf(target)
     past.push(revision)
-    loaderState.history.set(target, past)
+    saveHistory(target)
     for (const callback of entry.acceptors) callback(mod)
     return mod
   } catch (error) {
@@ -2575,9 +2588,10 @@ const currentModule = async (entry) => {
 
 const rollbackModule = async (path) => {
   const target = String(path)
-  const past = loaderState.history.get(target) ?? []
+  const past = historyOf(target)
   if (past.length < 2) throw new Error('nothing to roll back to for ' + target)
   past.pop()
+  saveHistory(target)
   const previous = past[past.length - 1]
   const mod = await import(previous)
   loaderState.lastGood.set(target, mod)
