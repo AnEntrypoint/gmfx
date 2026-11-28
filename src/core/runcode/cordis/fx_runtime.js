@@ -1690,7 +1690,13 @@ const spawnStreams = (file, args = [], options = {}) => {
   })
   return child
 }
-const childProcess = { execFile, execFileSync, spawn: spawnStreams, spawnSync }
+const exec = (command, ...rest) => {
+  const callback = typeof rest[rest.length - 1] === 'function' ? rest.pop() : undefined
+  const options = typeof rest[0] === 'object' && rest[0] !== null ? rest[0] : {}
+  const shellOptions = { ...options, shell: true }
+  return callback === undefined ? execFile(String(command), [], shellOptions) : execFile(String(command), [], shellOptions, callback)
+}
+const childProcess = { exec, execFile, execFileSync, spawn: spawnStreams, spawnSync }
 
 const networkInterfaces = () => {
   const out = {}
@@ -1749,6 +1755,10 @@ const createContext = (sandbox = {}) => sandbox
 class Script {
   constructor(code) {
     this.code = String(code)
+    new Function(this.code)
+  }
+  runInThisContext() {
+    return (0, eval)(this.code)
   }
   runInContext(sandbox) {
     return runInContext(this.code, sandbox)
