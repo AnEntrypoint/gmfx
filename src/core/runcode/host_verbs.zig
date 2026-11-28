@@ -44,6 +44,9 @@ pub const verbs = [_]Verb{
                 .{ .name = "args", .json_type = .array },
                 .{ .name = "cwd", .json_type = .string },
                 .{ .name = "env_json", .json_type = .string },
+                .{ .name = "stdin_mode", .json_type = .string },
+                .{ .name = "stdout_mode", .json_type = .string },
+                .{ .name = "stderr_mode", .json_type = .string },
             },
             .required = &.{"file"},
         },
@@ -864,6 +867,13 @@ fn pipeReader(proc: *Proc, is_stderr: bool) void {
     if (is_stderr) proc.err_eof = true else proc.out_eof = true;
 }
 
+fn stdioModeArg(args: std.json.ObjectMap, key: []const u8) std.process.SpawnOptions.StdIo {
+    const mode = stringArg(args, key) orelse return .pipe;
+    if (std.mem.eql(u8, mode, "inherit")) return .inherit;
+    if (std.mem.eql(u8, mode, "ignore")) return .ignore;
+    return .pipe;
+}
+
 fn procSpawn(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     const file = stringArg(args, "file") orelse return invalidField(alloc, "file", "a string");
     var argv: std.ArrayList([]const u8) = .empty;
@@ -897,19 +907,22 @@ fn procSpawn(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         break :blk true;
     } else false;
     const env_ptr: ?*const std.process.Environ.Map = if (has_env) &environment else null;
+    const stdin_mode = stdioModeArg(args, "stdin_mode");
+    const stdout_mode = stdioModeArg(args, "stdout_mode");
+    const stderr_mode = stdioModeArg(args, "stderr_mode");
     const cwd_text = stringArg(args, "cwd");
     const child = (if (cwd_text) |dir| std.process.spawn(io_mod.getIo(), .{
         .argv = argv.items,
-        .stdin = .pipe,
-        .stdout = .pipe,
-        .stderr = .pipe,
+        .stdin = stdin_mode,
+        .stdout = stdout_mode,
+        .stderr = stderr_mode,
         .cwd = .{ .path = dir },
         .environ_map = env_ptr,
     }) else std.process.spawn(io_mod.getIo(), .{
         .argv = argv.items,
-        .stdin = .pipe,
-        .stdout = .pipe,
-        .stderr = .pipe,
+        .stdin = stdin_mode,
+        .stdout = stdout_mode,
+        .stderr = stderr_mode,
         .environ_map = env_ptr,
     })) catch |err| return encode(alloc, .{ .ok = false, .@"error" = @errorName(err) });
     const proc = try proc_store.create(Proc);

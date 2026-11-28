@@ -1327,15 +1327,19 @@ class ChildProcess extends FxEmitter {
   }
   async run() {
     const deadline = this.timeoutMs > 0 ? Date.now() + this.timeoutMs : null
-    await Promise.all([this.pump(this.stdout, 'stdout', deadline), this.pump(this.stderr, 'stderr', deadline)])
+    const pumps = []
+    if (this.stdout !== null) pumps.push(this.pump(this.stdout, 'stdout', deadline))
+    if (this.stderr !== null) pumps.push(this.pump(this.stderr, 'stderr', deadline))
+    await Promise.all(pumps)
     const reply = host('proc_wait', { id: this.procId })
     this.exitCode = reply.code ?? null
     this.signalCode = signalNameOf(reply.signal)
     this.emit('exit', this.exitCode, this.signalCode)
-    for (const stream of [this.stdout, this.stderr]) {
+    const streams = [this.stdout, this.stderr].filter((stream) => stream !== null)
+    for (const stream of streams) {
       if (!stream.flowing) stream.resume()
     }
-    await Promise.all([streamClosed(this.stdout), streamClosed(this.stderr)])
+    await Promise.all(streams.map(streamClosed))
     this.emit('close', this.exitCode, this.signalCode)
   }
 }
@@ -1343,6 +1347,10 @@ class ChildProcess extends FxEmitter {
 const spawnStreams = (file, args = [], options = {}) => {
   const [command, commandArgs] = shellInvocation(file, args.map(String), options)
   const request = { file: String(command), args: commandArgs.map(String) }
+  const stdioModes = Array.isArray(options.stdio) ? options.stdio : [options.stdio ?? 'pipe', options.stdio ?? 'pipe', options.stdio ?? 'pipe']
+  request.stdin_mode = stdioModes[0] ?? 'pipe'
+  request.stdout_mode = stdioModes[1] ?? 'pipe'
+  request.stderr_mode = stdioModes[2] ?? 'pipe'
   if (options.cwd !== undefined) request.cwd = String(options.cwd)
   if (options.env !== undefined) request.env_json = JSON.stringify(envRecord(options.env))
   const reply = globalThis.gm.proc_spawn(request)
@@ -1358,6 +1366,9 @@ const spawnStreams = (file, args = [], options = {}) => {
   }
   child.pid = reply.pid
   child.procId = reply.id
+  if (request.stdin_mode !== 'pipe') child.stdin = null
+  if (request.stdout_mode !== 'pipe') child.stdout = null
+  if (request.stderr_mode !== 'pipe') child.stderr = null
   nextTick(() => {
     child.emit('spawn')
     child.run().catch((error) => child.emit('error', error))
