@@ -41,7 +41,7 @@ pub const table = [_]Row{
     provided("pty", "ptyModule", &.{"spawn"}),
     provided("sqlite", "sqliteModule", &.{"open"}),
     provided("fetch", "fetchModule", &.{"fetch"}),
-    provided("agent", "agentModule", &.{ "core", "persistence" }),
+    provided("agent", "agentModule", &.{ "core", "persistence", "agent" }),
     provided("ws", "wsModule", &.{"connect"}),
     provided("loader", "loaderModule", &.{ "reload", "hotFor", "watchGraph", "current", "reloadCount", "rollback" }),
     provided("fs", "fs", &.{ "accessSync", "closeSync", "constants", "copyFileSync", "createReadStream", "existsSync", "lstatSync", "mkdirSync", "mkdtempSync", "openSync", "readFileSync", "readSync", "readdirSync", "readlinkSync", "realpathSync", "renameSync", "rmSync", "statSync", "symlinkSync", "unlinkSync", "unwatchFile", "watchFile", "writeFileSync", "writeSync" }),

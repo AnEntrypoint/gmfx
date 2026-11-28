@@ -3036,7 +3036,93 @@ const agentCore = {
   },
 }
 
-const agentModule = { core: agentCore, persistence: agentPersistence }
+const askFlags = (options, session) => {
+  const args = ['ask', '--output-format', 'stream-json']
+  const value = (flag, item) => { if (item !== undefined && item !== null) args.push(flag, String(item)) }
+  value('--model', options.model)
+  value('--provider', options.provider)
+  value('--effort', options.effort)
+  value('--system', options.system)
+  value('--append-system-prompt', options.appendSystem)
+  value('--permission-mode', options.permissionMode)
+  value('--max-turns', options.maxTurns)
+  value('--timeout', options.timeout)
+  if (Array.isArray(options.tools)) args.push('--tools', options.tools.join(','))
+  if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) args.push('--allowed-tools', options.allowedTools.join(','))
+  if (Array.isArray(options.disallowedTools) && options.disallowedTools.length > 0) args.push('--disallowed-tools', options.disallowedTools.join(','))
+  if (options.bare === true) args.push('--bare')
+  if (options.save === false) args.push('--no-save')
+  if (session) args.push('--resume', session)
+  return args
+}
+
+const agentEventKind = (event) => {
+  if (event.type === 'error') return 'error'
+  if (event.role === 'meta') return event.type
+  return event.role
+}
+
+const agent = (options = {}) => {
+  const hooks = options.hooks ?? {}
+  const state = { session: options.session ?? null, running: null }
+  const call = (fn, payload) => (typeof fn === 'function' ? fn(payload) : undefined)
+  const deliver = (event, record) => {
+    record.events.push(event)
+    if (event.role === 'assistant' && Array.isArray(event.tool_calls)) {
+      for (const toolCall of event.tool_calls) call(hooks.beforeTool, { id: toolCall.id, name: toolCall.function.name, arguments: toolCall.function.arguments })
+    }
+    if (event.role === 'tool') call(hooks.afterTool, { id: event.tool_call_id, content: event.content })
+    if (event.role === 'assistant' && typeof event.content === 'string' && event.content !== '') record.text = event.content
+    if (event.role === 'meta' && event.type === 'session.resume_hint') state.session = event.session_id
+    if (event.type === 'error') record.error = event
+    call(options.onEvent, { kind: agentEventKind(event), event })
+  }
+  const prompt = (text) => {
+    const record = { text: '', events: [], error: null, session: state.session, exitCode: null }
+    call(hooks.turnStart, { prompt: String(text) })
+    const id = host('proc_spawn', { file: 'fx', args: [...askFlags(options, state.session), '--', String(text)], ...(options.cwd ? { cwd: options.cwd } : {}) }).id
+    state.running = id
+    let pending = ''
+    for (;;) {
+      const reply = host('proc_read', { id, stream: 'stdout' })
+      if (reply.eof) break
+      pending += fromBytes(decodeBase64(reply.body), 'utf8')
+      let cut = pending.indexOf('\n')
+      while (cut >= 0) {
+        const line = pending.slice(0, cut).trim()
+        pending = pending.slice(cut + 1)
+        if (line !== '') {
+          let event = null
+          try { event = JSON.parse(line) } catch (error) { event = null }
+          if (event) deliver(event, record)
+        }
+        cut = pending.indexOf('\n')
+      }
+    }
+    const tail = pending.trim()
+    if (tail !== '') {
+      let event = null
+      try { event = JSON.parse(tail) } catch (error) { event = null }
+      if (event) deliver(event, record)
+    }
+    const waited = host('proc_wait', { id })
+    state.running = null
+    record.exitCode = waited.code ?? waited.exit_code ?? null
+    record.session = state.session
+    call(hooks.turnEnd, record)
+    return record
+  }
+  const cancel = () => {
+    if (state.running !== null) host('proc_kill', { id: state.running })
+  }
+  return {
+    prompt,
+    cancel,
+    get session() { return state.session },
+  }
+}
+
+const agentModule = { core: agentCore, persistence: agentPersistence, agent }
 
 const loaderState = { lastGood: new Map(), hot: new Map(), rev: new Map(), reloads: 0, history: new Map() }
 
