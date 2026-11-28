@@ -1586,8 +1586,16 @@ const runInNewContext = (code, sandbox = {}) => runInContext(code, createContext
 const vm = { Script, createContext, runInContext, runInNewContext }
 
 const validateHeaderValue = (name, value) => {
-  if (value === undefined) throw new TypeError('Invalid value "undefined" for header "' + String(name) + '"')
-  if (/[\r\n\0]/.test(String(value))) throw new TypeError('Invalid character in header content ["' + String(name) + '"]')
+  if (value === undefined) {
+    const error = new TypeError('Invalid value "undefined" for header "' + String(name) + '"')
+    error.code = 'ERR_HTTP_INVALID_HEADER_VALUE'
+    throw error
+  }
+  if (/[^\t\x20-\x7e\x80-\xff]/.test(String(value))) {
+    const error = new TypeError('Invalid character in header content ["' + String(name) + '"]')
+    error.code = 'ERR_INVALID_CHAR'
+    throw error
+  }
 }
 
 const createServer = (handler = () => {}) => {
