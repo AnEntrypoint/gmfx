@@ -1370,13 +1370,20 @@ const gzipBytes = (bytes) => concatBytes([
   u32le(bytes.length >>> 0),
 ])
 
+const skipZeroTerminated = (input, from) => {
+  let at = from
+  while (at < input.length && input[at] !== 0) at += 1
+  if (at >= input.length) throw new Error('zlib: unexpected end of input')
+  return at + 1
+}
+
 const gunzipBytes = (input) => {
   if (input[0] !== 0x1f || input[1] !== 0x8b) throw new Error('zlib: not a gzip stream')
   const flags = input[3]
   let pos = 10
   if (flags & 4) pos += 2 + (input[pos] | (input[pos + 1] << 8))
-  if (flags & 8) while (input[pos++] !== 0);
-  if (flags & 16) while (input[pos++] !== 0);
+  if (flags & 8) pos = skipZeroTerminated(input, pos)
+  if (flags & 16) pos = skipZeroTerminated(input, pos)
   if (flags & 2) pos += 2
   const result = inflateRaw(input.subarray(pos))
   const trailer = pos + result.consumed
