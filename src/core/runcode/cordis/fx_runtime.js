@@ -1401,7 +1401,7 @@ const skipZeroTerminated = (input, from) => {
 }
 
 const gunzipBytes = (input) => {
-  if (input[0] !== 0x1f || input[1] !== 0x8b) throw new Error('zlib: not a gzip stream')
+  if (input[0] !== 0x1f || input[1] !== 0x8b) throw new Error('incorrect header check')
   const flags = input[3]
   let pos = 10
   if (flags & 4) pos += 2 + (input[pos] | (input[pos + 1] << 8))
