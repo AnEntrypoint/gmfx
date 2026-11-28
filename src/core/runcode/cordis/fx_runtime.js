@@ -1048,12 +1048,18 @@ const utilTypes = { isPromise: (value) => value instanceof Promise }
 
 const moduleApi = { createRequire: fail('module.createRequire'), stripTypeScriptTypes: fail('module.stripTypeScriptTypes') }
 
+const envRecord = (env) => Object.fromEntries(Object.entries(env).map(([key, value]) => [key, String(value)]))
+
+const outputEncoding = (options, fallback) => (options.encoding === undefined ? fallback : options.encoding)
+
+const decodeOutput = (bytes, encoding) => (encoding === null || encoding === 'buffer' ? wrapBytes(bytes) : fromBytes(bytes, encoding))
+
 const runCommand = (file, argv, options) => {
   const reply = host('run_command', {
     file: String(file),
     args: argv.map(String),
     cwd: options.cwd ?? null,
-    env: options.env ?? null,
+    env: options.env === undefined ? undefined : envRecord(options.env),
     input_base64: options.input === undefined ? null : encodeBase64(toBytes(options.input)),
     timeout_ms: options.timeout ?? null,
   })
@@ -1071,8 +1077,8 @@ const commandFailure = (file, argv, result, options) => {
   const error = coded('ERR_CHILD_PROCESS_FAILED', 'Command failed: ' + [file, ...argv].join(' '))
   error.status = result.status
   error.signal = result.signal
-  error.stdout = fromBytes(result.stdout, encodingOf(options))
-  error.stderr = fromBytes(result.stderr, encodingOf(options))
+  error.stdout = decodeOutput(result.stdout, outputEncoding(options, 'utf8'))
+  error.stderr = decodeOutput(result.stderr, outputEncoding(options, 'utf8'))
   return error
 }
 
@@ -1080,14 +1086,14 @@ const execFileSync = (file, args, options) => {
   const { argv, options: resolved } = normalizeExecArgs(args, options)
   const result = runCommand(file, argv, resolved)
   if (result.status !== 0) throw commandFailure(file, argv, result, resolved)
-  return fromBytes(result.stdout, encodingOf(resolved))
+  return decodeOutput(result.stdout, outputEncoding(resolved, 'buffer'))
 }
 
 const spawnSync = (file, args, options) => {
   const { argv, options: resolved } = normalizeExecArgs(args, options)
   const result = runCommand(file, argv, resolved)
-  const stdout = fromBytes(result.stdout, encodingOf(resolved))
-  const stderr = fromBytes(result.stderr, encodingOf(resolved))
+  const stdout = decodeOutput(result.stdout, outputEncoding(resolved, 'buffer'))
+  const stderr = decodeOutput(result.stderr, outputEncoding(resolved, 'buffer'))
   return { pid: 0, output: [null, stdout, stderr], stdout, stderr, status: result.status, signal: result.signal, error: undefined }
 }
 
@@ -1099,8 +1105,8 @@ const execFile = (file, ...rest) => {
   let stderr
   try {
     const result = runCommand(file, argv, options)
-    stdout = fromBytes(result.stdout, encodingOf(options))
-    stderr = fromBytes(result.stderr, encodingOf(options))
+    stdout = decodeOutput(result.stdout, outputEncoding(options, 'utf8'))
+    stderr = decodeOutput(result.stderr, outputEncoding(options, 'utf8'))
     if (result.status !== 0) failure = commandFailure(file, argv, result, options)
   } catch (error) {
     failure = error

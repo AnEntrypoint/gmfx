@@ -1728,6 +1728,8 @@ fn runCommand(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
             };
             try env_map.put(entry.key_ptr.*, text);
         }
+    } else if (io_mod.environMap()) |parent| {
+        for (parent.array_hash_map.keys(), parent.array_hash_map.values()) |key, value| try env_map.put(key, value);
     } else {
         try env_map.put("PATH", "/usr/local/bin:/bin:/usr/bin");
     }
