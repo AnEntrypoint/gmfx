@@ -979,7 +979,7 @@ const parseArgs = (config = {}) => {
       const negated = token.rawName.startsWith('--no-') && token.name === token.rawName.slice(5)
       const option = parseArgsOptionOf(options, token.name)
       if (strict) {
-        const hint = allowPositionals ? ". To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- " + JSON.stringify(token.rawName) + "'" : ''
+        const hint = allowPositionals ? ". To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- " + JSON.stringify(token.rawName) : ''
         if (!option) throw parseArgsError('ERR_PARSE_ARGS_UNKNOWN_OPTION', "Unknown option '" + token.rawName + "'" + hint)
         const label = (option.short ? '-' + option.short + ', ' : '') + '--' + token.name
         if (option.type === 'string' && token.value === undefined) throw parseArgsError('ERR_PARSE_ARGS_INVALID_OPTION_VALUE', "Option '" + label + " <value>' argument missing")
