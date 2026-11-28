@@ -2120,7 +2120,7 @@ class ChildProcess extends FxEmitter {
       const reply = host('proc_read', { id: this.procId, stream: which, wait_ms: 5 })
       if (reply.pending) {
         if (deadline !== null && !this.killed && Date.now() >= deadline) this.kill(this.killSignal)
-        await null
+        await new Promise((resolve) => setTimeout(resolve, 0))
         continue
       }
       if (reply.eof) break
