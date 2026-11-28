@@ -1177,29 +1177,40 @@ const spawnSync = (file, args, options) => {
   return { pid: 0, output: [null, stdout, stderr], stdout, stderr, status: result.status, signal: result.signal, error: undefined }
 }
 
+const executionFailure = (cmd, code, signal, killed, stdout, stderr) => {
+  const error = new Error('Command failed: ' + cmd + '\n' + String(stderr))
+  error.code = code ?? null
+  error.killed = killed
+  error.signal = signal
+  error.cmd = cmd
+  error.stdout = stdout
+  error.stderr = stderr
+  return error
+}
+
 const execFile = (file, ...rest) => {
   const callback = typeof rest[rest.length - 1] === 'function' ? rest.pop() : undefined
   const { argv, options } = normalizeExecArgs(rest[0], rest[1])
-  let failure = null
-  let stdout
-  let stderr
-  let result
-  try {
-    const [command, commandArgs] = shellInvocation(file, argv, options)
-    result = runCommand(command, commandArgs, options)
-  } catch (error) {
-    if (error.code === 'ENOTDIR') throw Object.assign(spawnFailure(file, argv, 'ENOTDIR'), { message: 'spawn ENOTDIR' })
-    failure = spawnFailure(file, argv, error.code ?? 'EFXHOST')
-    stdout = ''
-    stderr = ''
+  const child = spawnStreams(file, argv, options)
+  const encoding = outputEncoding(options, 'utf8')
+  const out = []
+  const err = []
+  child.stdout.on('data', (chunk) => out.push(toBytes(chunk)))
+  child.stderr.on('data', (chunk) => err.push(toBytes(chunk)))
+  let finished = false
+  const finish = (failure, stdout, stderr) => {
+    if (finished) return
+    finished = true
+    if (typeof callback === 'function') callback(failure ?? null, stdout, stderr)
   }
-  if (result !== undefined) {
-    stdout = decodeOutput(result.stdout, outputEncoding(options, 'utf8'))
-    stderr = decodeOutput(result.stderr, outputEncoding(options, 'utf8'))
-    if (result.status !== 0 || result.signal !== null) failure = commandFailure(file, argv, result, options)
-  }
-  if (typeof callback === 'function') Promise.resolve().then(() => callback(failure, stdout, stderr))
-  return undefined
+  child.on('error', (error) => finish(error, decodeOutput(new Uint8Array(0), encoding), decodeOutput(new Uint8Array(0), encoding)))
+  child.on('close', (code, signal) => {
+    const stdout = decodeOutput(concatBytes(out), encoding)
+    const stderr = decodeOutput(concatBytes(err), encoding)
+    const failed = code !== 0 || signal !== null
+    finish(failed ? executionFailure(commandLine(file, argv), code, signal, child.killed, stdout, stderr) : null, stdout, stderr)
+  })
+  return child
 }
 
 const signalNames = { 1: 'SIGHUP', 2: 'SIGINT', 3: 'SIGQUIT', 6: 'SIGABRT', 9: 'SIGKILL', 10: 'SIGUSR1', 12: 'SIGUSR2', 13: 'SIGPIPE', 14: 'SIGALRM', 15: 'SIGTERM' }
@@ -1211,8 +1222,10 @@ const streamClosed = (stream) => new Promise((resolve) => {
 })
 
 class ChildProcess extends FxEmitter {
-  constructor(file, args) {
+  constructor(file, args, options = {}) {
     super()
+    this.timeoutMs = Number(options.timeout ?? 0)
+    this.killSignal = options.killSignal ?? 'SIGTERM'
     this.spawnfile = String(file)
     this.spawnargs = [String(file), ...args.map(String)]
     this.pid = undefined
@@ -1238,10 +1251,11 @@ class ChildProcess extends FxEmitter {
     if (reply.delivered) this.killed = true
     return reply.delivered === true
   }
-  async pump(stream, which) {
+  async pump(stream, which, deadline) {
     for (;;) {
       const reply = host('proc_read', { id: this.procId, stream: which, wait_ms: 5 })
       if (reply.pending) {
+        if (deadline !== null && !this.killed && Date.now() >= deadline) this.kill(this.killSignal)
         await null
         continue
       }
@@ -1252,7 +1266,8 @@ class ChildProcess extends FxEmitter {
     stream.push(null)
   }
   async run() {
-    await Promise.all([this.pump(this.stdout, 'stdout'), this.pump(this.stderr, 'stderr')])
+    const deadline = this.timeoutMs > 0 ? Date.now() + this.timeoutMs : null
+    await Promise.all([this.pump(this.stdout, 'stdout', deadline), this.pump(this.stderr, 'stderr', deadline)])
     const reply = host('proc_wait', { id: this.procId })
     this.exitCode = reply.code ?? null
     this.signalCode = signalNameOf(reply.signal)
@@ -1271,7 +1286,7 @@ const spawnStreams = (file, args = [], options = {}) => {
   if (options.cwd !== undefined) request.cwd = String(options.cwd)
   if (options.env !== undefined) request.env_json = JSON.stringify(envRecord(options.env))
   const reply = globalThis.gm.proc_spawn(request)
-  const child = new ChildProcess(file, args)
+  const child = new ChildProcess(file, args, options)
   if (reply.ok === false) {
     if (reply.error === 'NotDir') throw Object.assign(spawnFailure(file, args, 'ENOTDIR'), { message: 'spawn ENOTDIR' })
     const error = spawnFailure(file, args, 'ENOENT')
