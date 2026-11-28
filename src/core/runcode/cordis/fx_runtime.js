@@ -1454,23 +1454,47 @@ class InspectorSession {
 
 const inspector = { Session: InspectorSession }
 
+const stringDecoderEncodings = {
+  utf8: 'utf8',
+  'utf-8': 'utf8',
+  ucs2: 'ucs2',
+  'ucs-2': 'ucs2',
+  utf16le: 'ucs2',
+  'utf-16le': 'ucs2',
+  latin1: 'latin1',
+  binary: 'latin1',
+  base64: 'base64',
+  base64url: 'base64url',
+  hex: 'hex',
+  ascii: 'ascii',
+}
+
 class StringDecoder {
   constructor(encoding = 'utf8') {
-    this.encoding = encoding
+    const name = stringDecoderEncodings[String(encoding).toLowerCase()]
+    if (name === undefined) throw new TypeError('Unknown encoding: ' + encoding)
+    this.encoding = name
     this.pending = new Uint8Array(0)
   }
   write(chunk) {
     const bytes = concatBytes([this.pending, toBytes(chunk)])
-    if (this.encoding !== 'utf8' && this.encoding !== 'utf-8') return fromBytes(bytes, this.encoding)
-    const tail = incompleteTail(bytes)
-    this.pending = bytes.slice(bytes.length - tail)
-    return decodeUtf8(bytes.subarray(0, bytes.length - tail))
+    const keep = this.trailingBytes(bytes)
+    this.pending = bytes.slice(bytes.length - keep)
+    const complete = bytes.subarray(0, bytes.length - keep)
+    return this.encoding === 'utf8' ? decodeUtf8(complete) : fromBytes(complete, this.encoding)
+  }
+  trailingBytes(bytes) {
+    if (this.encoding === 'utf8') return incompleteTail(bytes)
+    if (this.encoding === 'base64' || this.encoding === 'base64url') return bytes.length % 3
+    if (this.encoding === 'ucs2') return bytes.length % 2
+    return 0
   }
   end(chunk) {
     const text = chunk === undefined ? '' : this.write(chunk)
     const rest = this.pending
     this.pending = new Uint8Array(0)
-    return text + decodeUtf8(rest)
+    if (rest.length === 0) return text
+    return text + (this.encoding === 'utf8' ? decodeUtf8(rest) : fromBytes(rest, this.encoding))
   }
 }
 
