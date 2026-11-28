@@ -35,6 +35,7 @@ pub const table = [_]Row{
     provided("async_hooks", "asyncHooks", &.{"AsyncLocalStorage"}),
     provided("buffer", "buffer", &.{ "Buffer", "constants" }),
     provided("child_process", "childProcess", &.{ "execFile", "execFileSync", "spawn", "spawnSync" }),
+    provided("events", "eventsModule", &.{ "EventEmitter", "once" }),
     provided("crypto", "crypto", &.{ "createHash", "randomBytes", "randomUUID" }),
     provided("dns/promises", "dnsPromises", &.{"lookup"}),
     provided("serve", "serveModule", &.{"serve"}),

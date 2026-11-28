@@ -758,6 +758,7 @@ fn processInfo(alloc: Allocator) anyerror![]u8 {
     var first = false;
     try writeField(&out, &first, "cwd", cwd);
     try writeField(&out, &first, "argv", script_args.argv);
+    try writeField(&out, &first, "execPath", if (script_args.argv.len > 0) script_args.argv[0] else "fx");
     try writeField(&out, &first, "pid", std.c.getpid());
     try writeField(&out, &first, "platform", nodePlatform());
     const uts = std.posix.uname();

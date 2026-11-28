@@ -1686,6 +1686,21 @@ const pipeline = (...streams) => {
   return streams[streams.length - 1]
 }
 
+const eventsOnce = (emitter, name) => new Promise((resolve, reject) => {
+  const onEvent = (...args) => {
+    emitter.removeListener('error', onError)
+    resolve(args)
+  }
+  const onError = (error) => {
+    emitter.removeListener(name, onEvent)
+    reject(error)
+  }
+  emitter.once(name, onEvent)
+  if (name !== 'error') emitter.once('error', onError)
+})
+
+const eventsModule = { EventEmitter: FxEmitter, once: eventsOnce }
+
 const stream = { PassThrough, Readable, Writable, Transform: PassThrough, pipeline }
 
 const compareBytes = (left, right) => {
@@ -2914,6 +2929,7 @@ const dnsPromises = {
 const processObject = {
   get env() { return processInfo().env },
   get argv() { return processInfo().argv },
+  get execPath() { return processInfo().execPath },
   get pid() { return processInfo().pid },
   get platform() { return processInfo().platform },
   get version() { return processInfo().version },
@@ -3401,6 +3417,7 @@ export const fxRuntime = {
   path,
   crypto,
   stream,
+  eventsModule,
   buffer,
   url,
   util,

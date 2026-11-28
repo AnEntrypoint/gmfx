@@ -206,6 +206,7 @@ fn readTextReply(alloc: std.mem.Allocator, root: []const u8, args_json: []const 
         return alloc.dupe(u8, "{\"ok\":false,\"missing\":true}");
     };
     defer alloc.free(text);
+    script_args.blankShebang(text);
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeAll("{\"ok\":true,\"text\":");
@@ -437,6 +438,7 @@ pub fn runCommand(alloc: std.mem.Allocator, args: []const []const u8, verbs: Ver
     defer file.close(io_mod.getIo());
     const body = try io_mod.readFileToEnd(alloc, &file, max_read_bytes);
     defer alloc.free(body);
+    script_args.blankShebang(body);
     const root = std.fs.path.dirname(absolute) orelse "/";
     try script_args.set(alloc, absolute, cli.script_args);
     const outcome = try execute(alloc, body, .{ .format = cli.format, .deadline_ms = cli.deadline_ms, .body_path = absolute, .root = root, .verbs = verbs, .run_id = cli.run_id });
