@@ -3080,119 +3080,175 @@ const agentEventKind = (event) => {
   return event.role
 }
 
-const providerRequest = (provider, payload) => {
-  const headers = { 'content-type': 'application/json' }
-  if (provider.apiKey) headers.authorization = 'Bearer ' + provider.apiKey
-  Object.assign(headers, provider.headers ?? {})
+const providerPost = (url, headers, payload, allowLoopback) => {
   const reply = host('net_fetch', {
-    url: String(provider.baseUrl).replace(/\/+$/, '') + '/chat/completions',
+    url,
     method: 'POST',
     body: encodeBase64(toBytes(JSON.stringify(payload), 'utf8')),
-    headers_json: JSON.stringify(headers),
-    loopback: provider.allowLoopback === true,
+    headers_json: JSON.stringify({ 'content-type': 'application/json', ...headers }),
+    loopback: allowLoopback === true,
   })
   const text = fromBytes(decodeBase64(reply.body), 'utf8')
   if (reply.status < 200 || reply.status >= 300) throw new Error('provider answered ' + reply.status + ': ' + text.slice(0, 300))
   return JSON.parse(text)
 }
 
-const verbCatalog = () => globalThis.gm.verbs()
+const partText = (content) => {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return content === undefined || content === null ? '' : JSON.stringify(content)
+  return content.map((part) => (part && typeof part.text === 'string' ? part.text : typeof part === 'string' ? part : JSON.stringify(part))).join('\n\n')
+}
 
-const toolDefinitions = (tools) => {
-  const definitions = []
-  const runners = new Map()
-  for (const entry of tools) {
-    if (typeof entry === 'string') {
-      const verb = verbCatalog().find((candidate) => candidate.name === entry && candidate.kind === 'tool')
-      if (verb === undefined) throw new Error('agent: no built-in tool named ' + entry)
-      definitions.push({ type: 'function', function: { name: verb.name, description: verb.description, parameters: verb.input_schema } })
-      runners.set(verb.name, (args) => globalThis.gm[verb.name](args))
+const blocksOf = (message) => (typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : message.content ?? [])
+
+const openAiMessages = (system, messages) => {
+  const out = system ? [{ role: 'system', content: system }] : []
+  for (const message of messages) {
+    const blocks = blocksOf(message)
+    if (message.role === 'assistant') {
+      const calls = blocks.filter((block) => block.type === 'tool-call')
+      const text = blocks.filter((block) => block.type === 'text').map((block) => block.text).join('\n\n')
+      const entry = { role: 'assistant', content: text === '' ? null : text }
+      if (calls.length > 0) entry.tool_calls = calls.map((block) => ({ id: block.id, type: 'function', function: { name: block.name, arguments: typeof block.arguments === 'string' ? block.arguments : JSON.stringify(block.input ?? {}) } }))
+      out.push(entry)
     } else {
-      definitions.push({ type: 'function', function: { name: entry.name, description: entry.description ?? '', parameters: entry.parameters ?? { type: 'object', properties: {} } } })
-      runners.set(entry.name, (args, context) => entry.run(args, context))
+      for (const block of blocks.filter((candidate) => candidate.type === 'tool-result')) out.push({ role: 'tool', tool_call_id: block.toolCallId, content: partText(block.content) })
+      const text = blocks.filter((block) => block.type === 'text').map((block) => block.text).join('\n\n')
+      if (text !== '') out.push({ role: 'user', content: text })
     }
   }
-  return { definitions, runners }
+  return out
 }
 
-const resultText = (value) => (typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value))
-
-const systemMessages = (options, context) => {
-  const parts = []
-  if (options.system) parts.push(String(options.system))
-  const extra = Array.isArray(context) ? context : context ? [context] : []
-  for (const part of extra) parts.push(String(part))
-  return parts.length === 0 ? [] : [{ role: 'system', content: parts.join('\n\n') }]
+const anthropicMessages = (messages) => {
+  const out = []
+  for (const message of messages) {
+    const blocks = blocksOf(message)
+    if (message.role === 'assistant') {
+      const content = []
+      for (const block of blocks) {
+        if (block.type === 'text' && block.text !== '') content.push({ type: 'text', text: block.text })
+        if (block.type === 'tool-call') content.push({ type: 'tool_use', id: block.id, name: block.name, input: typeof block.arguments === 'string' ? JSON.parse(block.arguments || '{}') : block.input ?? {} })
+      }
+      if (content.length > 0) out.push({ role: 'assistant', content })
+    } else {
+      const content = []
+      for (const block of blocks) {
+        if (block.type === 'tool-result') content.push({ type: 'tool_result', tool_use_id: block.toolCallId, content: partText(block.content), is_error: block.isError === true })
+        if (block.type === 'text' && block.text !== '') content.push({ type: 'text', text: block.text })
+      }
+      if (content.length > 0) out.push({ role: 'user', content })
+    }
+  }
+  return out
 }
 
-const runAgentLoop = (options, input) => {
-  const provider = options.provider
-  if (provider === undefined || !provider.baseUrl) throw new Error('agent: options.provider.baseUrl is required for an in-process turn')
+const callOpenAi = (route, key, model, system, messages, tools, options) => {
+  const payload = { model, messages: openAiMessages(system, messages) }
+  if (tools.length > 0) payload.tools = tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description ?? '', parameters: tool.inputSchema ?? { type: 'object', properties: {} } } }))
+  if (options.maxTokens !== undefined) payload.max_tokens = options.maxTokens
+  const headers = key ? { authorization: 'Bearer ' + key } : {}
+  const reply = providerPost(String(route.baseUrl).replace(/\/+$/, '') + '/chat/completions', headers, payload, route.allowLoopback === true || options.allowLoopback === true)
+  const choice = reply.choices[0]
+  const message = choice.message
+  const calls = (message.tool_calls ?? []).map((item) => {
+    let input = {}
+    try { input = JSON.parse(item.function.arguments || '{}') } catch (error) { input = {} }
+    return { id: item.id, name: item.function.name, input, arguments: item.function.arguments || '{}' }
+  })
+  return { text: typeof message.content === 'string' ? message.content : '', reasoning: typeof message.reasoning_content === 'string' ? message.reasoning_content : '', calls, truncated: choice.finish_reason === 'length' }
+}
+
+const callAnthropic = (route, key, model, system, messages, tools, options) => {
+  const payload = { model, max_tokens: options.maxTokens ?? 8192, messages: anthropicMessages(messages) }
+  if (system) payload.system = system
+  if (tools.length > 0) payload.tools = tools.map((tool) => ({ name: tool.name, description: tool.description ?? '', input_schema: tool.inputSchema ?? { type: 'object', properties: {} } }))
+  const base = String(route.baseUrl).replace(/\/+$/, '')
+  const headers = { 'anthropic-version': '2023-06-01' }
+  if (key) headers['x-api-key'] = key
+  const reply = providerPost(base.endsWith('/v1') ? base + '/messages' : base + '/v1/messages', headers, payload, route.allowLoopback === true || options.allowLoopback === true)
+  const calls = []
+  let text = ''
+  let reasoning = ''
+  for (const block of reply.content ?? []) {
+    if (block.type === 'text') text += block.text
+    if (block.type === 'thinking') reasoning += block.thinking ?? ''
+    if (block.type === 'tool_use') calls.push({ id: block.id, name: block.name, input: block.input ?? {}, arguments: JSON.stringify(block.input ?? {}) })
+  }
+  return { text, reasoning, calls, truncated: reply.stop_reason === 'max_tokens' }
+}
+
+const builtInTools = (names) => {
+  const catalog = globalThis.gm.verbs().filter((verb) => verb.kind === 'tool')
+  const chosen = names === true ? catalog : catalog.filter((verb) => names.includes(verb.name))
+  return chosen.map((verb) => ({ name: verb.name, description: verb.description, inputSchema: verb.input_schema, execute: (input) => ({ content: globalThis.gm[verb.name](input), isError: false }) }))
+}
+
+const toolResultOf = (value) => {
+  if (value !== null && typeof value === 'object' && 'content' in value) return { content: partText(value.content), isError: value.isError === true }
+  return { content: typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value), isError: false }
+}
+
+const agentTurn = (options, sessionId, sessionOptions, input, promptOptions) => {
+  const signal = promptOptions?.signal
   const hooks = options.hooks ?? {}
   const call = (fn, payload) => (typeof fn === 'function' ? fn(payload) : undefined)
-  const { definitions, runners } = toolDefinitions(options.tools ?? [])
-  const history = [...(input.messages ?? [])]
-  const added = []
-  const events = []
-  const emit = (kind, event) => {
-    events.push({ kind, event })
-    call(options.onEvent, { kind, event })
-  }
-  let text = ''
-  let usage = null
-  let stop = 'completed'
-  call(hooks.turnStart, { messages: history, context: input.context })
-  const maxSteps = options.maxSteps ?? 16
-  for (let step = 0; step < maxSteps; step += 1) {
-    const payload = { model: provider.model ?? options.model, messages: [...systemMessages(options, input.context), ...history, ...added] }
-    if (definitions.length > 0) payload.tools = definitions
-    const response = providerRequest(provider, payload)
-    const message = response.choices[0].message
-    usage = response.usage ?? usage
-    const assistant = { role: 'assistant', content: message.content ?? null }
-    if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) assistant.tool_calls = message.tool_calls
-    added.push(assistant)
-    emit('assistant', assistant)
-    if (typeof message.content === 'string' && message.content !== '') text = message.content
-    if (assistant.tool_calls === undefined) break
-    for (const toolCall of assistant.tool_calls) {
-      const name = toolCall.function.name
-      let args
-      try {
-        args = JSON.parse(toolCall.function.arguments || '{}')
-      } catch (error) {
-        args = {}
-      }
-      let output
-      const verdict = call(hooks.beforeTool, { id: toolCall.id, name, arguments: args })
-      if (verdict && verdict.deny !== undefined) {
-        output = 'Denied: ' + String(verdict.deny === true ? 'a hook denied this call' : verdict.deny)
-      } else if (verdict && verdict.result !== undefined) {
-        output = resultText(verdict.result)
-      } else {
-        if (verdict && verdict.arguments !== undefined) args = verdict.arguments
-        const runner = runners.get(name)
-        if (runner === undefined) {
-          output = 'Unknown tool: ' + name
-        } else {
-          try {
-            output = resultText(runner(args, { id: toolCall.id }))
-          } catch (error) {
-            output = 'Error: ' + String(error && error.message ? error.message : error)
+  const customProvider = options.customProvider
+  let settle
+  const result = new Promise((resolve) => { settle = resolve })
+  result.catch(() => {})
+  const stream = async function* () {
+    const finish = (stopReason, error) => settle(error === undefined ? { stopReason } : { stopReason, error: { message: String(error && error.message ? error.message : error) } })
+    try {
+      const route = customProvider.provider
+      const credentials = customProvider.credentials ? await customProvider.credentials() : {}
+      const model = options.model ?? route.models?.[0]
+      const system = [sessionOptions?.instructions ?? options.instructions].filter(Boolean).join('\n\n')
+      const tools = [...(options.tools ?? [])]
+      if (options.nativeTools === true || Array.isArray(options.nativeTools)) tools.push(...builtInTools(options.nativeTools))
+      const messages = [...(sessionOptions?.context ?? []), { role: 'user', content: [{ type: 'text', text: String(input) }] }]
+      const maxSteps = options.maxSteps ?? 32
+      for (let step = 0; step < maxSteps; step += 1) {
+        if (signal && signal.aborted) return finish('cancelled')
+        const callModel = route.protocol === 'anthropic-messages' ? callAnthropic : callOpenAi
+        const reply = callModel(route, credentials.apiKey, model, system, messages, tools, options)
+        if (reply.reasoning !== '') yield { type: 'reasoning_delta', text: reply.reasoning }
+        if (reply.text !== '') yield { type: 'text_delta', text: reply.text }
+        const assistant = [{ type: 'text', text: reply.text }, ...reply.calls.map((item) => ({ type: 'tool-call', id: item.id, name: item.name, arguments: item.arguments }))]
+        messages.push({ role: 'assistant', content: assistant.filter((block) => block.type !== 'text' || block.text !== '') })
+        if (reply.truncated) return finish('max_output_tokens')
+        if (reply.calls.length === 0) return finish('end_turn')
+        for (const item of reply.calls) yield { type: 'tool_start', id: item.id, name: item.name, input: item.input }
+        const results = []
+        for (const item of reply.calls) {
+          if (signal && signal.aborted) return finish('cancelled')
+          const tool = tools.find((candidate) => candidate.name === item.name)
+          let args = item.input
+          let outcome
+          const verdict = call(hooks.beforeTool, { id: item.id, name: item.name, arguments: args })
+          if (verdict && verdict.deny !== undefined) outcome = { content: 'Denied: ' + String(verdict.deny === true ? 'a hook denied this call' : verdict.deny), isError: true }
+          else if (verdict && verdict.result !== undefined) outcome = toolResultOf(verdict.result)
+          else if (tool === undefined) outcome = { content: 'Unknown tool: ' + item.name, isError: true }
+          else {
+            if (verdict && verdict.arguments !== undefined) args = verdict.arguments
+            try {
+              outcome = toolResultOf(await tool.execute(args, { signal, executionId: item.id }))
+            } catch (error) {
+              outcome = { content: 'Error: ' + String(error && error.message ? error.message : error), isError: true }
+            }
           }
+          const after = call(hooks.afterTool, { id: item.id, name: item.name, arguments: args, content: outcome.content })
+          if (after && after.result !== undefined) outcome = toolResultOf(after.result)
+          results.push({ type: 'tool-result', toolCallId: item.id, content: outcome.content, isError: outcome.isError })
         }
+        messages.push({ role: 'user', content: results })
       }
-      const after = call(hooks.afterTool, { id: toolCall.id, name, arguments: args, content: output })
-      if (after && after.result !== undefined) output = resultText(after.result)
-      const toolMessage = { role: 'tool', tool_call_id: toolCall.id, content: output }
-      added.push(toolMessage)
-      emit('tool', toolMessage)
+      return finish('end_turn')
+    } catch (error) {
+      finish('error', error)
     }
-    if (step === maxSteps - 1) stop = 'max_steps'
   }
-  const record = { text, messages: added, events, usage, stop }
-  call(hooks.turnEnd, record)
-  return record
+  return { result, [Symbol.asyncIterator]: stream }
 }
 
 const agent = (options = {}) => {
@@ -3210,17 +3266,12 @@ const agent = (options = {}) => {
     if (event.type === 'error') record.error = event
     call(options.onEvent, { kind: agentEventKind(event), event })
   }
-  const inProcess = options.provider !== undefined
-  const log = []
-  const run = (input) => runAgentLoop(options, input)
-  const turn = (text) => {
-    const user = { role: 'user', content: String(text) }
-    const record = run({ messages: [...log, user], context: options.context })
-    log.push(user, ...record.messages)
-    return record
-  }
+  const inProcess = options.customProvider !== undefined
+  const session = (id, sessionOptions = {}) => ({
+    prompt: (input, promptOptions = {}) => agentTurn(options, id, sessionOptions, input, promptOptions),
+  })
   const prompt = (text) => {
-    if (inProcess) return turn(text)
+    if (inProcess) throw new Error('agent: an in-process agent is driven through session(id, { context, instructions }).prompt(input, { signal })')
     const record = { text: '', events: [], error: null, session: state.session, exitCode: null }
     call(hooks.turnStart, { prompt: String(text) })
     const id = host('proc_spawn', { file: 'fx', args: [...askFlags(options, state.session), '--', String(text)], ...(options.cwd ? { cwd: options.cwd } : {}) }).id
@@ -3260,7 +3311,7 @@ const agent = (options = {}) => {
   }
   return {
     prompt,
-    run,
+    session,
     cancel,
     get session() { return state.session },
   }
