@@ -364,6 +364,10 @@ const typeErrorCoded = (code, message) => {
   return error
 }
 
+const checkHighWaterMark = (value, name = 'highWaterMark') => {
+  if (value === undefined || value === null || value === Infinity || (Number.isInteger(value) && value >= 0)) return
+  throw typeErrorCoded('ERR_INVALID_ARG_VALUE', "The property 'options." + name + "' is invalid. Received " + (typeof value === 'string' ? "'" + value + "'" : String(value)))
+}
 const receivedText = (value) => (typeof value === 'string' ? "type string ('" + value + "')" : 'type ' + typeof value + ' (' + String(value) + ')')
 
 const writeOptionMode = (mode) => {
@@ -540,9 +544,7 @@ const createReadStream = (value, options = {}) => {
   const start = streamPosition('start', settings.start) ?? 0
   const end = settings.end === Infinity ? undefined : streamPosition('end', settings.end)
   if (end !== undefined && start > end) throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "start" is out of range. It must be <= "end" (here: ' + end + '). Received ' + start)
-  if (settings.highWaterMark !== undefined && (typeof settings.highWaterMark !== 'number' || settings.highWaterMark < 0)) {
-    throw typeErrorCoded('ERR_INVALID_ARG_VALUE', "The property 'options.highWaterMark' is invalid. Received " + String(settings.highWaterMark))
-  }
+  checkHighWaterMark(settings.highWaterMark)
   const highWaterMark = settings.highWaterMark ?? 65536
   const emptyRead = highWaterMark === 0 || (highWaterMark >= 4294967296 && highWaterMark < 1099511627776)
   const autoClose = settings.autoClose !== false
@@ -805,6 +807,11 @@ const randomUUID = () => {
 const createHash = (algorithm, options = {}) => {
   const chunks = []
   const request = { algorithm: String(algorithm).toLowerCase() }
+  if (options?.outputLength !== undefined) {
+    if (typeof options.outputLength !== 'number') throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.outputLength" property must be of type number. Received ' + receivedText(options.outputLength))
+    if (!Number.isInteger(options.outputLength)) throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "options.outputLength" is out of range. It must be an integer. Received ' + options.outputLength)
+    if (options.outputLength < 0 || options.outputLength > 4294967295) throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "options.outputLength" is out of range. It must be >= 0 && <= 4294967295. Received ' + options.outputLength)
+  }
   const fixedDigestBytes = { md4: 16, md5: 16, sha1: 20, ripemd160: 20, sha224: 28, 'sha512-224': 28, 'sha3-224': 28, sha256: 32, 'sha512-256': 32, 'sha3-256': 32, blake2s256: 32, sha384: 48, 'sha3-384': 48, sha512: 64, 'sha3-512': 64, blake2b512: 64 }
   const xof = request.algorithm.startsWith('shake')
   if (options?.outputLength !== undefined && !xof && options.outputLength !== fixedDigestBytes[request.algorithm]) {
@@ -880,6 +887,7 @@ class Readable extends FxEmitter {
     }
     this.encoding = options.encoding ?? null
     this.decoder = this.encoding !== null ? new StringDecoder(this.encoding) : null
+    checkHighWaterMark(options.highWaterMark)
     this.highWaterMark = options.highWaterMark ?? (this.objectMode ? 16 : 16384)
     this.readableHighWaterMark = this.highWaterMark
   }
@@ -1052,6 +1060,7 @@ class Writable extends FxEmitter {
     this.chunks = []
     this.length = 0
     this.objectMode = options.objectMode ?? false
+    checkHighWaterMark(options.highWaterMark)
     this.highWaterMark = options.highWaterMark ?? (this.objectMode ? 16 : 16384)
     this.pending = 0
     this.ending = false
@@ -1117,6 +1126,7 @@ class Writable extends FxEmitter {
 
 class PassThrough extends Readable {
   constructor(options = {}) {
+    checkHighWaterMark(options.highWaterMark, 'readableHighWaterMark')
     super(options)
     this._read = () => {}
   }
