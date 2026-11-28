@@ -526,6 +526,8 @@ const abortedError = () => {
   const error = new Error('The operation was aborted')
   error.name = 'AbortError'
   error.code = 'ABORT_ERR'
+  error.killed = null
+  error.signal = null
   return error
 }
 
@@ -1579,6 +1581,7 @@ class ChildProcess extends FxEmitter {
     this.exitCode = reply.code ?? null
     this.signalCode = signalNameOf(reply.signal)
     this.emit('exit', this.exitCode, this.signalCode)
+    if (this.abortError !== undefined) this.emit('error', this.abortError)
     const streams = [this.stdout, this.stderr].filter((stream) => stream !== null)
     for (const stream of streams) {
       if (!stream.flowing) stream.resume()
@@ -1612,6 +1615,14 @@ const spawnStreams = (file, args = [], options = {}) => {
   }
   child.pid = reply.pid
   child.procId = reply.id
+  if (options.signal !== undefined && options.signal !== null) {
+    const onAbort = () => {
+      child.abortError = abortedError()
+      child.kill('SIGTERM')
+    }
+    if (options.signal.aborted) onAbort()
+    else options.signal.addEventListener('abort', onAbort, { once: true })
+  }
   if (request.stdin_mode !== 'pipe') child.stdin = null
   if (request.stdout_mode !== 'pipe') child.stdout = null
   if (request.stderr_mode !== 'pipe') child.stderr = null
