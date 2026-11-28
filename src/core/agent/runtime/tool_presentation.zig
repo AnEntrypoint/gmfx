@@ -1657,6 +1657,13 @@ fn commandArtifactHandle(
     return owned;
 }
 
+fn innerPathArgument(arena: Allocator, described: ToolCall, original: ToolCall) !?[]const u8 {
+    if (std.mem.eql(u8, described.name, original.name)) return null;
+    const args = tool_args.parseToolArgsObject(arena, described.arguments_json) catch return null;
+    const path = args.get("path") orelse return null;
+    return if (path == .string) path.string else null;
+}
+
 pub fn finishCommittedFileStatus(
     hooks: *const AgentRuntimeDeps,
     arena: Allocator,
@@ -1672,11 +1679,12 @@ pub fn finishCommittedFileStatus(
         try run_code_presentation.leadingCall(arena, hooks.tool_registry, call) orelse call
     else
         call;
+    const target = display_target orelse try innerPathArgument(arena, described, call);
     const base_line = try hooks.describe_tool_action_completed(
         hooks.ctx,
         arena,
         described,
-        display_target,
+        target,
         advertised_dynamic_tool_names,
     );
     const line = try formatToolStatusWithStats(
