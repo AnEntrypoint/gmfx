@@ -456,33 +456,137 @@ const writeSync = (fd, data, ...rest) => {
 
 const fsConstants = { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1, O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024, COPYFILE_EXCL: 1 }
 
+const openFailure = (code, target) => {
+  const messages = {
+    ENOENT: 'no such file or directory',
+    EEXIST: 'file already exists',
+    EBADF: 'bad file descriptor',
+  }
+  const error = nodeError(code, code + ': ' + messages[code] + ", open '" + target + "'")
+  error.syscall = 'open'
+  error.path = target
+  return error
+}
+
+const readStreamFlags = {
+  r: 'read', rs: 'read', sr: 'read', 'r+': 'readwrite', 'rs+': 'readwrite', 'sr+': 'readwrite',
+  w: 'truncate', wx: 'truncate', xw: 'truncate', 'w+': 'truncate-readwrite', 'wx+': 'truncate-readwrite', 'xw+': 'truncate-readwrite',
+  a: 'append', ax: 'append', xa: 'append', as: 'append', sa: 'append', 'a+': 'append-readwrite', 'ax+': 'append-readwrite', 'xa+': 'append-readwrite', 'as+': 'append-readwrite', 'sa+': 'append-readwrite',
+}
+
+const nodeReceived = (value) => {
+  if (value === null) return 'null'
+  if (value === undefined) return 'undefined'
+  if (typeof value === 'function') return 'function ' + value.name
+  if (typeof value === 'object') return 'an instance of ' + (value.constructor?.name ?? 'Object')
+  return receivedText(value)
+}
+
+const rangeErrorCoded = (code, message) => {
+  const error = new RangeError(message)
+  error.code = code
+  return error
+}
+
+const streamPosition = (name, value) => {
+  if (value === undefined) return undefined
+  if (typeof value !== 'number') throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "' + name + '" argument must be of type number. Received ' + nodeReceived(value))
+  if (!Number.isInteger(value)) throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "' + name + '" is out of range. It must be an integer. Received ' + String(value))
+  if (value < 0 || value > Number.MAX_SAFE_INTEGER) throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "' + name + '" is out of range. It must be >= 0 && <= ' + Number.MAX_SAFE_INTEGER + '. Received ' + String(value))
+  return value
+}
+
+const addNumericalSeparator = (text) => {
+  let res = ''
+  let index = text.length
+  const start = text[0] === '-' ? 1 : 0
+  for (; index >= start + 4; index -= 3) res = '_' + text.slice(index - 3, index) + res
+  return text.slice(0, index) + res
+}
+
+const abortedError = () => {
+  const error = new Error('The operation was aborted')
+  error.name = 'AbortError'
+  error.code = 'ABORT_ERR'
+  return error
+}
+
 const createReadStream = (value, options = {}) => {
-  const encoding = encodingOf(options) ?? null
+  const settings = typeof options === 'string' ? { encoding: options } : options ?? {}
+  const encoding = settings.encoding ?? null
   if (encoding !== null && stringDecoderEncodings[String(encoding).toLowerCase()] === undefined) {
     throw typeErrorCoded('ERR_INVALID_ARG_VALUE', "The argument 'encoding' is invalid encoding. Received '" + String(encoding) + "'")
   }
+  const start = streamPosition('start', settings.start) ?? 0
+  const end = settings.end === Infinity ? undefined : streamPosition('end', settings.end)
+  if (end !== undefined && start > end) throw rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "start" is out of range. It must be <= "end" (here: ' + end + '). Received ' + start)
+  if (settings.highWaterMark !== undefined && (typeof settings.highWaterMark !== 'number' || settings.highWaterMark < 0)) {
+    throw typeErrorCoded('ERR_INVALID_ARG_VALUE', "The property 'options.highWaterMark' is invalid. Received " + String(settings.highWaterMark))
+  }
+  const highWaterMark = settings.highWaterMark ?? 65536
+  const emptyRead = highWaterMark === 0 || (highWaterMark >= 4294967296 && highWaterMark < 1099511627776)
+  const autoClose = settings.autoClose !== false
+  const flag = settings.flags ?? 'r'
   const decoder = encoding !== null ? new StringDecoder(encoding) : null
-  const stream = new Readable({ encoding })
+  const stream = new Readable({ encoding, autoDestroy: autoClose })
+  stream.readableHighWaterMark = highWaterMark
   const target = pathOf(value)
-  let bytes = null
   let failure = null
-  try {
-    bytes = decodeBase64(host('fs_read', { path: target }).base64)
-  } catch (error) {
-    failure = nodeError('ENOENT', "ENOENT: no such file or directory, open '" + target + "'")
-    failure.syscall = 'open'
-    failure.path = target
+  if (settings.signal !== undefined) {
+    if (typeof settings.signal !== 'object' || settings.signal === null || !('aborted' in settings.signal)) {
+      throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "options.signal" property must be an instance of AbortSignal. Received ' + nodeReceived(settings.signal))
+    }
+    if (settings.signal.aborted) failure = abortedError()
+    else {
+      if (typeof settings.signal.addEventListener !== 'function') throw new TypeError('signal.addEventListener is not a function')
+      settings.signal.addEventListener('abort', () => { if (!stream.destroyed) stream.destroy(abortedError()) }, { once: true })
+    }
+  }
+  if (highWaterMark > Number.MAX_SAFE_INTEGER) {
+    failure = rangeErrorCoded('ERR_OUT_OF_RANGE', 'The value of "size" is out of range. It must be >= 0 && <= ' + Number.MAX_SAFE_INTEGER + '. Received ' + addNumericalSeparator(String(highWaterMark)))
+  } else if (highWaterMark >= 1099511627776) {
+    failure = rangeErrorCoded('ERR_MEMORY_ALLOCATION_FAILED', 'Failed to allocate read buffer')
+  }
+  const mode = readStreamFlags[flag]
+  if (mode === undefined) {
+    failure = typeErrorCoded('ERR_INVALID_ARG_VALUE', "The argument 'flags' is invalid. Received '" + String(flag) + "'")
+  }
+  let bytes = new Uint8Array(0)
+  if (failure === null) {
+    const exists = pathExists(target)
+    if (mode === undefined) {
+    } else if (mode === 'read' || mode === 'readwrite') {
+      if (!exists) failure = openFailure('ENOENT', target)
+    } else if (flag.includes('x') && exists) {
+      failure = openFailure('EEXIST', target)
+    } else if (mode.startsWith('truncate')) {
+      host('fs_write', { path: target, base64: '', append: false })
+      if (mode === 'truncate') failure = openFailure('EBADF', target)
+    } else if (mode.startsWith('append')) {
+      if (!exists) host('fs_write', { path: target, base64: '', append: true })
+      if (mode === 'append') failure = openFailure('EBADF', target)
+    }
+  }
+  if (failure === null) {
+    try {
+      bytes = decodeBase64(host('fs_read', { path: target }).base64)
+    } catch (error) {
+      failure = openFailure('ENOENT', target)
+    }
+  }
+  if (failure === null) {
+    bytes = bytes.subarray(start, end === undefined ? bytes.length : Math.min(bytes.length, end + 1))
   }
   let offset = 0
   stream._read = () => {
     if (failure !== null) return stream.destroy(failure)
-    if (offset >= bytes.length) {
+    if (emptyRead || offset >= bytes.length) {
       const rest = decoder !== null ? decoder.end() : ''
       if (rest.length > 0) stream.push(rest)
       return stream.push(null)
     }
-    const chunk = bytes.subarray(offset, offset + 65536)
-    offset += 65536
+    const chunk = bytes.subarray(offset, offset + highWaterMark)
+    offset += highWaterMark
     if (decoder === null) return stream.push(wrapBytes(chunk))
     const text = decoder.write(chunk)
     if (text.length > 0) stream.push(text)
@@ -689,11 +793,15 @@ class Readable extends FxEmitter {
     this.ended = false
     this.endScheduled = false
     this.endEmitted = false
+    this.autoDestroy = options.autoDestroy ?? true
     this.destroyed = false
     this.reading = false
     this.flowing = false
     this.encoding = options.encoding ?? null
     this.objectMode = options.objectMode ?? false
+  }
+  get readableEncoding() {
+    return this.encoding
   }
   _read() {
     this.destroy(nodeError('ERR_METHOD_NOT_IMPLEMENTED', 'The _read() method is not implemented'))
@@ -743,7 +851,7 @@ class Readable extends FxEmitter {
       if (this.endEmitted || this.buffered.length > 0) return
       this.endEmitted = true
       this.emit('end')
-      this.destroy()
+      if (this.autoDestroy) this.destroy()
     })
   }
   destroy(error) {
@@ -751,7 +859,7 @@ class Readable extends FxEmitter {
     this.destroyed = true
     nextTick(() => {
       if (error) this.emit('error', error)
-      this.emit('close')
+      if (this.autoDestroy) this.emit('close')
     })
     return this
   }
@@ -772,7 +880,18 @@ class Readable extends FxEmitter {
     nextTick(() => this.flush())
     return this
   }
-  read() {
+  get readableLength() {
+    return this.bufferedBytes
+  }
+  read(size) {
+    if (size === 0) {
+      const mark = this.readableHighWaterMark ?? 16384
+      while (!this.ended && !this.destroyed && !this.reading && this.bufferedBytes < mark) {
+        this.reading = true
+        this._read(65536)
+      }
+      return null
+    }
     if (this.buffered.length === 0 && !this.ended && !this.destroyed && !this.reading) {
       this.reading = true
       this._read(65536)
@@ -787,7 +906,7 @@ class Readable extends FxEmitter {
     return data
   }
   setEncoding(encoding) {
-    this.encoding = encoding
+    this.encoding = String(encoding).toLowerCase() === 'utf-8' ? 'utf8' : encoding
     return this
   }
   pipe(destination) {
