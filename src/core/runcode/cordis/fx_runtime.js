@@ -1258,15 +1258,28 @@ const inflateBytes = (input) => {
 
 const asInput = (data) => (typeof data === 'string' ? encodeUtf8(data) : toBytes(data, undefined))
 
+const zlibAsync = (transform) => (data, callback) => {
+  queueMicrotask(() => {
+    let output
+    try {
+      output = wrapBytes(transform(asInput(data)))
+    } catch (error) {
+      callback(error)
+      return
+    }
+    callback(null, output)
+  })
+}
+
 const zlib = {
   gzipSync: (data) => wrapBytes(gzipBytes(asInput(data))),
   gunzipSync: (data) => wrapBytes(gunzipBytes(asInput(data))),
   deflateSync: (data) => wrapBytes(deflateBytes(asInput(data))),
   inflateSync: (data) => wrapBytes(inflateBytes(asInput(data))),
-  gzip: (data, callback) => { queueMicrotask(() => callback(null, wrapBytes(gzipBytes(asInput(data))))) },
-  gunzip: (data, callback) => { queueMicrotask(() => callback(null, wrapBytes(gunzipBytes(asInput(data))))) },
-  deflate: (data, callback) => { queueMicrotask(() => callback(null, wrapBytes(deflateBytes(asInput(data))))) },
-  inflate: (data, callback) => { queueMicrotask(() => callback(null, wrapBytes(inflateBytes(asInput(data))))) },
+  gzip: zlibAsync(gzipBytes),
+  gunzip: zlibAsync(gunzipBytes),
+  deflate: zlibAsync(deflateBytes),
+  inflate: zlibAsync(inflateBytes),
   brotliCompress: fail('zlib.brotliCompress'),
   constants: {},
   createZstdDecompress: fail('zlib.createZstdDecompress'),
