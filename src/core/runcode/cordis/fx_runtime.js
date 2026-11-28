@@ -2058,7 +2058,7 @@ const gunzipBytes = (input) => {
 const deflateBytes = (bytes) => concatBytes([new Uint8Array([0x78, 0x01]), storedDeflate(bytes), u32be(adler32(bytes))])
 
 const inflateBytes = (input) => {
-  if ((input[0] & 0x0f) !== 8 || ((input[0] << 8) | input[1]) % 31 !== 0) throw new Error('zlib: invalid zlib header')
+  if ((input[0] & 0x0f) !== 8 || ((input[0] << 8) | input[1]) % 31 !== 0) throw zlibError('Z_DATA_ERROR', 'incorrect header check')
   const result = inflateRaw(input.subarray(2))
   const trailer = 2 + result.consumed
   const expected = ((input[trailer] << 24) | (input[trailer + 1] << 16) | (input[trailer + 2] << 8) | input[trailer + 3]) >>> 0
@@ -2088,7 +2088,41 @@ const zlibAsync = (transform) => (data, ...rest) => {
   })
 }
 
+class ZlibStream extends PassThrough {
+  constructor(transform) {
+    super()
+    this.transform = transform
+    this.chunks = []
+  }
+  write(chunk) {
+    this.chunks.push(asInput(chunk))
+    return true
+  }
+  end(chunk) {
+    if (chunk !== undefined && chunk !== null) this.write(chunk)
+    const total = this.chunks.reduce((length, part) => length + part.length, 0)
+    const joined = new Uint8Array(total)
+    let offset = 0
+    for (const part of this.chunks) {
+      joined.set(part, offset)
+      offset += part.length
+    }
+    try {
+      this.push(wrapBytes(this.transform(joined)))
+    } catch (error) {
+      this.emit('error', error)
+      return this
+    }
+    this.push(null)
+    return this
+  }
+}
+
 const zlib = {
+  createGzip: () => new ZlibStream(gzipBytes),
+  createGunzip: () => new ZlibStream(gunzipBytes),
+  createDeflate: () => new ZlibStream(deflateBytes),
+  createInflate: () => new ZlibStream(inflateBytes),
   gzipSync: (data) => wrapBytes(gzipBytes(asInput(data))),
   gunzipSync: (data) => wrapBytes(gunzipBytes(asInput(data))),
   deflateSync: (data) => wrapBytes(deflateBytes(asInput(data))),
