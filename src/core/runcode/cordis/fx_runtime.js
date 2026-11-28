@@ -10,10 +10,12 @@ const fail = (name) => function unsupportedFunction() {
   throw coded('ERR_FX_UNSUPPORTED', name + ' is not available in fx: the embedded runtime does not provide it')
 }
 
+const hostErrnoCodes = { FileNotFound: 'ENOENT', NotDir: 'ENOTDIR', AccessDenied: 'EACCES', PermissionDenied: 'EACCES', IsDir: 'EISDIR' }
+
 const host = (name, args) => {
   const reply = globalThis.gm[name](args ?? {})
   if (reply === null || typeof reply !== 'object') throw coded('EFXHOST', 'fx host verb ' + name + ' returned no reply')
-  if (reply.ok === false) throw coded(reply.code ?? 'EFXHOST', reply.error ?? name + ' failed')
+  if (reply.ok === false) throw coded(reply.code ?? hostErrnoCodes[reply.error] ?? 'EFXHOST', reply.error ?? name + ' failed')
   return reply
 }
 
@@ -1128,12 +1130,33 @@ const runCommand = (file, argv, options) => {
 
 const normalizeExecArgs = (args, options) => (Array.isArray(args) ? { argv: args, options: options ?? {} } : { argv: [], options: args ?? {} })
 
+const commandLine = (file, argv) => [file, ...argv].join(' ')
+
 const commandFailure = (file, argv, result, options) => {
-  const error = coded('ERR_CHILD_PROCESS_FAILED', 'Command failed: ' + [file, ...argv].join(' '))
-  error.status = result.status
-  error.signal = result.signal
-  error.stdout = decodeOutput(result.stdout, outputEncoding(options, 'utf8'))
-  error.stderr = decodeOutput(result.stderr, outputEncoding(options, 'utf8'))
+  const stdout = decodeOutput(result.stdout, outputEncoding(options, 'utf8'))
+  const stderr = decodeOutput(result.stderr, outputEncoding(options, 'utf8'))
+  const cmd = commandLine(file, argv)
+  const error = new Error('Command failed: ' + cmd + '\n' + String(stderr))
+  error.code = result.status ?? null
+  error.killed = false
+  error.signal = signalNameOf(result.signal)
+  error.cmd = cmd
+  error.stdout = stdout
+  error.stderr = stderr
+  return error
+}
+
+const spawnFailure = (file, argv, code) => {
+  const error = new Error('spawn ' + String(file) + ' ' + code)
+  error.errno = code === 'ENOENT' ? -2 : undefined
+  error.code = code
+  error.signal = null
+  error.cmd = commandLine(file, argv)
+  error.syscall = code === 'ENOTDIR' ? 'spawn' : 'spawn ' + String(file)
+  error.path = String(file)
+  error.spawnargs = argv.map(String)
+  error.stdout = ''
+  error.stderr = ''
   return error
 }
 
@@ -1158,13 +1181,19 @@ const execFile = (file, ...rest) => {
   let failure = null
   let stdout
   let stderr
+  let result
   try {
-    const result = runCommand(file, argv, options)
+    result = runCommand(file, argv, options)
+  } catch (error) {
+    if (error.code === 'ENOTDIR') throw Object.assign(spawnFailure(file, argv, 'ENOTDIR'), { message: 'spawn ENOTDIR' })
+    failure = spawnFailure(file, argv, error.code ?? 'EFXHOST')
+    stdout = ''
+    stderr = ''
+  }
+  if (result !== undefined) {
     stdout = decodeOutput(result.stdout, outputEncoding(options, 'utf8'))
     stderr = decodeOutput(result.stderr, outputEncoding(options, 'utf8'))
-    if (result.status !== 0) failure = commandFailure(file, argv, result, options)
-  } catch (error) {
-    failure = error
+    if (result.status !== 0 || result.signal !== null) failure = commandFailure(file, argv, result, options)
   }
   if (typeof callback === 'function') Promise.resolve().then(() => callback(failure, stdout, stderr))
   return undefined
@@ -1237,15 +1266,11 @@ const spawnStreams = (file, args = [], options = {}) => {
   const request = { file: String(file), args: args.map(String) }
   if (options.cwd !== undefined) request.cwd = String(options.cwd)
   if (options.env !== undefined) request.env_json = JSON.stringify(envRecord(options.env))
-  const reply = host('proc_spawn', request)
+  const reply = globalThis.gm.proc_spawn(request)
   const child = new ChildProcess(file, args)
-  if (!reply.ok) {
-    if (reply.error === 'NotDir') throw coded('ENOTDIR', 'ENOTDIR: not a directory, spawn ' + String(file))
-    const error = coded('ENOENT', 'spawn ' + String(file) + ' ENOENT')
-    error.errno = -2
-    error.syscall = 'spawn ' + String(file)
-    error.path = String(file)
-    error.spawnargs = args.map(String)
+  if (reply.ok === false) {
+    if (reply.error === 'NotDir') throw Object.assign(spawnFailure(file, args, 'ENOTDIR'), { message: 'spawn ENOTDIR' })
+    const error = spawnFailure(file, args, 'ENOENT')
     nextTick(() => {
       child.emit('error', error)
       child.emit('close', -2, null)

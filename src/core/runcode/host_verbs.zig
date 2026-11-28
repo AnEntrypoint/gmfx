@@ -1765,9 +1765,14 @@ fn runCommand(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         .exited => |code| code,
         else => null,
     };
+    const signal: ?i64 = switch (result.term) {
+        .signal => |sig| @intFromEnum(sig),
+        else => null,
+    };
     return encode(alloc, .{
         .ok = true,
         .status = status,
+        .signal = signal,
         .stdout_base64 = stdout_base64,
         .stderr_base64 = stderr_base64,
     });
