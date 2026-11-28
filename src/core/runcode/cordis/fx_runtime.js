@@ -1258,7 +1258,8 @@ const inflateBytes = (input) => {
 
 const asInput = (data) => (typeof data === 'string' ? encodeUtf8(data) : toBytes(data, undefined))
 
-const zlibAsync = (transform) => (data, callback) => {
+const zlibAsync = (transform) => (data, ...rest) => {
+  const callback = rest[rest.length - 1]
   queueMicrotask(() => {
     let output
     try {
