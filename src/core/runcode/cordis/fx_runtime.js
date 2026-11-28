@@ -457,20 +457,35 @@ const writeSync = (fd, data, ...rest) => {
 const fsConstants = { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1, O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024, COPYFILE_EXCL: 1 }
 
 const createReadStream = (value, options = {}) => {
-  const stream = new Readable({ encoding: encodingOf(options) })
+  const encoding = encodingOf(options) ?? null
+  if (encoding !== null && stringDecoderEncodings[String(encoding).toLowerCase()] === undefined) {
+    throw typeErrorCoded('ERR_INVALID_ARG_VALUE', "The argument 'encoding' is invalid encoding. Received '" + String(encoding) + "'")
+  }
+  const decoder = encoding !== null ? new StringDecoder(encoding) : null
+  const stream = new Readable({ encoding })
+  const target = pathOf(value)
   let bytes = null
   let failure = null
   try {
-    bytes = decodeBase64(host('fs_read', { path: pathOf(value) }).base64)
+    bytes = decodeBase64(host('fs_read', { path: target }).base64)
   } catch (error) {
-    failure = nodeError('ENOENT', 'ENOENT: no such file or directory, open \'' + pathOf(value) + '\'')
+    failure = nodeError('ENOENT', "ENOENT: no such file or directory, open '" + target + "'")
+    failure.syscall = 'open'
+    failure.path = target
   }
   let offset = 0
   stream._read = () => {
     if (failure !== null) return stream.destroy(failure)
-    if (offset >= bytes.length) return stream.push(null)
-    stream.push(bytes.subarray(offset, offset + 65536))
+    if (offset >= bytes.length) {
+      const rest = decoder !== null ? decoder.end() : ''
+      if (rest.length > 0) stream.push(rest)
+      return stream.push(null)
+    }
+    const chunk = bytes.subarray(offset, offset + 65536)
     offset += 65536
+    if (decoder === null) return stream.push(wrapBytes(chunk))
+    const text = decoder.write(chunk)
+    if (text.length > 0) stream.push(text)
   }
   nextTick(() => {
     if (failure === null) {
