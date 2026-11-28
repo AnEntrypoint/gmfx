@@ -3080,6 +3080,121 @@ const agentEventKind = (event) => {
   return event.role
 }
 
+const providerRequest = (provider, payload) => {
+  const headers = { 'content-type': 'application/json' }
+  if (provider.apiKey) headers.authorization = 'Bearer ' + provider.apiKey
+  Object.assign(headers, provider.headers ?? {})
+  const reply = host('net_fetch', {
+    url: String(provider.baseUrl).replace(/\/+$/, '') + '/chat/completions',
+    method: 'POST',
+    body: encodeBase64(toBytes(JSON.stringify(payload), 'utf8')),
+    headers_json: JSON.stringify(headers),
+    loopback: provider.allowLoopback === true,
+  })
+  const text = fromBytes(decodeBase64(reply.body), 'utf8')
+  if (reply.status < 200 || reply.status >= 300) throw new Error('provider answered ' + reply.status + ': ' + text.slice(0, 300))
+  return JSON.parse(text)
+}
+
+const verbCatalog = () => globalThis.gm.verbs()
+
+const toolDefinitions = (tools) => {
+  const definitions = []
+  const runners = new Map()
+  for (const entry of tools) {
+    if (typeof entry === 'string') {
+      const verb = verbCatalog().find((candidate) => candidate.name === entry && candidate.kind === 'tool')
+      if (verb === undefined) throw new Error('agent: no built-in tool named ' + entry)
+      definitions.push({ type: 'function', function: { name: verb.name, description: verb.description, parameters: verb.input_schema } })
+      runners.set(verb.name, (args) => globalThis.gm[verb.name](args))
+    } else {
+      definitions.push({ type: 'function', function: { name: entry.name, description: entry.description ?? '', parameters: entry.parameters ?? { type: 'object', properties: {} } } })
+      runners.set(entry.name, (args, context) => entry.run(args, context))
+    }
+  }
+  return { definitions, runners }
+}
+
+const resultText = (value) => (typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value))
+
+const systemMessages = (options, context) => {
+  const parts = []
+  if (options.system) parts.push(String(options.system))
+  const extra = Array.isArray(context) ? context : context ? [context] : []
+  for (const part of extra) parts.push(String(part))
+  return parts.length === 0 ? [] : [{ role: 'system', content: parts.join('\n\n') }]
+}
+
+const runAgentLoop = (options, input) => {
+  const provider = options.provider
+  if (provider === undefined || !provider.baseUrl) throw new Error('agent: options.provider.baseUrl is required for an in-process turn')
+  const hooks = options.hooks ?? {}
+  const call = (fn, payload) => (typeof fn === 'function' ? fn(payload) : undefined)
+  const { definitions, runners } = toolDefinitions(options.tools ?? [])
+  const history = [...(input.messages ?? [])]
+  const added = []
+  const events = []
+  const emit = (kind, event) => {
+    events.push({ kind, event })
+    call(options.onEvent, { kind, event })
+  }
+  let text = ''
+  let usage = null
+  let stop = 'completed'
+  call(hooks.turnStart, { messages: history, context: input.context })
+  const maxSteps = options.maxSteps ?? 16
+  for (let step = 0; step < maxSteps; step += 1) {
+    const payload = { model: provider.model ?? options.model, messages: [...systemMessages(options, input.context), ...history, ...added] }
+    if (definitions.length > 0) payload.tools = definitions
+    const response = providerRequest(provider, payload)
+    const message = response.choices[0].message
+    usage = response.usage ?? usage
+    const assistant = { role: 'assistant', content: message.content ?? null }
+    if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) assistant.tool_calls = message.tool_calls
+    added.push(assistant)
+    emit('assistant', assistant)
+    if (typeof message.content === 'string' && message.content !== '') text = message.content
+    if (assistant.tool_calls === undefined) break
+    for (const toolCall of assistant.tool_calls) {
+      const name = toolCall.function.name
+      let args
+      try {
+        args = JSON.parse(toolCall.function.arguments || '{}')
+      } catch (error) {
+        args = {}
+      }
+      let output
+      const verdict = call(hooks.beforeTool, { id: toolCall.id, name, arguments: args })
+      if (verdict && verdict.deny !== undefined) {
+        output = 'Denied: ' + String(verdict.deny === true ? 'a hook denied this call' : verdict.deny)
+      } else if (verdict && verdict.result !== undefined) {
+        output = resultText(verdict.result)
+      } else {
+        if (verdict && verdict.arguments !== undefined) args = verdict.arguments
+        const runner = runners.get(name)
+        if (runner === undefined) {
+          output = 'Unknown tool: ' + name
+        } else {
+          try {
+            output = resultText(runner(args, { id: toolCall.id }))
+          } catch (error) {
+            output = 'Error: ' + String(error && error.message ? error.message : error)
+          }
+        }
+      }
+      const after = call(hooks.afterTool, { id: toolCall.id, name, arguments: args, content: output })
+      if (after && after.result !== undefined) output = resultText(after.result)
+      const toolMessage = { role: 'tool', tool_call_id: toolCall.id, content: output }
+      added.push(toolMessage)
+      emit('tool', toolMessage)
+    }
+    if (step === maxSteps - 1) stop = 'max_steps'
+  }
+  const record = { text, messages: added, events, usage, stop }
+  call(hooks.turnEnd, record)
+  return record
+}
+
 const agent = (options = {}) => {
   const hooks = options.hooks ?? {}
   const state = { session: options.session ?? null, running: null }
@@ -3095,7 +3210,17 @@ const agent = (options = {}) => {
     if (event.type === 'error') record.error = event
     call(options.onEvent, { kind: agentEventKind(event), event })
   }
+  const inProcess = options.provider !== undefined
+  const log = []
+  const run = (input) => runAgentLoop(options, input)
+  const turn = (text) => {
+    const user = { role: 'user', content: String(text) }
+    const record = run({ messages: [...log, user], context: options.context })
+    log.push(user, ...record.messages)
+    return record
+  }
   const prompt = (text) => {
+    if (inProcess) return turn(text)
     const record = { text: '', events: [], error: null, session: state.session, exitCode: null }
     call(hooks.turnStart, { prompt: String(text) })
     const id = host('proc_spawn', { file: 'fx', args: [...askFlags(options, state.session), '--', String(text)], ...(options.cwd ? { cwd: options.cwd } : {}) }).id
@@ -3135,6 +3260,7 @@ const agent = (options = {}) => {
   }
   return {
     prompt,
+    run,
     cancel,
     get session() { return state.session },
   }

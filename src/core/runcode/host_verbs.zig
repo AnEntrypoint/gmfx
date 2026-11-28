@@ -32,6 +32,7 @@ pub const verbs = [_]Verb{
                 .{ .name = "method", .json_type = .string },
                 .{ .name = "body", .json_type = .string },
                 .{ .name = "loopback", .json_type = .boolean },
+                .{ .name = "headers_json", .json_type = .string },
             },
             .required = &.{"url"},
         },
@@ -804,6 +805,30 @@ fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
     } else null;
     defer if (post_body) |body| alloc.free(body);
     const loopback = boolArg(args, "loopback", false);
+    var header_text: std.Io.Writer.Allocating = .init(alloc);
+    defer header_text.deinit();
+    var content_type: []const u8 = "application/octet-stream";
+    var headers_parsed: ?std.json.Parsed(std.json.Value) = if (stringArg(args, "headers_json")) |text|
+        std.json.parseFromSlice(std.json.Value, alloc, text, .{}) catch return invalidField(alloc, "headers_json", "a JSON object of strings")
+    else
+        null;
+    defer if (headers_parsed) |*parsed| parsed.deinit();
+    if (headers_parsed) |parsed| {
+        if (parsed.value != .object) return invalidField(alloc, "headers_json", "a JSON object of strings");
+        var iterator = parsed.value.object.iterator();
+        while (iterator.next()) |entry| {
+            if (entry.value_ptr.* != .string) return invalidField(alloc, "headers_json", "a JSON object of strings");
+            const name = entry.key_ptr.*;
+            const value = entry.value_ptr.string;
+            if (name.len == 0 or std.mem.findAny(u8, name, "\r\n:") != null or std.mem.findAny(u8, value, "\r\n") != null) return invalidField(alloc, "headers_json", "header names and values without line breaks");
+            if (std.ascii.eqlIgnoreCase(name, "content-type")) {
+                content_type = value;
+                continue;
+            }
+            if (std.ascii.eqlIgnoreCase(name, "host") or std.ascii.eqlIgnoreCase(name, "content-length") or std.ascii.eqlIgnoreCase(name, "connection")) continue;
+            try header_text.writer.print("{s}: {s}\r\n", .{ name, value });
+        }
+    }
     var validated = url_policy.normalizeWith(alloc, url_text, loopback) catch |err| {
         const message = switch (err) {
             error.NonPublicAddress, error.SingleLabelHost => "web_fetch only fetches known public HTTP(S) URLs",
@@ -812,7 +837,7 @@ fn netFetch(alloc: Allocator, args: std.json.ObjectMap) anyerror![]u8 {
         return encode(alloc, .{ .ok = false, .@"error" = message });
     };
     defer validated.deinit(alloc);
-    var outcome = try http_fetch.fetch(alloc, validated, .{ .post_body = post_body, .allow_loopback = loopback }, http_fetch.defaultTransport());
+    var outcome = try http_fetch.fetch(alloc, validated, .{ .post_body = post_body, .allow_loopback = loopback, .request_headers = header_text.written(), .content_type = content_type }, http_fetch.defaultTransport());
     defer outcome.deinit(alloc);
     switch (outcome) {
         .success => |*success| {

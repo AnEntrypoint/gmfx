@@ -52,6 +52,8 @@ pub const FetchOptions = struct {
     cancel_flag: ?*std.atomic.Value(bool) = null,
     post_body: ?[]const u8 = null,
     allow_loopback: bool = false,
+    request_headers: []const u8 = "",
+    content_type: []const u8 = "application/octet-stream",
 };
 
 pub const Resolver = struct {
@@ -471,6 +473,8 @@ fn normalizedOptions(options: FetchOptions) FetchOptions {
         .cancel_flag = options.cancel_flag,
         .post_body = options.post_body,
         .allow_loopback = options.allow_loopback,
+        .request_headers = options.request_headers,
+        .content_type = options.content_type,
     };
 }
 
@@ -776,8 +780,9 @@ fn writeRequest(writer: *std.Io.Writer, target: PinnedTarget, options: FetchOpti
             "Connection: close\r\n",
         .{ method, target.url.path_query, target.host_header },
     );
+    try writer.writeAll(options.request_headers);
     if (options.post_body) |body| {
-        try writer.print("Content-Type: application/octet-stream\r\nContent-Length: {d}\r\n\r\n", .{body.len});
+        try writer.print("Content-Type: {s}\r\nContent-Length: {d}\r\n\r\n", .{ options.content_type, body.len });
         try writer.writeAll(body);
     } else {
         try writer.writeAll("\r\n");
