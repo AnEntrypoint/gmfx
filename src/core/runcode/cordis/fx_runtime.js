@@ -1229,7 +1229,7 @@ const executionFailure = (cmd, code, signal, killed, stdout, stderr) => {
 const execFile = (file, ...rest) => {
   const callback = typeof rest[rest.length - 1] === 'function' ? rest.pop() : undefined
   const { argv, options } = normalizeExecArgs(rest[0], rest[1])
-  const child = spawnStreams(file, argv, options)
+  const child = spawnStreams(file, argv, { ...options, stdio: 'pipe' })
   const encoding = outputEncoding(options, 'utf8')
   const limit = options.maxBuffer === undefined ? 1024 * 1024 : Number(options.maxBuffer)
   const out = []
@@ -1344,13 +1344,15 @@ class ChildProcess extends FxEmitter {
   }
 }
 
+const stdioMode = (mode) => (mode === undefined || mode === 'overlapped' ? 'pipe' : mode)
+
 const spawnStreams = (file, args = [], options = {}) => {
   const [command, commandArgs] = shellInvocation(file, args.map(String), options)
   const request = { file: String(command), args: commandArgs.map(String) }
   const stdioModes = Array.isArray(options.stdio) ? options.stdio : [options.stdio ?? 'pipe', options.stdio ?? 'pipe', options.stdio ?? 'pipe']
-  request.stdin_mode = stdioModes[0] ?? 'pipe'
-  request.stdout_mode = stdioModes[1] ?? 'pipe'
-  request.stderr_mode = stdioModes[2] ?? 'pipe'
+  request.stdin_mode = stdioMode(stdioModes[0])
+  request.stdout_mode = stdioMode(stdioModes[1])
+  request.stderr_mode = stdioMode(stdioModes[2])
   if (options.cwd !== undefined) request.cwd = String(options.cwd)
   if (options.env !== undefined) request.env_json = JSON.stringify(envRecord(options.env))
   const reply = globalThis.gm.proc_spawn(request)
