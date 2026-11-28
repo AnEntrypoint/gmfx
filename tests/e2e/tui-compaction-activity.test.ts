@@ -661,6 +661,7 @@ describe.skipIf(!tmuxAvailable())("tui: compaction activity", () => {
       TERM: "xterm-256color", AI_GATEWAY_API_KEY: "fake-compaction-key",
       FX_DISABLE_KEYCHAIN: "1", FX_TEST_SKIP_ONBOARDING: "1", FX_E2E_DISABLE_DOTENV: "1", KIMI_CODE_TRUST_WORKSPACE: "1",
       FX_SOUND: "0", FX_AUTO_UPGRADE: "0", FX_PERMISSION_MODE: "yolo",
+      FX_TRACE_LOG: join(process.env.FX_E2E_TRACE_DIR ?? root, "steer.trace"), FX_TRACE_SCOPES: "agent,core,gateway,compact,tool",
       FX_MODEL: FAKE_GATEWAY_MODEL, FX_GATEWAY_BASE_URL: gateway.baseUrl,
       FX_GATEWAY_CHAT_URL: gateway.chatUrl, FX_TEST_GATEWAY_CHAT_URL: gateway.chatUrl,
       FX_TEST_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
