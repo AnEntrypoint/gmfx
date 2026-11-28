@@ -545,7 +545,7 @@ const createReadStream = (value, options = {}) => {
   const emptyRead = highWaterMark === 0 || (highWaterMark >= 4294967296 && highWaterMark < 1099511627776)
   const autoClose = settings.autoClose !== false
   const flag = settings.flags ?? 'r'
-  const decoder = encoding !== null ? new StringDecoder(encoding) : null
+  const decoder = null
   const stream = new Readable({ encoding, autoDestroy: autoClose })
   stream.readableHighWaterMark = highWaterMark
   const target = pathOf(value)
@@ -865,8 +865,14 @@ class Readable extends FxEmitter {
     this.destroyed = false
     this.reading = false
     this.flowing = false
-    this.encoding = options.encoding ?? null
     this.objectMode = options.objectMode ?? false
+    if (options.encoding !== undefined && options.encoding !== null && stringDecoderEncodings[String(options.encoding).toLowerCase()] === undefined) {
+      throw typeErrorCoded('ERR_UNKNOWN_ENCODING', 'Unknown encoding: ' + String(options.encoding))
+    }
+    this.encoding = options.encoding ?? null
+    this.decoder = this.encoding !== null ? new StringDecoder(this.encoding) : null
+    this.highWaterMark = options.highWaterMark ?? (this.objectMode ? 16 : 16384)
+    this.readableHighWaterMark = this.highWaterMark
   }
   get readableEncoding() {
     return this.encoding
@@ -876,6 +882,13 @@ class Readable extends FxEmitter {
   }
   push(chunk) {
     if (chunk === null) {
+      if (this.decoder !== null) {
+        const rest = this.decoder.end()
+        if (rest.length > 0) {
+          this.buffered.push(rest)
+          this.bufferedBytes += rest.length
+        }
+      }
       this.ended = true
       this.reading = false
       this.scheduleEnd()
@@ -885,12 +898,32 @@ class Readable extends FxEmitter {
       this.emit('error', nodeError('ERR_STREAM_PUSH_AFTER_EOF', 'stream.push() after EOF'))
       return false
     }
-    this.buffered.push(chunk)
-    this.bufferedBytes += typeof chunk === 'string' ? chunk.length : (chunk.length ?? 1)
+    let entry = chunk
+    let size = 1
+    if (this.objectMode) {
+      if (this.decoder !== null && typeof chunk === 'object' && chunk !== null && !ArrayBuffer.isView(chunk)) {
+        throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "buf" argument must be an instance of Buffer, TypedArray, or DataView. Received ' + nodeReceived(chunk))
+      }
+    } else if (this.decoder !== null) {
+      entry = this.decoder.write(typeof chunk === 'string' ? encodeUtf8(chunk) : toBytes(chunk))
+      if (entry.length === 0) return this.bufferedBytes < this.readableHighWaterMark
+      size = entry.length
+    } else {
+      size = typeof chunk === 'string' ? chunk.length : (chunk.length ?? 1)
+    }
+    this.buffered.push(entry)
+    this.bufferedBytes += size
+    const accepted = this.bufferedBytes < this.readableHighWaterMark
     this.reading = false
     if (this.flowing) this.flush()
     else if ((this.listeners.get('readable') ?? []).length > 0) nextTick(() => this.emit('readable'))
-    return this.bufferedBytes < 65536
+    return accepted
+  }
+  unshift(chunk) {
+    if (chunk === null || chunk === undefined) return false
+    this.buffered.unshift(chunk)
+    this.bufferedBytes += typeof chunk === 'string' ? chunk.length : (chunk.length ?? 1)
+    return true
   }
   flush() {
     if (this.flushing) return
@@ -968,6 +1001,11 @@ class Readable extends FxEmitter {
       this.scheduleEnd()
       return null
     }
+    if (this.objectMode) {
+      const entry = this.buffered.shift()
+      this.bufferedBytes -= 1
+      return entry
+    }
     const data = this.buffered.length === 1 ? this.buffered[0] : this.buffered.map((part) => (typeof part === 'string' ? part : String(part))).join('')
     this.buffered = []
     this.bufferedBytes = 0
@@ -975,6 +1013,7 @@ class Readable extends FxEmitter {
   }
   setEncoding(encoding) {
     this.encoding = String(encoding).toLowerCase() === 'utf-8' ? 'utf8' : encoding
+    this.decoder = new StringDecoder(this.encoding)
     return this
   }
   pipe(destination) {
@@ -1003,6 +1042,8 @@ class Writable extends FxEmitter {
     if (typeof options.write === 'function') this.writeImpl = options.write
     this.chunks = []
     this.length = 0
+    this.objectMode = options.objectMode ?? false
+    this.highWaterMark = options.highWaterMark ?? (this.objectMode ? 16 : 16384)
     this.pending = 0
     this.ending = false
     this.finished = false
@@ -1022,7 +1063,7 @@ class Writable extends FxEmitter {
       })
       return false
     }
-    const size = typeof chunk === 'string' ? chunk.length : chunk.length ?? 1
+    const size = this.objectMode ? 1 : typeof chunk === 'string' ? chunk.length : chunk.length ?? 1
     this.length += size
     this.pending += 1
     const finishWrite = (error) => {
@@ -1036,7 +1077,7 @@ class Writable extends FxEmitter {
       this.chunks.push(chunk)
       finishWrite()
     }
-    return this.length < 65536
+    return this.length < this.highWaterMark
   }
   end(chunk, encoding, callback) {
     const done = typeof chunk === 'function' ? chunk : typeof encoding === 'function' ? encoding : callback
@@ -1071,8 +1112,7 @@ class PassThrough extends Readable {
     this._read = () => {}
   }
   write(chunk) {
-    this.push(chunk)
-    return true
+    return this.push(chunk)
   }
   end(chunk) {
     if (chunk !== undefined && chunk !== null) this.push(chunk)
