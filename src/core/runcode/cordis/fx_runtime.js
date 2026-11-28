@@ -1679,7 +1679,8 @@ const checkChildOptions = (options) => {
 }
 const spawnStreams = (file, args = [], options = {}) => {
   checkChildOptions(options)
-  const [command, commandArgs] = shellInvocation(file, args.map(String), options)
+  const [shellCommand, shellArgs] = shellInvocation(file, args.map(String), options)
+  const [command, commandArgs] = options.detached === true ? ['setsid', [shellCommand, ...shellArgs]] : [shellCommand, shellArgs]
   const request = { file: String(command), args: commandArgs.map(String) }
   const stdioModes = Array.isArray(options.stdio) ? options.stdio : [options.stdio ?? 'pipe', options.stdio ?? 'pipe', options.stdio ?? 'pipe']
   request.stdin_mode = stdioMode(stdioModes[0])
