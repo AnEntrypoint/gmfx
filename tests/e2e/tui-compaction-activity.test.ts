@@ -634,7 +634,7 @@ describe.skipIf(!tmuxAvailable())("tui: compaction activity", () => {
     writeFileSync(join(home, ".fx/settings.json"), JSON.stringify({
       model: FAKE_GATEWAY_MODEL, auto_upgrade: false, startup_scrollback: false,
     }));
-    for (let n = 1; n <= 30; n++) {
+    for (let n = 1; n <= 60; n++) {
       writeFileSync(join(workspace, `probe-${n}.txt`), `STEER_PROBE_${n}_8d4 context pressure line\n`.repeat(250));
     }
     const task = "STEER_TASK_8d4: read the probe files and report progress.";
@@ -653,7 +653,7 @@ describe.skipIf(!tmuxAvailable())("tui: compaction activity", () => {
       const n = ordinaryBodies.length;
       if (summaryBodies.length > 0) return fakeGatewayFinalText("STEER_DONE_8d4");
       if (n === 1) return fakeShellRun("steer-window-8d4", "printf STEER_WINDOW_8d4; sleep 3");
-      if (n <= 31) return fakeGatewayVerbCall(`steer-probe-${n - 1}-8d4`, "read_file", { path: `probe-${n - 1}.txt` });
+      if (n <= 61) return fakeGatewayVerbCall(`steer-probe-${n - 1}-8d4`, "read_file", { path: `probe-${n - 1}.txt` });
       return fakeGatewayFinalText("STEER_NOT_COMPACTED_8d4");
     }, { models: [{ id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"], context_window: 60000, max_tokens: 4096 }] });
     const env: Record<string, string> = {
