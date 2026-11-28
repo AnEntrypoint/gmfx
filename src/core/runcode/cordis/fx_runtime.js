@@ -853,11 +853,13 @@ const isDeepStrictEqual = (left, right) => deepStrictEqualWith(left, right, new 
 
 const parseEnv = (content) => {
   const out = {}
-  for (const line of String(content).split('\n')) {
-    const trimmed = line.trim()
-    const index = trimmed.indexOf('=')
-    if (trimmed === '' || trimmed.startsWith('#') || index === -1) continue
-    out[trimmed.slice(0, index).trim()] = trimmed.slice(index + 1).trim().replace(/^(['"])(.*)\1$/, '$2')
+  const text = String(content).replace(/\r\n/g, '\n')
+  for (const match of text.matchAll(/(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/gm)) {
+    const raw = (match[2] ?? '').trim()
+    const quoted = /^(['"`])([\s\S]*)\1$/.exec(raw)
+    let value = quoted ? quoted[2] : raw
+    if (quoted && quoted[1] === '"') value = value.replace(/\\n/g, '\n').replace(/\\r/g, '\r')
+    out[match[1]] = value
   }
   return out
 }
