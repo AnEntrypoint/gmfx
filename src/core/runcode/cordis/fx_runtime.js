@@ -3156,7 +3156,31 @@ const sessionPersistence = (options = {}) => {
       throw error
     }
   }
-  const rowsOf = (key, from) => all('SELECT seq, time, type, data FROM events WHERE id = ' + sqlText(key) + ' AND seq >= ' + Number(from) + ' ORDER BY seq').map((row) => ({ seq: Number(row[0]), time: Number(row[1]), type: row[2], data: JSON.parse(row[3]) }))
+  const dropTorn = (key, seq) => {
+    exec('BEGIN IMMEDIATE')
+    try {
+      exec('DELETE FROM events WHERE id = ' + sqlText(key) + ' AND seq >= ' + Number(seq))
+      exec('UPDATE sessions SET revision = revision + 1 WHERE id = ' + sqlText(key))
+      exec('COMMIT')
+    } catch (error) {
+      exec('ROLLBACK')
+      throw error
+    }
+  }
+  const rowsOf = (key, from) => {
+    const events = []
+    for (const row of all('SELECT seq, time, type, data FROM events WHERE id = ' + sqlText(key) + ' AND seq >= ' + Number(from) + ' ORDER BY seq')) {
+      let data
+      try {
+        data = JSON.parse(row[3])
+      } catch (error) {
+        dropTorn(key, Number(row[0]))
+        break
+      }
+      events.push({ seq: Number(row[0]), time: Number(row[1]), type: row[2], data })
+    }
+    return events
+  }
   const closeOpenTurn = (key, events) => {
     let open = null
     for (const event of events) {
