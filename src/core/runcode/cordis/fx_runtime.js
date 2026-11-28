@@ -3124,6 +3124,79 @@ const agent = (options = {}) => {
 
 const agentModule = { core: agentCore, persistence: agentPersistence, agent }
 
+const sqlText = (value) => "'" + String(value).replace(/'/g, "''") + "'"
+
+const sessionPersistence = (options = {}) => {
+  const path = String(options.path ?? '.fx/sessions.sqlite')
+  const cut = path.lastIndexOf('/')
+  if (cut > 0) host('fs_mkdir', { path: path.slice(0, cut), recursive: true })
+  const id = host('sqlite_open', { path }).id
+  const exec = (sql) => host('sqlite_exec', { id, sql })
+  const all = (sql) => host('sqlite_all', { id, sql }).rows
+  exec('PRAGMA journal_mode=WAL')
+  exec('PRAGMA synchronous=FULL')
+  exec('CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, header TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)')
+  exec('CREATE TABLE IF NOT EXISTS events(id TEXT NOT NULL, seq INTEGER NOT NULL, time INTEGER NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(id, seq))')
+  const headerOf = (key) => {
+    const rows = all('SELECT header FROM sessions WHERE id = ' + sqlText(key))
+    if (rows.length === 0) throw new Error('no such session: ' + key)
+    return JSON.parse(rows[0].header)
+  }
+  const nextSeq = (key) => Number(all('SELECT COALESCE(MAX(seq) + 1, 0) AS next FROM events WHERE id = ' + sqlText(key))[0].next)
+  const insertAll = (key, events) => {
+    exec('BEGIN IMMEDIATE')
+    try {
+      for (const event of events) {
+        exec('INSERT INTO events(id, seq, time, type, data) VALUES(' + sqlText(key) + ', ' + Number(event.seq) + ', ' + Number(event.time ?? 0) + ', ' + sqlText(event.type) + ', ' + sqlText(JSON.stringify(event.data ?? null)) + ')')
+      }
+      exec('UPDATE sessions SET revision = revision + 1 WHERE id = ' + sqlText(key))
+      exec('COMMIT')
+    } catch (error) {
+      exec('ROLLBACK')
+      throw error
+    }
+  }
+  const rowsOf = (key, from) => all('SELECT seq, time, type, data FROM events WHERE id = ' + sqlText(key) + ' AND seq >= ' + Number(from) + ' ORDER BY seq').map((row) => ({ seq: Number(row.seq), time: Number(row.time), type: row.type, data: JSON.parse(row.data) }))
+  const closeOpenTurn = (key, events) => {
+    let open = null
+    for (const event of events) {
+      if (event.type === 'turn/start') open = event.data.turn
+      else if (event.type === 'turn/end' && event.data.turn === open) open = null
+    }
+    if (open === null) return events
+    const closer = { seq: events.length, time: events.length === 0 ? 0 : events[events.length - 1].time, type: 'turn/end', data: { turn: open, reason: { kind: 'interrupted' } } }
+    insertAll(key, [closer])
+    return [...events, closer]
+  }
+  return {
+    create: (header) => {
+      exec('INSERT OR IGNORE INTO sessions(id, header, revision) VALUES(' + sqlText(header.id) + ', ' + sqlText(JSON.stringify(header)) + ', 0)')
+    },
+    append: (key, events) => {
+      headerOf(key)
+      let expected = nextSeq(key)
+      for (const event of events) {
+        if (event.seq !== expected) throw new Error('append to ' + key + ' needs seq ' + expected + ', got ' + event.seq)
+        expected += 1
+      }
+      if (events.length > 0) insertAll(key, events)
+    },
+    load: (key) => {
+      const meta = headerOf(key)
+      return { meta, events: closeOpenTurn(key, rowsOf(key, 0)) }
+    },
+    readFrom: (key, seq) => {
+      const meta = headerOf(key)
+      return { meta, events: rowsOf(key, seq) }
+    },
+    list: () => all('SELECT header FROM sessions WHERE id IN (SELECT DISTINCT id FROM events) ORDER BY id').map((row) => JSON.parse(row.header)),
+    listSnapshots: () => all('SELECT header, revision FROM sessions WHERE id IN (SELECT DISTINCT id FROM events) ORDER BY id').map((row) => ({ header: JSON.parse(row.header), revision: Number(row.revision) })),
+    close: () => host('sqlite_close', { id }),
+  }
+}
+
+const sessionModule = { sessionPersistence }
+
 const loaderState = { lastGood: new Map(), hot: new Map(), rev: new Map(), reloads: 0, history: new Map() }
 
 const historyFile = (target) => target.slice(0, target.lastIndexOf('/')) + '/.fx-history.json'
@@ -3295,6 +3368,7 @@ export const fxRuntime = {
   sqliteModule,
   fetchModule,
   agentModule,
+  sessionModule,
   wsModule,
   loaderModule,
   fetch,
