@@ -390,6 +390,39 @@ const createReadStream = (value, options = {}) => {
   return stream
 }
 
+const dirClosedError = () => {
+  const error = new Error('Directory handle was closed')
+  error.code = 'ERR_DIR_CLOSED'
+  return error
+}
+
+class Dir {
+  constructor(path, entries) {
+    this.path = path
+    this.entries = entries
+    this.index = 0
+    this.closed = false
+  }
+  async read() {
+    if (this.closed) throw dirClosedError()
+    if (this.index >= this.entries.length) return null
+    const entry = this.entries[this.index]
+    this.index += 1
+    return entry
+  }
+  async close() {
+    if (this.closed) throw dirClosedError()
+    this.closed = true
+  }
+  async *[Symbol.asyncIterator]() {
+    try {
+      for (let entry = await this.read(); entry !== null; entry = await this.read()) yield entry
+    } finally {
+      if (!this.closed) await this.close()
+    }
+  }
+}
+
 const fs = {
   appendFileSync: (value, data, options) => writeFileSync(value, data, { ...(typeof options === "object" && options !== null ? options : {}), flag: "a" }),
   chmodSync: (value, mode) => host("fs_chmod", { path: pathOf(value), mode }),
@@ -460,6 +493,7 @@ const fsPromises = {
   opendir: fail('fs/promises.opendir'),
   readFile: asAsync(readFileSync),
   readdir: asAsync(fs.readdirSync),
+  opendir: (value) => Promise.resolve().then(() => new Dir(pathOf(value), fs.readdirSync(value, { withFileTypes: true }))),
   realpath: asAsync(fs.realpathSync),
   rename: asAsync(fs.renameSync),
   rm: asAsync(fs.rmSync),
