@@ -1546,12 +1546,35 @@ const stringDecoder = { StringDecoder }
 const performanceClock = { now: () => Date.now() }
 const perfHooks = { performance: globalThis.performance ?? performanceClock }
 
+const abortError = (signal) => {
+  const error = new Error('The operation was aborted')
+  error.name = 'AbortError'
+  error.code = 'ABORT_ERR'
+  error.cause = signal.reason
+  return error
+}
+
 const timersPromises = {
   scheduler: {
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     yield: () => new Promise((resolve) => setTimeout(resolve, 0)),
   },
-  setTimeout: (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms)),
+  setTimeout: (ms, value, options = {}) => new Promise((resolve, reject) => {
+    const signal = options.signal
+    if (signal?.aborted) {
+      reject(abortError(signal))
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(abortError(signal))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve(value)
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  }),
 }
 
 const net = {
