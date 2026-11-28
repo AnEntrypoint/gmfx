@@ -820,15 +820,36 @@ const inspect = (value) => {
   }
 }
 
-const isDeepStrictEqual = (left, right) => {
+const deepStrictKeys = (object) => [
+  ...Object.keys(object),
+  ...Object.getOwnPropertySymbols(object).filter((symbol) => Object.prototype.propertyIsEnumerable.call(object, symbol)),
+]
+
+const deepStrictEqualWith = (left, right, seen) => {
   if (Object.is(left, right)) return true
   if (typeof left !== 'object' || typeof right !== 'object' || left === null || right === null) return false
   if (Object.getPrototypeOf(left) !== Object.getPrototypeOf(right)) return false
-  const leftKeys = Object.keys(left)
-  const rightKeys = Object.keys(right)
-  if (leftKeys.length !== rightKeys.length) return false
-  return leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && isDeepStrictEqual(left[key], right[key]))
+  if (seen.get(left)?.has(right)) return true
+  seen.set(left, (seen.get(left) ?? new Set()).add(right))
+  if (left instanceof Date && left.getTime() !== right.getTime()) return false
+  if (left instanceof RegExp && (left.source !== right.source || left.flags !== right.flags)) return false
+  if (left instanceof Error && (left.name !== right.name || left.message !== right.message)) return false
+  if ((left instanceof Number || left instanceof String || left instanceof Boolean) && !Object.is(left.valueOf(), right.valueOf())) return false
+  if (left instanceof ArrayBuffer && !deepStrictEqualWith(new Uint8Array(left), new Uint8Array(right), seen)) return false
+  if (left instanceof Map) {
+    if (left.size !== right.size) return false
+    for (const [key, value] of left) if (!right.has(key) || !deepStrictEqualWith(value, right.get(key), seen)) return false
+  }
+  if (left instanceof Set) {
+    if (left.size !== right.size) return false
+    for (const value of left) if (!right.has(value) && ![...right].some((other) => deepStrictEqualWith(value, other, seen))) return false
+  }
+  const leftKeys = deepStrictKeys(left)
+  if (leftKeys.length !== deepStrictKeys(right).length) return false
+  return leftKeys.every((key) => Object.prototype.propertyIsEnumerable.call(right, key) && deepStrictEqualWith(left[key], right[key], seen))
 }
+
+const isDeepStrictEqual = (left, right) => deepStrictEqualWith(left, right, new Map())
 
 const parseEnv = (content) => {
   const out = {}
