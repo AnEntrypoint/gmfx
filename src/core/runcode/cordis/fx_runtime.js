@@ -853,27 +853,79 @@ const createHash = (algorithm, options = {}) => {
 const crypto = { createHash, randomBytes, randomUUID }
 
 class FxEmitter {
-  constructor() { this.listeners = new Map() }
-  on(event, listener) {
-    const list = this.listeners.get(event) ?? []
-    list.push(listener)
-    this.listeners.set(event, list)
+  constructor() { this.registry = new Map() }
+  addEntry(event, listener, once, prepend) {
+    if (typeof listener !== 'function') throw typeErrorCoded('ERR_INVALID_ARG_TYPE', 'The "listener" argument must be of type function. Received ' + receivedText(listener))
+    if (this.registry.has('newListener')) this.emit('newListener', event, listener)
+    const entry = { original: listener, listener: null }
+    entry.listener = once ? (...args) => {
+      this.removeEntry(event, entry)
+      return listener.apply(this, args)
+    } : listener
+    const list = this.registry.get(event) ?? []
+    if (prepend) list.unshift(entry)
+    else list.push(entry)
+    this.registry.set(event, list)
+    if (!prepend) this.listenerAdded(event)
     return this
   }
-  once(event, listener) {
-    const wrapper = (...args) => {
-      this.off(event, wrapper)
-      listener(...args)
+  removeEntry(event, entry) {
+    const list = this.registry.get(event)
+    if (list === undefined) return
+    const index = list.indexOf(entry)
+    if (index < 0) return
+    list.splice(index, 1)
+    if (list.length === 0) this.registry.delete(event)
+    if (this.registry.has('removeListener')) this.emit('removeListener', event, entry.original)
+    this.listenerRemoved(event)
+  }
+  listenerAdded() {}
+  listenerRemoved() {}
+  addListener(event, listener) { return this.addEntry(event, listener, false, false) }
+  on(event, listener) { return this.addEntry(event, listener, false, false) }
+  once(event, listener) { return this.addEntry(event, listener, true, false) }
+  prependListener(event, listener) { return this.addEntry(event, listener, false, true) }
+  prependOnceListener(event, listener) { return this.addEntry(event, listener, true, true) }
+  removeListener(event, listener) {
+    const list = this.registry.get(event) ?? []
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      if (list[index].original === listener) {
+        this.removeEntry(event, list[index])
+        break
+      }
     }
-    return this.on(event, wrapper)
-  }
-  off(event, listener) {
-    this.listeners.set(event, (this.listeners.get(event) ?? []).filter((item) => item !== listener))
     return this
   }
+  off(event, listener) { return this.removeListener(event, listener) }
+  removeAllListeners(event) {
+    if (event === undefined) {
+      for (const name of [...this.registry.keys()]) if (name !== 'removeListener') this.removeAllListeners(name)
+      this.removeAllListeners('removeListener')
+      return this
+    }
+    const list = this.registry.get(event) ?? []
+    if (this.registry.has('removeListener')) {
+      for (const entry of [...list].reverse()) this.removeEntry(event, entry)
+    } else {
+      this.registry.delete(event)
+    }
+    this.listenerRemoved(event)
+    return this
+  }
+  listeners(event) { return (this.registry.get(event) ?? []).map((entry) => entry.original) }
+  rawListeners(event) { return (this.registry.get(event) ?? []).map((entry) => entry.listener) }
+  listenerCount(event) { return (this.registry.get(event) ?? []).length }
+  eventNames() { return [...this.registry.keys()].filter((name) => this.registry.get(name).length > 0) }
+  setMaxListeners(count) {
+    this.maxListeners = count
+    return this
+  }
+  getMaxListeners() { return this.maxListeners ?? 10 }
   emit(event, ...args) {
-    for (const listener of [...(this.listeners.get(event) ?? [])]) listener(...args)
-    return (this.listeners.get(event) ?? []).length > 0
+    const list = this.registry.get(event)
+    if (list === undefined || list.length === 0) return false
+    for (const entry of [...list]) entry.listener.apply(this, args)
+    return true
   }
 }
 
@@ -897,7 +949,7 @@ class Readable extends FxEmitter {
     this.autoDestroy = options.autoDestroy ?? true
     this.destroyed = false
     this.reading = false
-    this.flowing = false
+    this.flowing = null
     this.objectMode = options.objectMode ?? false
     if (options.encoding !== undefined && options.encoding !== null && stringDecoderEncodings[String(options.encoding).toLowerCase()] === undefined) {
       throw typeErrorCoded('ERR_UNKNOWN_ENCODING', 'Unknown encoding: ' + String(options.encoding))
@@ -950,7 +1002,7 @@ class Readable extends FxEmitter {
     const accepted = this.bufferedBytes < this.readableHighWaterMark
     this.reading = false
     if (this.flowing) this.flush()
-    else if ((this.listeners.get('readable') ?? []).length > 0) nextTick(() => this.emit('readable'))
+    else if ((this.registry.get('readable') ?? []).length > 0) nextTick(() => this.emit('readable'))
     return accepted
   }
   unshift(chunk) {
@@ -998,13 +1050,19 @@ class Readable extends FxEmitter {
     })
     return this
   }
-  on(event, listener) {
-    super.on(event, listener)
-    if (event === 'data' && !this.flowing) {
-      this.flowing = true
-      nextTick(() => this.flush())
+  listenerAdded(event) {
+    if (event === 'data' && this.flowing !== false) this.resume()
+    if (event === 'readable') this.flowing = false
+  }
+  listenerRemoved(event) {
+    if (event === 'readable') {
+      nextTick(() => {
+        if (this.listenerCount('readable') === 0 && this.flowing === false) this.flowing = null
+      })
     }
-    return this
+  }
+  get readableFlowing() {
+    return this.flowing
   }
   pause() {
     this.flowing = false
@@ -1094,7 +1152,7 @@ class Writable extends FxEmitter {
       const error = this.destroyed ? nodeError('ERR_STREAM_DESTROYED', 'Cannot call write after a stream was destroyed') : nodeError('ERR_STREAM_WRITE_AFTER_END', 'write after end')
       nextTick(() => {
         if (done) done(error)
-        if (this.listeners.get('error')?.length) this.emit('error', error)
+        if (this.registry.get('error')?.length) this.emit('error', error)
       })
       return false
     }
